@@ -8,6 +8,7 @@ piggy.xzkern
 vmlinux
 vmlinux.lds
 bswapsdi2.S
+hyp-stub.S
 
 # borrowed libfdt files
 fdt.c
