@@ -6,6 +6,9 @@ choice
 	depends on ISDBT
 	prompt "isdbt driver"
 	default ISDBT_FC8300
+
+	config ISDBT_FC8300
+		bool "ISDBT_FC8300"
 endchoice
 
 config ISDBT_SPMI
