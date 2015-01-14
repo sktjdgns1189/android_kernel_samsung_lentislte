@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2010-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -12,7 +12,7 @@
 
 #ifndef __HDMI_UTIL_H__
 #define __HDMI_UTIL_H__
-#include "mdss_io_util.h"
+#include <linux/mdss_io_util.h>
 #include "video/msm_hdmi_modes.h"
 
 /* HDMI_TX Registers */
@@ -268,4 +268,7 @@ int hdmi_ddc_write(struct hdmi_tx_ddc_ctrl *, struct hdmi_tx_ddc_data *);
 int hdmi_ddc_read_seg(struct hdmi_tx_ddc_ctrl *, struct hdmi_tx_ddc_data *);
 int hdmi_ddc_read(struct hdmi_tx_ddc_ctrl *, struct hdmi_tx_ddc_data *);
 
+#if defined(CONFIG_SEC_MHL_SUPPORT)
+bool is_mhl_supported_resolution(uint8_t mhl_version, int mhl_video_linkmode, u32 mode);
+#endif
 #endif /* __HDMI_UTIL_H__ */

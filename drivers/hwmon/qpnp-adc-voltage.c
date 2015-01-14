@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -129,6 +129,7 @@ static struct qpnp_vadc_scale_fn vadc_scale_fn[] = {
 	[SCALE_THERM_150K_PULLUP] = {qpnp_adc_scale_therm_pu1},
 	[SCALE_QRD_BATT_THERM] = {qpnp_adc_scale_qrd_batt_therm},
 	[SCALE_QRD_SKUAA_BATT_THERM] = {qpnp_adc_scale_qrd_skuaa_batt_therm},
+	[SCALE_SMB_BATT_THERM] = {qpnp_adc_scale_smb_batt_therm},
 	[SCALE_QRD_SKUG_BATT_THERM] = {qpnp_adc_scale_qrd_skug_batt_therm},
 };
 
@@ -522,10 +523,6 @@ static int32_t qpnp_vadc_version_check(struct qpnp_vadc_chip *dev)
 #define QPNP_VBAT_OFFSET_GF	9441
 #define QPNP_OCV_OFFSET_SMIC	4596
 #define QPNP_OCV_OFFSET_GF	5896
-#define QPNP_VBAT_COEFF_22	6800
-#define QPNP_VBAT_COEFF_23	3500
-#define QPNP_VBAT_COEFF_24	4360
-#define QPNP_VBAT_COEFF_25	8060
 
 static int32_t qpnp_ocv_comp(int64_t *result,
 			struct qpnp_vadc_chip *vadc, int64_t die_temp)
@@ -538,22 +535,29 @@ static int32_t qpnp_ocv_comp(int64_t *result,
 	if (version == -EINVAL)
 		return 0;
 
-	if (version == QPNP_REV_ID_8026_2_2) {
-		if (die_temp > 25000)
+	if (version == QPNP_REV_ID_8110_2_0) {
+		if (die_temp < -20000)
+			die_temp = -20000;
+	} else {
+		if (die_temp < 25000)
 			return 0;
+		if (die_temp > 60000)
+			die_temp = 60000;
 	}
 
 	switch (version) {
 	case QPNP_REV_ID_8941_3_1:
 		switch (vadc->id) {
 		case COMP_ID_TSMC:
-			 temp_var = ((die_temp - 25000) *
-			(-QPNP_VBAT_COEFF_4));
+			temp_var = (((die_temp *
+			(-QPNP_VBAT_COEFF_4))
+			+ QPNP_VBAT_COEFF_5));
 			break;
 		default:
 		case COMP_ID_GF:
-			temp_var = ((die_temp - 25000) *
-			(-QPNP_VBAT_COEFF_1));
+			temp_var = (((die_temp *
+			(-QPNP_VBAT_COEFF_1))
+			+ QPNP_VBAT_COEFF_2));
 			break;
 		}
 		break;
@@ -586,20 +590,6 @@ static int32_t qpnp_ocv_comp(int64_t *result,
 			break;
 		}
 		break;
-	case QPNP_REV_ID_8026_2_2:
-		switch (vadc->id) {
-		case COMP_ID_TSMC:
-			*result -= QPNP_VBAT_COEFF_22;
-			temp_var = (die_temp - 25000) *
-					QPNP_VBAT_COEFF_24;
-			break;
-		default:
-		case COMP_ID_GF:
-			*result -= QPNP_VBAT_COEFF_22;
-			temp_var = (die_temp - 25000) *
-					QPNP_VBAT_COEFF_25;
-			break;
-		}
 	case QPNP_REV_ID_8110_2_0:
 		switch (vadc->id) {
 		case COMP_ID_SMIC:
@@ -610,6 +600,9 @@ static int32_t qpnp_ocv_comp(int64_t *result,
 				temp_var = QPNP_VBAT_COEFF_19;
 			temp_var = (die_temp - 25000) * temp_var;
 			break;
+		case COMP_ID_TSMC:
+			pr_debug("No TSMC Comp Info, exiting\n");
+			return 0;
 		default:
 		case COMP_ID_GF:
 			*result -= QPNP_OCV_OFFSET_GF;
@@ -649,7 +642,12 @@ static int32_t qpnp_vbat_sns_comp(int64_t *result,
 	if (version == -EINVAL)
 		return 0;
 
-	if (version != QPNP_REV_ID_8941_3_1) {
+	if (version == QPNP_REV_ID_8110_2_0) {
+		if (die_temp < -20000)
+			die_temp = -20000;
+	} else {
+		if (die_temp < 25000)
+			return 0;
 		/* min(die_temp_c, 60_degC) */
 		if (die_temp > 60000)
 			die_temp = 60000;
@@ -659,16 +657,14 @@ static int32_t qpnp_vbat_sns_comp(int64_t *result,
 	case QPNP_REV_ID_8941_3_1:
 		switch (vadc->id) {
 		case COMP_ID_TSMC:
-			temp_var = ((die_temp - 25000) *
+			temp_var = (die_temp *
 			(-QPNP_VBAT_COEFF_1));
 			break;
 		default:
 		case COMP_ID_GF:
-			/* min(die_temp_c, 60_degC) */
-			if (die_temp > 60000)
-				die_temp = 60000;
-			temp_var = ((die_temp - 25000) *
-			(-QPNP_VBAT_COEFF_1));
+			temp_var = (((die_temp *
+			(-QPNP_VBAT_COEFF_6))
+			+ QPNP_VBAT_COEFF_7));
 			break;
 		}
 		break;
@@ -701,18 +697,6 @@ static int32_t qpnp_vbat_sns_comp(int64_t *result,
 			break;
 		}
 		break;
-	case QPNP_REV_ID_8026_2_2:
-		switch (vadc->id) {
-		case COMP_ID_TSMC:
-			*result -= QPNP_VBAT_COEFF_23;
-			temp_var = 0;
-			break;
-		default:
-		case COMP_ID_GF:
-			*result -= QPNP_VBAT_COEFF_23;
-			temp_var = 0;
-			break;
-		}
 	case QPNP_REV_ID_8110_2_0:
 		switch (vadc->id) {
 		case COMP_ID_SMIC:
@@ -720,6 +704,9 @@ static int32_t qpnp_vbat_sns_comp(int64_t *result,
 			temp_var = ((die_temp - 25000) *
 			(QPNP_VBAT_COEFF_17));
 			break;
+		case COMP_ID_TSMC:
+			pr_debug("No TSMC Comp Info, exiting\n");
+			return 0;
 		default:
 		case COMP_ID_GF:
 			*result -= QPNP_VBAT_OFFSET_GF;
@@ -1361,7 +1348,7 @@ static ssize_t qpnp_adc_show(struct device *dev,
 	}
 
 	return snprintf(buf, QPNP_ADC_HWMON_NAME_LENGTH,
-		"Result:%lld Raw:%d\n", result.physical, result.adc_code);
+		"Result:%lld Raw:%x\n", result.physical, result.adc_code);
 }
 
 static struct sensor_device_attribute qpnp_adc_attr =
@@ -1399,7 +1386,7 @@ hwmon_err_sens:
 	return rc;
 }
 
-static int __devinit qpnp_vadc_probe(struct spmi_device *spmi)
+static int qpnp_vadc_probe(struct spmi_device *spmi)
 {
 	struct qpnp_vadc_chip *vadc;
 	struct qpnp_adc_drv *adc_qpnp;
@@ -1510,7 +1497,7 @@ err_setup:
 	return rc;
 }
 
-static int __devexit qpnp_vadc_remove(struct spmi_device *spmi)
+static int qpnp_vadc_remove(struct spmi_device *spmi)
 {
 	struct qpnp_vadc_chip *vadc = dev_get_drvdata(&spmi->dev);
 	struct device_node *node = spmi->dev.of_node;

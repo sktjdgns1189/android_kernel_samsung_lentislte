@@ -30,17 +30,14 @@
 #include "msm_sd.h"
 #include "msm_isp40.h"
 #include "msm_isp32.h"
+#include "msm_isp44.h"
 
 static struct msm_sd_req_vb2_q vfe_vb2_ops;
 
 static const struct of_device_id msm_vfe_dt_match[] = {
 	{
-		.compatible = "qcom,vfe40",
-		.data = &vfe40_hw_info,
-	},
-	{
-		.compatible = "qcom,vfe32",
-		.data = &vfe32_hw_info,
+		.compatible = "qcom,vfe44",
+		.data = &vfe44_hw_info,
 	},
 	{}
 };
@@ -48,13 +45,13 @@ static const struct of_device_id msm_vfe_dt_match[] = {
 MODULE_DEVICE_TABLE(of, msm_vfe_dt_match);
 
 static const struct platform_device_id msm_vfe_dev_id[] = {
-	{"msm_vfe32", (kernel_ulong_t) &vfe32_hw_info},
+	{"msm_vfe44", (kernel_ulong_t) &vfe44_hw_info},
 	{}
 };
 
 static struct msm_isp_buf_mgr vfe_buf_mgr;
 
-static int __devinit vfe_probe(struct platform_device *pdev)
+static int vfe_probe(struct platform_device *pdev)
 {
 	struct vfe_device *vfe_dev;
 	/*struct msm_cam_subdev_info sd_info;*/
@@ -77,13 +74,14 @@ static int __devinit vfe_probe(struct platform_device *pdev)
 		pr_err("%s: no enough memory\n", __func__);
 		return -ENOMEM;
 	}
-
+	pr_err("%s: In probe\n", __func__);	
 	if (pdev->dev.of_node) {
 		of_property_read_u32((&pdev->dev)->of_node,
 			"cell-index", &pdev->id);
 		match_dev = of_match_device(msm_vfe_dt_match, &pdev->dev);
 		vfe_dev->hw_info =
 			(struct msm_vfe_hardware_info *) match_dev->data;
+		pr_err("%s: in checking of node %s\n", __func__, match_dev->compatible);
 	} else {
 		vfe_dev->hw_info = (struct msm_vfe_hardware_info *)
 			platform_get_device_id(pdev)->driver_data;
@@ -91,9 +89,10 @@ static int __devinit vfe_probe(struct platform_device *pdev)
 
 	if (!vfe_dev->hw_info) {
 		pr_err("%s: No vfe hardware info\n", __func__);
+		kfree(vfe_dev);//prevent
 		return -EINVAL;
 	}
-	ISP_DBG("%s: device id = %d\n", __func__, pdev->id);
+	pr_err("%s: device id = %d\n", __func__, pdev->id);
 
 	vfe_dev->pdev = pdev;
 	rc = vfe_dev->hw_info->vfe_ops.core_ops.get_platform_data(vfe_dev);

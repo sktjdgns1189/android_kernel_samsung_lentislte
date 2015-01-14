@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -16,7 +16,7 @@
 #define ADM_PATH_PLAYBACK 0x1
 #define ADM_PATH_LIVE_REC 0x2
 #define ADM_PATH_NONLIVE_REC 0x3
-#include <mach/qdsp6v2/rtac.h>
+#include <linux/qdsp6v2/rtac.h>
 #include <sound/q6afe-v2.h>
 #include <sound/q6audio-v2.h>
 
@@ -48,8 +48,8 @@ int adm_map_rtac_block(struct rtac_cal_block_data *cal_block);
 
 int adm_unmap_rtac_block(uint32_t *mem_map_handle);
 
-int adm_memory_map_regions(int port_id, uint32_t *buf_add, uint32_t mempool_id,
-				uint32_t *bufsz, uint32_t bufcnt);
+int adm_memory_map_regions(int port_id, phys_addr_t *buf_add,
+	uint32_t mempool_id, uint32_t *bufsz, uint32_t bufcnt);
 
 int adm_memory_unmap_regions(int port_id);
 
@@ -69,5 +69,8 @@ int adm_get_lowlatency_copp_id(int port_id);
 void adm_set_multi_ch_map(char *channel_map);
 
 void adm_get_multi_ch_map(char *channel_map);
+
+int adm_set_stereo_to_custom_stereo(int port_id, unsigned int session_id,
+				    char *params, uint32_t params_length);
 
 #endif /* __Q6_ADM_V2_H__ */

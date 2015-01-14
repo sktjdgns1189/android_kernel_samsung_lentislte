@@ -22,8 +22,6 @@
  * the best guess is to add 0.5s.
  */
 
-int rtc_hctosys_ret = -ENODEV;
-
 int rtc_hctosys(void)
 {
 	int err = -ENODEV;
@@ -47,6 +45,12 @@ int rtc_hctosys(void)
 
 	}
 
+	/*
+	* Force update rtc year time to 2014
+	* (The release year of device)
+	*/
+	tm.tm_year = 114;
+
 	err = rtc_valid_tm(&tm);
 	if (err) {
 		dev_err(rtc->dev.parent,
@@ -56,7 +60,7 @@ int rtc_hctosys(void)
 
 	rtc_tm_to_time(&tm, &tv.tv_sec);
 
-	do_settimeofday(&tv);
+	err = do_settimeofday(&tv);
 
 	dev_info(rtc->dev.parent,
 		"setting system clock to "

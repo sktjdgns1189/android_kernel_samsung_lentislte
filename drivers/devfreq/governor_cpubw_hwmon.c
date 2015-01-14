@@ -14,7 +14,7 @@
 #define pr_fmt(fmt) "cpubw-hwmon: " fmt
 
 #include <linux/kernel.h>
-#include <asm/sizes.h>
+#include <linux/sizes.h>
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/io.h>
@@ -80,7 +80,7 @@ static unsigned int bytes_per_beat;
 static unsigned int tolerance_percent = 10;
 static unsigned int guard_band_mbps = 100;
 static unsigned int decay_rate = 90;
-static unsigned int io_percent = 16;
+static unsigned int io_percent = 10;
 static unsigned int bw_step = 190;
 
 #define MIN_MS	10U
@@ -156,7 +156,7 @@ static u32 mon_set_limit_mbyte(int n, unsigned int mbytes)
 	return regval;
 }
 
-long mon_get_count(int n, u32 start_val)
+static long mon_get_count(int n, u32 start_val)
 {
 	u32 overflow, count;
 
@@ -172,7 +172,7 @@ long mon_get_count(int n, u32 start_val)
 }
 
 /* Returns MBps of read/writes for the sampling window. */
-unsigned int beats_to_mbps(long long beats, unsigned int us)
+static unsigned int beats_to_mbps(long long beats, unsigned int us)
 {
 	beats *= USEC_PER_SEC;
 	beats *= bytes_per_beat;
@@ -190,7 +190,7 @@ static int to_limit(int mbps)
 	return mbps;
 }
 
-unsigned long measure_bw_and_set_irq(void)
+static unsigned long measure_bw_and_set_irq(void)
 {
 	long r_mbps, w_mbps, mbps;
 	ktime_t ts;

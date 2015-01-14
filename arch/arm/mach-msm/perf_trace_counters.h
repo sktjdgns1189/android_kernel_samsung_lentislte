@@ -147,9 +147,7 @@ TRACE_EVENT(sched_switch_with_ctrs,
 			__entry->lctr1 = delta_l2_cnts[1];
 		),
 
-		TP_printk("prev_pid=%d, next_pid=%d, CCNTR: %u, CTR0: %u," \
-				" CTR1: %u, CTR2: %u, CTR3: %u," \
-				" L2CTR0: %u, L2CTR1: %u",
+		TP_printk("prev_pid=%d, next_pid=%d, CCNTR: %u, CTR0: %u, CTR1: %u, CTR2: %u, CTR3: %u, L2CTR0: %u, L2CTR1: %u",
 				__entry->old_pid, __entry->new_pid,
 				__entry->cctr, __entry->ctr0, __entry->ctr1,
 				__entry->ctr2, __entry->ctr3,

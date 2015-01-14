@@ -85,13 +85,12 @@ static sctp_dbg_objcnt_entry_t sctp_dbg_objcnt[] = {
  */
 static int sctp_objcnt_seq_show(struct seq_file *seq, void *v)
 {
-	int i;
+	int i, len;
 
 	i = (int)*(loff_t *)v;
-	seq_setwidth(seq, 127);
-	seq_printf(seq, "%s: %d", sctp_dbg_objcnt[i].label,
-				atomic_read(sctp_dbg_objcnt[i].counter));
-	seq_pad(seq, '\n');
+	seq_printf(seq, "%s: %d%n", sctp_dbg_objcnt[i].label,
+				atomic_read(sctp_dbg_objcnt[i].counter), &len);
+	seq_printf(seq, "%*s\n", 127 - len, "");
 	return 0;
 }
 
@@ -130,20 +129,20 @@ static const struct file_operations sctp_objcnt_ops = {
 };
 
 /* Initialize the objcount in the proc filesystem.  */
-void sctp_dbg_objcnt_init(void)
+void sctp_dbg_objcnt_init(struct net *net)
 {
 	struct proc_dir_entry *ent;
 
 	ent = proc_create("sctp_dbg_objcnt", 0,
-			  proc_net_sctp, &sctp_objcnt_ops);
+			  net->sctp.proc_net_sctp, &sctp_objcnt_ops);
 	if (!ent)
 		pr_warn("sctp_dbg_objcnt: Unable to create /proc entry.\n");
 }
 
 /* Cleanup the objcount entry in the proc filesystem.  */
-void sctp_dbg_objcnt_exit(void)
+void sctp_dbg_objcnt_exit(struct net *net)
 {
-	remove_proc_entry("sctp_dbg_objcnt", proc_net_sctp);
+	remove_proc_entry("sctp_dbg_objcnt", net->sctp.proc_net_sctp);
 }
 
 

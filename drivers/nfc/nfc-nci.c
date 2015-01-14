@@ -1,4 +1,4 @@
-/* Copyright (c) 2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -13,6 +13,7 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/fs.h>
+#include <linux/reboot.h>
 #include <linux/slab.h>
 #include <linux/i2c.h>
 #include <linux/irq.h>
@@ -47,7 +48,7 @@ static struct of_device_id msm_match_table[] = {
 MODULE_DEVICE_TABLE(of, msm_match_table);
 
 #define MAX_BUFFER_SIZE			(780)
-#define PACKET_MAX_LENGTH			(258)
+#define PACKET_MAX_LENGTH		(258)
 /* Read data */
 #define PACKET_HEADER_SIZE_NCI	(4)
 #define PACKET_TYPE_NCI			(16)
@@ -58,7 +59,7 @@ MODULE_DEVICE_TABLE(of, msm_match_table);
 #define NTF_TIMEOUT				(10000)
 #define	CORE_RESET_RSP_GID		(0x60)
 #define	CORE_RESET_OID			(0x00)
-#define CORE_RST_NTF_LENGTH			(0x02)
+#define CORE_RST_NTF_LENGTH		(0x02)
 
 static void clk_req_update(struct work_struct *work);
 
@@ -114,6 +115,9 @@ static struct devicemode	device_mode;
 static int					ftm_raw_write_mode;
 static int					ftm_werr_code;
 
+
+unsigned int	disable_ctrl;
+bool		region2_sent;
 
 static void qca199x_init_stat(struct qca199x_dev *qca199x_dev)
 {
@@ -491,6 +495,12 @@ static ssize_t nfc_write(struct file *filp, const char __user *buf,
 	}
 	mutex_unlock(&qca199x_dev->read_mutex);
 
+	/* If we detect a Region2 command prior to power-down */
+	if ((tmp[0] == 0x2F) && (tmp[1] == 0x01) && (tmp[2] == 0x02) &&
+		(tmp[3] == 0x08) && (tmp[4] == 0x00)) {
+		region2_sent = true;
+	}
+
 	return ret;
 }
 
@@ -606,7 +616,7 @@ int nfc_ioctl_power_states(struct file *filp, unsigned int cmd,
 		if (r < 0)
 			goto err_req;
 		/*
-			Also, set flag for initial NCI write following resetas
+			Also, set flag for initial NCI write following reset as
 			may wish to do some house keeping. Ensure no pending
 			messages in NFCC buffers which may be wrongly
 			construed as response to initial message
@@ -757,7 +767,7 @@ int nfc_ioctl_nfcc_version(struct file *filp, unsigned int cmd,
 				&raw_chip_rev_id_addr, 1);
 		if (r < 0)
 			goto invalid_wr;
-		usleep(20);
+		usleep(10);
 		r = i2c_master_recv(qca199x_dev->client, &raw_chip_version, 1);
 		/* Restore original NFCC slave I2C address */
 		qca199x_dev->client->addr = curr_addr;
@@ -1082,7 +1092,8 @@ static int qca199x_clock_select(struct qca199x_dev *qca199x_dev)
 	} else if (!strcmp(qca199x_dev->clk_src_name, "GPCLK")) {
 		if (gpio_is_valid(qca199x_dev->clk_src_gpio)) {
 			qca199x_dev->s_clk  =
-				clk_get(&qca199x_dev->client->dev, "core_clk");
+				clk_get(&qca199x_dev->client->dev,
+				  "core_clk");
 			if (qca199x_dev->s_clk == NULL)
 				goto err_invalid_dis_gpio;
 		} else {
@@ -1091,7 +1102,8 @@ static int qca199x_clock_select(struct qca199x_dev *qca199x_dev)
 	} else if (!strcmp(qca199x_dev->clk_src_name, "GPCLK2")) {
 		if (gpio_is_valid(qca199x_dev->clk_src_gpio)) {
 			qca199x_dev->s_clk  =
-				clk_get(&qca199x_dev->client->dev, "core_clk_pvt");
+				clk_get(&qca199x_dev->client->dev,
+				  "core_clk_pvt");
 			if (qca199x_dev->s_clk == NULL)
 				goto err_invalid_dis_gpio;
 		} else {
@@ -1154,6 +1166,7 @@ static int nfc_parse_dt(struct device *dev, struct qca199x_platform_data *pdata)
 	pdata->dis_gpio = of_get_named_gpio(np, "qcom,dis-gpio", 0);
 	if ((!gpio_is_valid(pdata->dis_gpio)))
 		return -EINVAL;
+	disable_ctrl = pdata->dis_gpio;
 
 	pdata->irq_gpio = of_get_named_gpio(np, "qcom,irq-gpio", 0);
 	if ((!gpio_is_valid(pdata->irq_gpio)))
@@ -1162,7 +1175,10 @@ static int nfc_parse_dt(struct device *dev, struct qca199x_platform_data *pdata)
 	r = of_property_read_string(np, "qcom,clk-src", &pdata->clk_src_name);
 
 	if (strcmp(pdata->clk_src_name, "GPCLK2")) {
-		pdata->clkreq_gpio = of_get_named_gpio(np, "qcom,clk-gpio", 0);
+		r = of_property_read_u32(np, "qcom,clk-gpio",
+					&pdata->clkreq_gpio);
+		if (r)
+			return -EINVAL;
 	}
 
 	if ((!strcmp(pdata->clk_src_name, "GPCLK")) ||
@@ -1176,7 +1192,6 @@ static int nfc_parse_dt(struct device *dev, struct qca199x_platform_data *pdata)
 			if ((!gpio_is_valid(pdata->irq_gpio_clk_req)))
 				return -EINVAL;
 	}
-
 	if (r)
 		return -EINVAL;
 	return r;
@@ -1187,6 +1202,7 @@ static int qca199x_probe(struct i2c_client *client,
 {
 	int r = 0;
 	int irqn = 0;
+	struct device_node *node = client->dev.of_node;
 	struct qca199x_platform_data *platform_data;
 	struct qca199x_dev *qca199x_dev;
 
@@ -1254,12 +1270,8 @@ static int qca199x_probe(struct i2c_client *client,
 		goto err_free_dev;
 	}
 
-	/* Guarantee that the NFCC starts in a clean state. */
-	gpio_set_value(platform_data->dis_gpio, 1);/* HPD */
-	usleep(200);
-	gpio_set_value(platform_data->dis_gpio, 0);/* ULPM */
-	usleep(200);
-
+	/* Put device in ULPM */
+	gpio_set_value(platform_data->dis_gpio, 0);
 	r = nfcc_hw_check(client, platform_data->reg);
 	if (r) {
 		/* We don't think there is hardware but just in case HPD */
@@ -1338,6 +1350,9 @@ static int qca199x_probe(struct i2c_client *client,
 	}
 
 	if (strcmp(platform_data->clk_src_name, "GPCLK2")) {
+		platform_data->clkreq_gpio =
+			of_get_named_gpio(node, "qcom,clk-gpio", 0);
+
 		if (gpio_is_valid(platform_data->clkreq_gpio)) {
 			r = gpio_request(platform_data->clkreq_gpio,
 				"nfc_clkreq_gpio");
@@ -1460,6 +1475,10 @@ static int qca199x_probe(struct i2c_client *client,
 	}
 	i2c_set_clientdata(client, qca199x_dev);
 	gpio_set_value(platform_data->dis_gpio, 1);
+
+	/* To keep track if region2 command has been sent to controller */
+	region2_sent = false;
+
 	dev_dbg(&client->dev,
 	"nfc-nci probe: %s, probing qca1990 exited successfully\n",
 		 __func__);
@@ -1534,17 +1553,52 @@ static struct i2c_driver qca199x = {
 	},
 };
 
+
+static int nfcc_reboot(struct notifier_block *notifier, unsigned long val,
+		      void *v)
+{
+	/*
+	 * Set DISABLE=1 *ONLY* if the NFC service has been disabled.
+	 * This will put NFCC into HPD(Hard Power Down) state for power
+	 * saving when powering down(Low Batt. or Power off handset)
+	 * If user requires NFC and CE mode when powered down(PD) the
+	 * middleware puts NFCC into region2 prior to PD. In this case
+	 * we DO NOT HPD chip as this will trash Region2 and CE support
+	 * when handset is PD.
+	 */
+	if (region2_sent == false) {
+		/* HPD the NFCC */
+		gpio_set_value(disable_ctrl, 1);
+	}
+	return NOTIFY_OK;
+}
+
+
+static struct notifier_block nfcc_notifier = {
+	.notifier_call	= nfcc_reboot,
+	.next		= NULL,
+	.priority	= 0
+};
+
 /*
  * module load/unload record keeping
  */
 static int __init qca199x_dev_init(void)
 {
+	int ret;
+
+	ret = register_reboot_notifier(&nfcc_notifier);
+	if (ret) {
+		pr_err("cannot register reboot notifier (err=%d)\n", ret);
+		return ret;
+	}
 	return i2c_add_driver(&qca199x);
 }
 module_init(qca199x_dev_init);
 
 static void __exit qca199x_dev_exit(void)
 {
+	unregister_reboot_notifier(&nfcc_notifier);
 	i2c_del_driver(&qca199x);
 }
 module_exit(qca199x_dev_exit);

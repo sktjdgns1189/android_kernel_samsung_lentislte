@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -20,9 +20,8 @@
 #include <linux/of.h>
 #include <linux/of_address.h>
 #include <linux/platform_device.h>
-#include <mach/msm_iomap.h>
-#include <mach/socinfo.h>
-#include "spm.h"
+#include <soc/qcom/spm.h>
+
 #include "spm_driver.h"
 
 struct msm_spm_power_modes {
@@ -73,6 +72,11 @@ static void msm_spm_smp_set_vdd(void *data)
 		put_cpu();
 }
 
+void msm_spm_dump_regs(unsigned int cpu)
+{
+	dump_regs(&per_cpu(msm_cpu_spm_device, cpu).reg_data, cpu);
+}
+
 /**
  * msm_spm_set_vdd(): Set core voltage
  * @cpu: core id
@@ -82,12 +86,14 @@ int msm_spm_set_vdd(unsigned int cpu, unsigned int vlevel)
 {
 	struct msm_spm_vdd_info info;
 	int ret;
+	int current_cpu;
 
 	info.cpu = cpu;
 	info.vlevel = vlevel;
 	info.err = -ENODEV;
 
-	if (!msm_spm_L2_apcs_master && (smp_processor_id() != cpu) &&
+	current_cpu = get_cpu();
+	if (!msm_spm_L2_apcs_master && (current_cpu != cpu) &&
 			cpu_online(cpu)) {
 		/**
 		 * We do not want to set the voltage of another core from
@@ -109,6 +115,7 @@ int msm_spm_set_vdd(unsigned int cpu, unsigned int vlevel)
 		msm_spm_smp_set_vdd(&info);
 		ret = info.err;
 	}
+	put_cpu();
 
 	return ret;
 }
@@ -132,7 +139,7 @@ unsigned int msm_spm_get_vdd(unsigned int cpu)
 EXPORT_SYMBOL(msm_spm_get_vdd);
 
 static int msm_spm_dev_set_low_power_mode(struct msm_spm_device *dev,
-		unsigned int mode, bool notify_rpm)
+		unsigned int mode, bool notify_rpm, bool pc_mode)
 {
 	uint32_t i;
 	uint32_t start_addr = 0;
@@ -152,12 +159,12 @@ static int msm_spm_dev_set_low_power_mode(struct msm_spm_device *dev,
 			}
 		}
 		ret = msm_spm_drv_set_low_power_mode(&dev->reg_data,
-					start_addr);
+					start_addr, pc_mode);
 	}
 	return ret;
 }
 
-static int __devinit msm_spm_dev_init(struct msm_spm_device *dev,
+static int msm_spm_dev_init(struct msm_spm_device *dev,
 		struct msm_spm_platform_data *data)
 {
 	int i, ret = -ENOMEM;
@@ -203,37 +210,40 @@ spm_failed_malloc:
 
 /**
  * msm_spm_turn_on_cpu_rail(): Power on cpu rail before turning on core
+ * @base: core 0's base SAW address
  * @cpu: core id
  */
-int msm_spm_turn_on_cpu_rail(unsigned int cpu)
+int msm_spm_turn_on_cpu_rail(unsigned long base, unsigned int cpu)
 {
 	uint32_t val = 0;
-	uint32_t timeout = 0;
+	uint32_t timeout = 512; /* delay for voltage to settle on the core */
 	void *reg = NULL;
-	void *saw_bases[] = {
-		0,
-		MSM_SAW1_BASE,
-		MSM_SAW2_BASE,
-		MSM_SAW3_BASE
-	};
 
 	if (cpu == 0 || cpu >= num_possible_cpus())
 		return -EINVAL;
 
-	reg = saw_bases[cpu];
+	reg = ioremap_nocache(base + (cpu * 0x10000), SZ_4K);
+	if (!reg)
+		return -ENOMEM;
 
-	if (soc_class_is_msm8960() || soc_class_is_msm8930() ||
-	    soc_class_is_apq8064()) {
-		val = 0xA4;
-		reg += 0x14;
-		timeout = 512;
-	} else {
-		return -ENOSYS;
-	}
+	reg += 0x1C;
 
+	/*
+	 * Set FTS2 type CPU supply regulator to 1.15 V. This assumes that the
+	 * regulator is already configured in LV range.
+	 */
+	val = 0x40000E6;
 	writel_relaxed(val, reg);
 	mb();
 	udelay(timeout);
+
+	/* Enable CPU supply regulator */
+	val = 0x2030080;
+	writel_relaxed(val, reg);
+	mb();
+	udelay(timeout);
+
+	iounmap(reg);
 
 	return 0;
 }
@@ -255,7 +265,8 @@ EXPORT_SYMBOL(msm_spm_reinit);
 int msm_spm_set_low_power_mode(unsigned int mode, bool notify_rpm)
 {
 	struct msm_spm_device *dev = &__get_cpu_var(msm_cpu_spm_device);
-	return msm_spm_dev_set_low_power_mode(dev, mode, notify_rpm);
+	bool pc_mode = (mode == MSM_SPM_MODE_POWER_COLLAPSE) ? true : false;
+	return msm_spm_dev_set_low_power_mode(dev, mode, notify_rpm, pc_mode);
 }
 EXPORT_SYMBOL(msm_spm_set_low_power_mode);
 
@@ -294,8 +305,13 @@ int __init msm_spm_init(struct msm_spm_platform_data *data, int nr_devs)
  */
 int msm_spm_l2_set_low_power_mode(unsigned int mode, bool notify_rpm)
 {
+	bool pc_mode = true;
+
+	if (mode == MSM_SPM_L2_MODE_DISABLED ||
+		mode == MSM_SPM_L2_MODE_RETENTION)
+		pc_mode = false;
 	return msm_spm_dev_set_low_power_mode(
-			&msm_spm_l2_device, mode, notify_rpm);
+			&msm_spm_l2_device, mode, notify_rpm, pc_mode);
 }
 EXPORT_SYMBOL(msm_spm_l2_set_low_power_mode);
 
@@ -343,7 +359,7 @@ int __init msm_spm_l2_init(struct msm_spm_platform_data *data)
 }
 #endif
 
-static int __devinit msm_spm_dev_probe(struct platform_device *pdev)
+static int msm_spm_dev_probe(struct platform_device *pdev)
 {
 	int ret = 0;
 	int cpu = 0;
@@ -353,7 +369,7 @@ static int __devinit msm_spm_dev_probe(struct platform_device *pdev)
 	char *key = NULL;
 	uint32_t val = 0;
 	struct msm_spm_seq_entry modes[MSM_SPM_MODE_NR];
-	size_t len = 0;
+	int len = 0;
 	struct msm_spm_device *dev = NULL;
 	struct resource *res = NULL;
 	uint32_t mode_count = 0;
@@ -440,8 +456,6 @@ static int __devinit msm_spm_dev_probe(struct platform_device *pdev)
 	ret = of_property_read_u32(node, key, &val);
 	if (!ret)
 		spm_data.vctl_timeout_us = val;
-	else if (cpu == 0xffff)
-		goto fail;
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	if (!res)
@@ -456,23 +470,17 @@ static int __devinit msm_spm_dev_probe(struct platform_device *pdev)
 	spm_data.phase_port = -1;
 	spm_data.pfm_port = -1;
 
+	key = "qcom,vctl-port";
+	of_property_read_u32(node, key, &spm_data.vctl_port);
+
+	key = "qcom,phase-port";
+	of_property_read_u32(node, key, &spm_data.phase_port);
+
+	key = "qcom,pfm-port";
+	of_property_read_u32(node, key, &spm_data.pfm_port);
+
 	/* optional */
 	if (dev == &msm_spm_l2_device) {
-		key = "qcom,vctl-port";
-		ret = of_property_read_u32(node, key, &val);
-		if (!ret)
-			spm_data.vctl_port = val;
-
-		key = "qcom,phase-port";
-		ret = of_property_read_u32(node, key, &val);
-		if (!ret)
-			spm_data.phase_port = val;
-
-		key = "qcom,pfm-port";
-		ret = of_property_read_u32(node, key, &val);
-		if (!ret)
-			spm_data.pfm_port = val;
-
 		key = "qcom,L2-spm-is-apcs-master";
 		msm_spm_L2_apcs_master =
 			of_property_read_bool(pdev->dev.of_node, key);

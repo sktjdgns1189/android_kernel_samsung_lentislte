@@ -1,4 +1,4 @@
-/* Copyright (c) 2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -26,6 +26,8 @@ struct data_port {
 	struct usb_function		*func;
 	struct usb_ep			*in;
 	struct usb_ep			*out;
+	int                             ipa_consumer_ep;
+	int                             ipa_producer_ep;
 };
 
 void bam_data_disconnect(struct data_port *gr, u8 port_num);
@@ -41,5 +43,13 @@ int bam_data_destroy(unsigned int no_bam2bam_port);
 void bam_data_suspend(u8 port_num);
 
 void bam_data_resume(u8 port_num);
+
+void u_bam_data_set_max_xfer_size(u32 max_transfer_size);
+
+void u_bam_data_set_max_pkt_num(u32 max_packets_number);
+
+void u_bam_data_start_rndis_ipa(void);
+
+void u_bam_data_stop_rndis_ipa(void);
 
 #endif /* __U_BAM_DATA_H */

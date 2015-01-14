@@ -653,7 +653,7 @@ static int mpu3050_parse_dt(struct device *dev,
  *
  *	If present install the relevant sysfs interfaces and input device.
  */
-static int __devinit mpu3050_probe(struct i2c_client *client,
+static int mpu3050_probe(struct i2c_client *client,
 				   const struct i2c_device_id *id)
 {
 	struct mpu3050_sensor *sensor;
@@ -797,7 +797,7 @@ static int __devinit mpu3050_probe(struct i2c_client *client,
 
 		error = request_threaded_irq(client->irq,
 				     NULL, mpu3050_interrupt_thread,
-				     IRQF_TRIGGER_FALLING,
+				     IRQF_TRIGGER_FALLING | IRQF_ONESHOT,
 				     "mpu3050", sensor);
 		if (error) {
 			dev_err(&client->dev,
@@ -853,7 +853,7 @@ err_free_mem:
  *
  *	Our sensor is going away, clean up the resources.
  */
-static int __devexit mpu3050_remove(struct i2c_client *client)
+static int mpu3050_remove(struct i2c_client *client)
 {
 	struct mpu3050_sensor *sensor = i2c_get_clientdata(client);
 
@@ -984,7 +984,7 @@ static struct i2c_driver mpu3050_i2c_driver = {
 		.of_match_table = mpu3050_of_match,
 	},
 	.probe		= mpu3050_probe,
-	.remove		= __devexit_p(mpu3050_remove),
+	.remove		= mpu3050_remove,
 	.id_table	= mpu3050_ids,
 };
 

@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2012, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -12,7 +12,7 @@
 #ifndef __ARCH_ARM_MACH_MSM_SPM_DEVICES_H
 #define __ARCH_ARM_MACH_MSM_SPM_DEVICES_H
 
-#include "spm.h"
+#include <soc/qcom/spm.h>
 
 enum msm_spm_pmic_port {
 	MSM_SPM_PMIC_VCTL_PORT,
@@ -39,9 +39,10 @@ int msm_spm_drv_init(struct msm_spm_driver_data *dev,
 		struct msm_spm_platform_data *data);
 void msm_spm_drv_reinit(struct msm_spm_driver_data *dev);
 int msm_spm_drv_set_low_power_mode(struct msm_spm_driver_data *dev,
-		uint32_t addr);
+		uint32_t addr, bool pc_mode);
 int msm_spm_drv_set_vdd(struct msm_spm_driver_data *dev,
 		unsigned int vlevel);
+void dump_regs(struct msm_spm_driver_data *dev, int cpu);
 uint32_t msm_spm_drv_get_sts_curr_pmic_data(
 		struct msm_spm_driver_data *dev);
 int msm_spm_drv_write_seq_data(struct msm_spm_driver_data *dev,

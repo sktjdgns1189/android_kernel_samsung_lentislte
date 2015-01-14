@@ -4,6 +4,15 @@
 
 menu "Misc devices"
 
+config SEC_FPGA_ICE40XX
+        tristate "this feature allows FPGA_ICE40XX"
+        default y
+        help
+          This is a driver for IR LEd driver based on Lattice chip.
+          Lattice FPGA can support IR LED.
+          To compile this driver as a module, choose M here.
+          If unsure, say N.
+
 config SENSORS_LIS3LV02D
 	tristate
 	depends on INPUT
@@ -60,15 +69,6 @@ config ATMEL_PWM
 	  purposes including software controlled power-efficient backlights
 	  on LCD displays, motor control, and waveform generation.
 
-config AB8500_PWM
-	bool "AB8500 PWM support"
-	depends on AB8500_CORE && ARCH_U8500
-	select HAVE_PWM
-	help
-	  This driver exports functions to enable/disble/config/free Pulse
-	  Width Modulation in the Analog Baseband Chip AB8500.
-	  It is used by led and backlight driver to control the intensity.
-
 config ATMEL_TCLIB
 	bool "Atmel AT32/AT91 Timer/Counter Library"
 	depends on (AVR32 || ARCH_AT91)
@@ -102,9 +102,17 @@ config ATMEL_TCB_CLKSRC_BLOCK
 	  TC can be used for other purposes, such as PWM generation and
 	  interval timing.
 
+config DUMMY_IRQ
+	tristate "Dummy IRQ handler"
+	default n
+	---help---
+	  This module accepts a single 'irq' parameter, which it should register for.
+	  The sole purpose of this module is to help with debugging of systems on
+	  which spurious IRQs would happen on disabled IRQ vector.
+
 config IBM_ASM
 	tristate "Device driver for IBM RSA service processor"
-	depends on X86 && PCI && INPUT && EXPERIMENTAL
+	depends on X86 && PCI && INPUT
 	---help---
 	  This option enables device driver support for in-band access to the
 	  IBM RSA (Condor) service processor in eServer xSeries systems.
@@ -136,7 +144,7 @@ config PHANTOM
 
 config INTEL_MID_PTI
 	tristate "Parallel Trace Interface for MIPI P1149.7 cJTAG standard"
-	depends on PCI
+	depends on PCI && TTY
 	default n
 	help
 	  The PTI (Parallel Trace Interface) driver directs
@@ -161,8 +169,8 @@ config SGI_IOC4
 	  Otherwise say N.
 
 config TIFM_CORE
-	tristate "TI Flash Media interface support (EXPERIMENTAL)"
-	depends on EXPERIMENTAL && PCI
+	tristate "TI Flash Media interface support"
+	depends on PCI
 	help
 	  If you want support for Texas Instruments(R) Flash Media adapters
 	  you should select this option and then also choose an appropriate
@@ -177,8 +185,8 @@ config TIFM_CORE
 	  be called tifm_core.
 
 config TIFM_7XX1
-	tristate "TI Flash Media PCI74xx/PCI76xx host adapter support (EXPERIMENTAL)"
-	depends on PCI && TIFM_CORE && EXPERIMENTAL
+	tristate "TI Flash Media PCI74xx/PCI76xx host adapter support"
+	depends on PCI && TIFM_CORE
 	default TIFM_CORE
 	help
 	  This option enables support for Texas Instruments(R) PCI74xx and
@@ -191,7 +199,7 @@ config TIFM_7XX1
 
 config ICS932S401
 	tristate "Integrated Circuits ICS932S401"
-	depends on I2C && EXPERIMENTAL
+	depends on I2C
 	help
 	  If you say yes here you get support for the Integrated Circuits
 	  ICS932S401 clock control chips.
@@ -201,7 +209,7 @@ config ICS932S401
 
 config ATMEL_SSC
 	tristate "Device driver for Atmel SSC peripheral"
-	depends on AVR32 || ARCH_AT91
+	depends on HAS_IOMEM
 	---help---
 	  This option enables device driver support for Atmel Synchronized
 	  Serial Communication peripheral (SSC).
@@ -375,20 +383,23 @@ config SENSORS_APDS990X
 	   To compile this driver as a module, choose M here: the
 	   module will be called apds990x. If unsure, say N here.
 
+config SAMSUNG_JACK
+	bool "3.5 PI Jack driver for Samsung devices"
+	depends on INPUT
+	default n
+	help
+	 This is 3.5 PI JACK driver for Samsung devies.
+	 sec_jack from samsung driver used for samsung devices.
+
+	 To samsung jack is reviewed and supported in all the
+	 samsung devices.
+
 config HMC6352
 	tristate "Honeywell HMC6352 compass"
 	depends on I2C
 	help
 	  This driver provides support for the Honeywell HMC6352 compass,
 	  providing configuration and heading data via sysfs.
-
-config SENSORS_AK8975
-	tristate "AK8975 compass support"
-	default n
-	depends on I2C
-	help
-	  If you say yes here you get support for Asahi Kasei's
-	  orientation sensor AK8975.
 
 config EP93XX_PWM
 	tristate "EP93xx PWM support"
@@ -405,7 +416,7 @@ config EP93XX_PWM
 
 config DS1682
 	tristate "Dallas DS1682 Total Elapsed Time Recorder with Alarm"
-	depends on I2C && EXPERIMENTAL
+	depends on I2C
 	help
 	  If you say yes here you get support for Dallas Semiconductor
 	  DS1682 Total Elapsed Time Recorder.
@@ -415,7 +426,7 @@ config DS1682
 
 config SPEAR13XX_PCIE_GADGET
 	bool "PCIe gadget support for SPEAr13XX platform"
-	depends on ARCH_SPEAR13XX
+	depends on ARCH_SPEAR13XX && BROKEN
 	default n
 	help
 	 This option enables gadget support for PCIe controller. If
@@ -439,7 +450,7 @@ config UID_STAT
 
 config VMWARE_BALLOON
 	tristate "VMware Balloon Driver"
-	depends on X86
+	depends on X86 && HYPERVISOR_GUEST
 	help
 	  This is VMware physical memory management driver which acts
 	  like a "balloon" that can be inflated to reclaim physical pages
@@ -464,14 +475,32 @@ config ARM_CHARLCD
 	  still useful.
 
 config BMP085
-	tristate "BMP085 digital pressure sensor"
+	bool
+	depends on SYSFS
+
+config BMP085_I2C
+	tristate "BMP085 digital pressure sensor on I2C"
+	select BMP085
+	select REGMAP_I2C
 	depends on I2C && SYSFS
 	help
-	  If you say yes here you get support for the Bosch Sensortec
-	  BMP085 digital pressure sensor.
+	  Say Y here if you want to support Bosch Sensortec's digital pressure
+	  sensor hooked to an I2C bus.
 
 	  To compile this driver as a module, choose M here: the
-	  module will be called bmp085.
+	  module will be called bmp085-i2c.
+
+config BMP085_SPI
+	tristate "BMP085 digital pressure sensor on SPI"
+	select BMP085
+	select REGMAP_SPI
+	depends on SPI_MASTER && SYSFS
+	help
+	  Say Y here if you want to support Bosch Sensortec's digital pressure
+	  sensor hooked to an SPI bus.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called bmp085-spi.
 
 config PCH_PHUB
 	tristate "Intel EG20T PCH/LAPIS Semicon IOH(ML7213/ML7223/ML7831) PHUB"
@@ -502,21 +531,25 @@ config USB_SWITCH_FSA9480
 	  stereo and mono audio, video, microphone and UART data to use
 	  a common connector port.
 
-config MAX8997_MUIC
-	tristate "MAX8997 MUIC Support"
-	depends on MFD_MAX8997
+config LATTICE_ECP3_CONFIG
+	tristate "Lattice ECP3 FPGA bitstream configuration via SPI"
+	depends on SPI && SYSFS
+	select FW_LOADER
+	default	n
 	help
-	  If you say yes here you get support for the MUIC device of
-	  Maxim MAX8997 PMIC.
-	  The MAX8997 MUIC is a USB port accessory detector and switch.
+	  This option enables support for bitstream configuration (programming
+	  or loading) of the Lattice ECP3 FPGA family via SPI.
 
-config WL127X_RFKILL
-	tristate "Bluetooth power control driver for TI wl127x"
-	depends on RFKILL
-	default n
-	---help---
-	 Creates an rfkill entry in sysfs for power control of Bluetooth
-	 TI wl127x chips.
+	  If unsure, say N.
+
+config SRAM
+	bool "Generic on-chip SRAM driver"
+	depends on HAS_IOMEM
+	select GENERIC_ALLOCATOR
+	help
+	  This driver allows you to declare a memory region to be managed by
+	  the genalloc API. It is supposed to be used for small on-chip SRAM
+	  areas found on many SoCs.
 
 config TSIF
 	depends on ARCH_MSM8X60 || ARCH_MSM8960 || ARCH_APQ8064
@@ -530,20 +563,6 @@ config TSIF
 	  To compile this driver as module, choose M here: the
 	  module will be called msm_tsif.
 
-config TSIF_CHRDEV
-	tristate "TSIF character device"
-	depends on TSIF
-	default n
-	---help---
-	  This driver uses low level TSIF interface. It provides character
-	  device useable from user space programs: one can read TSIF stream
-	  from this device.
-
-	  This driver may be used as example for TSIF API usage.
-
-	  To compile this driver as module, choose M here: the
-	  module will be called tsif_chrdev.
-
 config TSIF_DEBUG
 	bool "Turn on debugging information for tsif driver"
 	depends on TSIF
@@ -551,74 +570,12 @@ config TSIF_DEBUG
 	---help---
 	  This turns on debugging information for the tsif driver
 
-config TSPP
-	depends on ARCH_MSM
-	tristate "TSPP (Transport Stream Packet Processor) Support"
-	---help---
-	Transport Stream Packet Processor is used to offload the
-	processing of MPEG transport streams from the main processor.
-	This can also be compiled as a loadable module.
-
-config CI_BRIDGE_SPI
-	depends on SPI_QUP
-	tristate "CI Bridge SPI Driver Support"
-	---help---
-	This driver provides a simple SPI read/write interface to
-	an external CI bridge. It implements a character device
-	driver interface which allows making SPI transactions
-	using the Linux SPI framework.
-
-	To compile this driver as module, choose M here.
-
 config HAPTIC_ISA1200
 	tristate "ISA1200 haptic support"
 	depends on I2C
 	default n
 	help
 	  The ISA1200 is a high performance enhanced haptic driver.
-
-config PMIC8058_PWM
-	tristate "Qualcomm PM8058 PWM support"
-	depends on PMIC8058
-	default y
-	help
-	  This option enables device driver support for the PWM channels
-	  on Qualcomm PM8058 chip. Pulse Width Modulation is used for
-	  purposes including software controlled brightness of backlight,
-	  motor control, and waveform generation.
-
-config PMIC8XXX_VIBRATOR
-	tristate "Qualcomm Vibrator support for PMIC8XXX"
-	depends on MFD_PM8XXX && ANDROID_TIMED_OUTPUT
-	help
-	  This option enables device driver support for the vibrator
-	  on the PM8XXX chips. The vibrator is controlled using the
-	  timed output class.
-
-config PMIC8XXX_NFC
-	tristate "Qualcomm PM8XXX support for Near Field Communication"
-	depends on MFD_PM8XXX
-	help
-	  Qualcomm PM8XXX chips have a module to support NFC (Near Field
-	  Communication). This option enables the driver to support it.
-
-config PMIC8XXX_UPL
-	tristate "Qualcomm PM8XXX support for User Programmable Logic"
-	depends on MFD_PM8XXX
-	help
-	  This option enables device driver support for User Programmable Logic
-	  on Qualcomm PM8XXX chips. The UPL module provides a means to implement
-	  simple truth table based logic via a set of control registers. I/O may
-	  be routed in and out of the UPL module via GPIO or DTEST pins.
-
-config PMIC8058_XOADC
-	tristate "Qualcomm PM8058 XOADC driver"
-	depends on PMIC8058
-	default n
-	help
-	  Enables User processor ADC reads over the XOADC module of Qualcomm's
-	  PMIC8058. Driver interface to program registers of the ADC over
-	  AMUX channels, devices on programmable MPP's and xotherm.
 
 config QSEECOM
 	tristate "Qualcomm Secure Execution Communicator driver"
@@ -644,6 +601,26 @@ config QPNP_MISC
 	  and the driver provides an API to check if this interrupt
 	  is available on the current PMIC chip.
 
+config SEC_MISC
+	bool "Samsung P series miscellaneous driver"
+	default n
+	---help---
+	  Samsung P series miscellaneous driver
+	  This creates sys fs entries for changing
+	  debug levels. The debug level is stored in
+	  Param partition
+
+config SAMSUNG_JACK
+	bool "3.5 PI Jack driver for Samsung devices"
+	depends on INPUT
+	default n
+	help
+	 This is 3.5 PI JACK driver for Samsung devies.
+	 sec_jack from samsung driver used for samsung devices.
+
+	 To samsung jack is reviewed and supported in all the
+	 samsung devices.
+
 config USB_HSIC_SMSC_HUB
 	tristate "Support for HSIC based MSM on-chip SMSC3503 HUB"
 	depends on USB_EHCI_MSM_HSIC
@@ -665,12 +642,109 @@ config TI_DRV2667
 	  To compile this driver as a module, choose M here: the
 	  module will be called ti_drv2667.
 
+config APQ8084_DOCKING_STATION
+	tristate "QTI APQ8084 Docking Station USB/Ethernet support"
+	depends on OF_GPIO
+	help
+	  This option enables support for the USB and Ethernet ports found on
+	  the QTI APQ8084 Docking Station.
+
+config NFC_PN547
+	bool "NXP PN547 NFC Controller Driver"
+	depends on I2C
+	default n
+	help
+	  NXP PN547 Near Field Communication controller support.
+	  This option enables device driver support for the NFC.
+	  It is used by many services. NFC is fully controlled using I2C
+	  to communicate the AP chip.
+
+config NFC_PN547_PMC8974_CLK_REQ
+	bool "NXP PN547 NFC Controller Driver"
+	depends on I2C
+	default n
+	help
+	  PM8941 Clock request for NXP PN547 Near Field
+	  Communication controller support.
+	  This option enables d1 clock for NFC.
+
+config NFC_PN547_8226_USE_BBCLK2
+	bool "NXP PN547 NFC CLOCK Controller"
+	depends on NFC_PN547
+	default n
+	help
+	  NXP PN547 Near Field Communication controller support.
+	  This option enables device driver support for the NFC.
+	  It is used by many services. NFC is fully controlled using I2C
+	  to communicate the AP chip.
+
+config NFC_PN547_8084_USE_BBCLK2
+	bool "NXP PN547 NFC CLOCK Controller"
+	depends on NFC_PN547
+	default n
+	help
+	  NXP PN547 Near Field Communication controller support.
+	  This option enables device driver support for the NFC.
+	  It is used by many services. NFC is fully controlled using I2C
+	  to communicate the AP chip.
+
+config SEC_NFC_I2C
+	tristate "SEC NFC driver for I2C interface"
+	depends on I2C
+	default n
+	help
+	  Say yes if you want System LSI Near Field Communication driver.
+	  This is for spi connected version. If unsure, say N here.
+	  To compile this driver as a module, choose m here. The module will
+	  be called sec-nfc-i2c.
+
+config SEC_NFC
+	bool "Samsung NFC driver"
+	default n
+	help
+	  SAMSUNG NFC Driver.
+	  This driver provides support for SAMSUNG NFC products.
+	  You should select your NFC product and interface.
+
+	  Say Y here to compile support for SAMSUNG NFC driver into the
+	  kernel.
+
+config NFC_N5_8084_USE_BBCLK2
+	bool "SEC N5 NFC CLOCK Controller"
+	depends on SEC_NFC
+	default n
+	help
+	  SEC N5 Near Field Communication controller support.
+	  This option enables device driver support for the NFC.
+	  It is used by many services. NFC is fully controlled using I2C
+	  to communicate the AP chip.
+
+choice
+	prompt "SEC NFC Products"
+	depends on SEC_NFC
+	default SEC_NFC_PRODUCT_N5
+config SEC_NFC_PRODUCT_N3
+	bool "N3"
+config SEC_NFC_PRODUCT_N5
+	bool "N5"
+endchoice
+
+config NFC_I2C_OVERWRITE
+	bool "I2C gpio overwrite"
+	depends on I2C
+	default n
+	help
+	  F-project rev09,10 has no external PU register.
+
 source "drivers/misc/c2port/Kconfig"
 source "drivers/misc/eeprom/Kconfig"
 source "drivers/misc/cb710/Kconfig"
-source "drivers/misc/iwmc3200top/Kconfig"
 source "drivers/misc/ti-st/Kconfig"
 source "drivers/misc/lis3lv02d/Kconfig"
 source "drivers/misc/carma/Kconfig"
 source "drivers/misc/altera-stapl/Kconfig"
+source "drivers/misc/modem_if/Kconfig"
+source "drivers/misc/mei/Kconfig"
+source "drivers/misc/vmw_vmci/Kconfig"
+source "drivers/misc/qcom/Kconfig"
 endmenu

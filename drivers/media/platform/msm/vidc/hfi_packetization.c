@@ -33,6 +33,7 @@ static int profile_table[] = {
 	[ilog2(HAL_H264_PROFILE_CONSTRAINED_HIGH)] =
 		HFI_H264_PROFILE_CONSTRAINED_HIGH,
 	[ilog2(HAL_VPX_PROFILE_VERSION_1)] = HFI_VPX_PROFILE_VERSION_1,
+	[ilog2(HAL_MVC_PROFILE_STEREO_HIGH)] = HFI_H264_PROFILE_STEREO_HIGH,
 };
 
 static int entropy_mode[] = {
@@ -104,6 +105,74 @@ static inline int hal_to_hfi_type(int property, int hal_type)
 	default:
 		return -ENOTSUPP;
 	}
+}
+
+static inline u32 get_hfi_layout(enum hal_buffer_layout_type hal_buf_layout)
+{
+	u32 hfi_layout;
+	switch (hal_buf_layout) {
+	case HAL_BUFFER_LAYOUT_TOP_BOTTOM:
+		hfi_layout = HFI_MVC_BUFFER_LAYOUT_TOP_BOTTOM;
+		break;
+	case HAL_BUFFER_LAYOUT_SEQ:
+		hfi_layout = HFI_MVC_BUFFER_LAYOUT_SEQ;
+		break;
+	default:
+		dprintk(VIDC_ERR, "Invalid buffer layout: 0x%x\n",
+			hal_buf_layout);
+		hfi_layout = HFI_MVC_BUFFER_LAYOUT_SEQ;
+		break;
+	}
+	return hfi_layout;
+}
+
+static inline u32 get_hfi_codec(enum hal_video_codec hal_codec)
+{
+	u32 hfi_codec;
+	switch (hal_codec) {
+	case HAL_VIDEO_CODEC_MVC:
+	case HAL_VIDEO_CODEC_H264:
+		hfi_codec = HFI_VIDEO_CODEC_H264;
+		break;
+	case HAL_VIDEO_CODEC_H263:
+		hfi_codec = HFI_VIDEO_CODEC_H263;
+		break;
+	case HAL_VIDEO_CODEC_MPEG1:
+		hfi_codec = HFI_VIDEO_CODEC_MPEG1;
+		break;
+	case HAL_VIDEO_CODEC_MPEG2:
+		hfi_codec = HFI_VIDEO_CODEC_MPEG2;
+		break;
+	case HAL_VIDEO_CODEC_MPEG4:
+		hfi_codec = HFI_VIDEO_CODEC_MPEG4;
+		break;
+	case HAL_VIDEO_CODEC_DIVX_311:
+		hfi_codec = HFI_VIDEO_CODEC_DIVX_311;
+		break;
+	case HAL_VIDEO_CODEC_DIVX:
+		hfi_codec = HFI_VIDEO_CODEC_DIVX;
+		break;
+	case HAL_VIDEO_CODEC_VC1:
+		hfi_codec = HFI_VIDEO_CODEC_VC1;
+		break;
+	case HAL_VIDEO_CODEC_SPARK:
+		hfi_codec = HFI_VIDEO_CODEC_SPARK;
+		break;
+	case HAL_VIDEO_CODEC_VP8:
+		hfi_codec = HFI_VIDEO_CODEC_VP8;
+		break;
+	case HAL_VIDEO_CODEC_HEVC:
+		hfi_codec = HFI_VIDEO_CODEC_HEVC;
+		break;
+	case HAL_VIDEO_CODEC_HEVC_HYBRID:
+		hfi_codec = HFI_VIDEO_CODEC_HEVC_HYBRID;
+		break;
+	default:
+		dprintk(VIDC_ERR, "Invalid codec 0x%x\n", hal_codec);
+		hfi_codec = 0;
+		break;
+	}
+	return hfi_codec;
 }
 
 int create_pkt_cmd_sys_init(struct hfi_cmd_sys_init_packet *pkt,
@@ -198,7 +267,7 @@ int create_pkt_set_cmd_sys_resource(
 		break;
 	}
 	default:
-		dprintk(VIDC_ERR, "Invalid resource_id %d",
+		dprintk(VIDC_ERR, "Invalid resource_id %d\n",
 					resource_hdr->resource_id);
 		rc = -EINVAL;
 	}
@@ -246,7 +315,9 @@ inline int create_pkt_cmd_sys_session_init(
 	pkt->packet_type = HFI_CMD_SYS_SESSION_INIT;
 	pkt->session_id = session_id;
 	pkt->session_domain = session_domain;
-	pkt->session_codec = session_codec;
+	pkt->session_codec = get_hfi_codec(session_codec);
+	if (!pkt->session_codec)
+		return -EINVAL;
 
 	return rc;
 }
@@ -263,6 +334,25 @@ int create_pkt_cmd_session_cmd(struct vidc_hal_session_cmd_pkt *pkt,
 	pkt->session_id = session_id;
 
 	return rc;
+}
+
+int create_pkt_cmd_sys_power_control(
+	struct hfi_cmd_sys_set_property_packet *pkt, u32 enable)
+{
+	struct hfi_enable *hfi;
+	if (!pkt) {
+		dprintk(VIDC_ERR, "No input packet\n");
+		return -EINVAL;
+	}
+
+	pkt->size = sizeof(struct hfi_cmd_sys_set_property_packet) +
+		sizeof(struct hfi_enable) + sizeof(u32);
+	pkt->packet_type = HFI_CMD_SYS_SET_PROPERTY;
+	pkt->num_properties = 1;
+	pkt->rg_property_data[0] = HFI_PROPERTY_SYS_CODEC_POWER_PLANE_CTRL;
+	hfi = (struct hfi_enable *) &pkt->rg_property_data[1];
+	hfi->enable = enable;
+	return 0;
 }
 
 static u32 get_hfi_buffer(int hal_buffer)
@@ -342,12 +432,6 @@ static int get_hfi_extradata_index(enum hal_extradata_id index)
 	case HAL_EXTRADATA_RECOVERY_POINT_SEI:
 		ret = HFI_PROPERTY_PARAM_VDEC_RECOVERY_POINT_SEI_EXTRADATA;
 		break;
-	case HAL_EXTRADATA_CLOSED_CAPTION_UD:
-		ret = HFI_PROPERTY_PARAM_VDEC_CLOSED_CAPTION_EXTRADATA;
-		break;
-	case HAL_EXTRADATA_AFD_UD:
-		ret = HFI_PROPERTY_PARAM_VDEC_AFD_EXTRADATA;
-		break;
 	case HAL_EXTRADATA_MULTISLICE_INFO:
 		ret = HFI_PROPERTY_PARAM_VENC_MULTI_SLICE_INFO;
 		break;
@@ -355,10 +439,15 @@ static int get_hfi_extradata_index(enum hal_extradata_id index)
 		ret = HFI_PROPERTY_PARAM_VDEC_NUM_CONCEALED_MB;
 		break;
 	case HAL_EXTRADATA_ASPECT_RATIO:
+	case HAL_EXTRADATA_INPUT_CROP:
+	case HAL_EXTRADATA_DIGITAL_ZOOM:
 		ret = HFI_PROPERTY_PARAM_INDEX_EXTRADATA;
 		break;
 	case HAL_EXTRADATA_MPEG2_SEQDISP:
 		ret = HFI_PROPERTY_PARAM_VDEC_MPEG2_SEQDISP_EXTRADATA;
+		break;
+	case HAL_EXTRADATA_STREAM_USERDATA:
+		ret = HFI_PROPERTY_PARAM_VDEC_STREAM_USERDATA_EXTRADATA;
 		break;
 	case HAL_EXTRADATA_FRAME_QP:
 		ret = HFI_PROPERTY_PARAM_VDEC_FRAME_QP_EXTRADATA;
@@ -374,6 +463,26 @@ static int get_hfi_extradata_index(enum hal_extradata_id index)
 		break;
 	default:
 		dprintk(VIDC_WARN, "Extradata index not found: %d\n", index);
+		break;
+	}
+	return ret;
+}
+
+static int get_hfi_extradata_id(enum hal_extradata_id index)
+{
+	int ret = 0;
+	switch (index) {
+	case HAL_EXTRADATA_ASPECT_RATIO:
+		ret = MSM_VIDC_EXTRADATA_ASPECT_RATIO;
+		break;
+	case HAL_EXTRADATA_INPUT_CROP:
+		ret = MSM_VIDC_EXTRADATA_INPUT_CROP;
+		break;
+	case HAL_EXTRADATA_DIGITAL_ZOOM:
+		ret = MSM_VIDC_EXTRADATA_DIGITAL_ZOOM;
+		break;
+	default:
+		ret = get_hfi_extradata_index(index);
 		break;
 	}
 	return ret;
@@ -556,6 +665,7 @@ int create_pkt_cmd_session_etb_encoder(
 	pkt->filled_len = input_frame->filled_len;
 	pkt->input_tag = input_frame->clnt_data;
 	pkt->packet_buffer = (u8 *) input_frame->device_addr;
+	pkt->extra_data_buffer = (u8 *) input_frame->extradata_addr;
 
 	if (!pkt->packet_buffer)
 		return -EINVAL;
@@ -677,6 +787,33 @@ int create_pkt_cmd_session_flush(struct hfi_cmd_session_flush_packet *pkt,
 	default:
 		dprintk(VIDC_ERR, "Invalid flush mode: 0x%x\n", flush_mode);
 		return -EINVAL;
+	}
+	return rc;
+}
+
+int create_pkt_cmd_session_get_property(
+		struct hfi_cmd_session_get_property_packet *pkt,
+		u32 session_id, enum hal_property ptype)
+{
+	int rc = 0;
+	if (!pkt || !session_id) {
+		dprintk(VIDC_ERR, "%s Invalid parameters\n", __func__);
+		return -EINVAL;
+	}
+	pkt->size = sizeof(struct hfi_cmd_session_get_property_packet);
+	pkt->packet_type = HFI_CMD_SESSION_GET_PROPERTY;
+	pkt->session_id = session_id;
+	pkt->num_properties = 1;
+	switch (ptype) {
+	case HAL_PARAM_PROFILE_LEVEL_CURRENT:
+			pkt->rg_property_data[0] =
+				HFI_PROPERTY_PARAM_PROFILE_LEVEL_CURRENT;
+		break;
+	default:
+		dprintk(VIDC_ERR, "%s cmd:0x%x not supported\n", __func__,
+			ptype);
+		rc = -EINVAL;
+		break;
 	}
 	return rc;
 }
@@ -803,7 +940,7 @@ int create_pkt_cmd_session_set_property(
 			HFI_PROPERTY_PARAM_NAL_STREAM_FORMAT_SELECT;
 		hfi = (struct hfi_nal_stream_format_select *)
 			&pkt->rg_property_data[1];
-		dprintk(VIDC_DBG, "data is :%d",
+		dprintk(VIDC_DBG, "data is :%d\n",
 				prop->nal_stream_format_select);
 		hfi->nal_stream_format_select = hal_to_hfi_type(
 				HAL_PARAM_NAL_STREAM_FORMAT_SELECT,
@@ -825,7 +962,7 @@ int create_pkt_cmd_session_set_property(
 			pkt->rg_property_data[1] = HFI_OUTPUT_ORDER_DISPLAY;
 			break;
 		default:
-			dprintk(VIDC_ERR, "invalid output order: 0x%x",
+			dprintk(VIDC_ERR, "invalid output order: 0x%x\n",
 						  *data);
 			break;
 		}
@@ -914,7 +1051,7 @@ int create_pkt_cmd_session_set_property(
 			pkt->rg_property_data[1] = HFI_DIVX_FORMAT_6;
 			break;
 		default:
-			dprintk(VIDC_ERR, "Invalid divx format: 0x%x", *data);
+			dprintk(VIDC_ERR, "Invalid divx format: 0x%x\n", *data);
 			break;
 		}
 		pkt->size += sizeof(u32) * 2;
@@ -1009,14 +1146,14 @@ int create_pkt_cmd_session_set_property(
 		if (hfi->profile <= 0) {
 			hfi->profile = HFI_H264_PROFILE_HIGH;
 			dprintk(VIDC_WARN,
-					"Profile %d not supported, falling back to high",
+					"Profile %d not supported, falling back to high\n",
 					prop->profile);
 		}
 
 		if (!hfi->level) {
 			hfi->level = 1;
 			dprintk(VIDC_WARN,
-					"Level %d not supported, falling back to high",
+					"Level %d not supported, falling back to high\n",
 					prop->level);
 		}
 
@@ -1066,8 +1203,9 @@ int create_pkt_cmd_session_set_property(
 			pkt->rg_property_data[1] = HFI_RATE_CONTROL_VBR_VFR;
 			break;
 		default:
-			dprintk(VIDC_ERR, "Invalid Rate control setting: 0x%x",
-						  (int) pdata);
+			dprintk(VIDC_ERR,
+					"Invalid Rate control setting: 0x%x\n",
+					(int)pdata);
 			break;
 		}
 		pkt->size += sizeof(u32) * 2;
@@ -1116,7 +1254,7 @@ int create_pkt_cmd_session_set_property(
 			hfi->mode = HFI_H264_DB_MODE_ALL_BOUNDARY;
 			break;
 		default:
-			dprintk(VIDC_ERR, "Invalid deblocking mode: 0x%x",
+			dprintk(VIDC_ERR, "Invalid deblocking mode: 0x%x\n",
 						  prop->mode);
 			break;
 		}
@@ -1189,12 +1327,21 @@ int create_pkt_cmd_session_set_property(
 	case HAL_CONFIG_VENC_INTRA_PERIOD:
 	{
 		struct hfi_intra_period *hfi;
+		int period = 0;
 		pkt->rg_property_data[0] =
 			HFI_PROPERTY_CONFIG_VENC_INTRA_PERIOD;
 		hfi = (struct hfi_intra_period *) &pkt->rg_property_data[1];
 		memcpy(hfi, (struct hfi_intra_period *) pdata,
 				sizeof(struct hfi_intra_period));
 		pkt->size += sizeof(u32) + sizeof(struct hfi_intra_period);
+		period = hfi->pframes + hfi->bframes + 1;
+		if (hfi->bframes) {
+			hfi->pframes = period / (hfi->bframes + 1);
+			hfi->bframes = period - hfi->pframes;
+		} else {
+			hfi->pframes = period - 1;
+			hfi->bframes = 0;
+		}
 		break;
 	}
 	case HAL_CONFIG_VENC_IDR_PERIOD:
@@ -1240,7 +1387,7 @@ int create_pkt_cmd_session_set_property(
 			hfi->rotation = HFI_ROTATE_270;
 			break;
 		default:
-			dprintk(VIDC_ERR, "Invalid rotation setting: 0x%x",
+			dprintk(VIDC_ERR, "Invalid rotation setting: 0x%x\n",
 				prop->rotate);
 			rc = -EINVAL;
 			break;
@@ -1256,7 +1403,7 @@ int create_pkt_cmd_session_set_property(
 			hfi->flip = HFI_FLIP_VERTICAL;
 			break;
 		default:
-			dprintk(VIDC_ERR, "Invalid flip setting: 0x%x",
+			dprintk(VIDC_ERR, "Invalid flip setting: 0x%x\n",
 				prop->flip);
 			rc = -EINVAL;
 			break;
@@ -1289,8 +1436,9 @@ int create_pkt_cmd_session_set_property(
 			hfi->mode = HFI_INTRA_REFRESH_RANDOM;
 			break;
 		default:
-			dprintk(VIDC_ERR, "Invalid intra refresh setting: 0x%x",
-				prop->mode);
+			dprintk(VIDC_ERR,
+					"Invalid intra refresh setting: 0x%x\n",
+					prop->mode);
 			break;
 		}
 		hfi->air_mbs = prop->air_mbs;
@@ -1322,7 +1470,7 @@ int create_pkt_cmd_session_set_property(
 			hfi->multi_slice = HFI_MULTI_SLICE_BY_BYTE_COUNT;
 			break;
 		default:
-			dprintk(VIDC_ERR, "Invalid slice settings: 0x%x",
+			dprintk(VIDC_ERR, "Invalid slice settings: 0x%x\n",
 				prop->multi_slice);
 			break;
 		}
@@ -1335,23 +1483,20 @@ int create_pkt_cmd_session_set_property(
 	{
 		struct hfi_index_extradata_config *hfi;
 		struct hal_extradata_enable *extra = pdata;
-		int index = 0;
+		int id = 0;
 		pkt->rg_property_data[0] =
 			get_hfi_extradata_index(extra->index);
 		hfi =
 			(struct hfi_index_extradata_config *)
 			&pkt->rg_property_data[1];
 		hfi->enable = extra->enable;
-		if (extra->index == HAL_EXTRADATA_ASPECT_RATIO)
-			index = EXTRADATA_ASPECT_RATIO;
-		else
-			index = get_hfi_extradata_index(extra->index);
-		if (index)
-			hfi->index_extra_data_id = index;
+		id = get_hfi_extradata_id(extra->index);
+		if (id)
+			hfi->index_extra_data_id = id;
 		else {
 			dprintk(VIDC_WARN,
-				"Failed to find extradata index: %d\n",
-				index);
+				"Failed to find extradata id: %d\n",
+				id);
 			rc = -EINVAL;
 		}
 		pkt->size += sizeof(u32) +
@@ -1439,18 +1584,82 @@ int create_pkt_cmd_session_set_property(
 		pkt->size += sizeof(u32) + sizeof(struct hfi_enable);
 		break;
 	}
+	case HAL_PARAM_VPE_COLOR_SPACE_CONVERSION:
+	{
+		struct hfi_vpe_color_space_conversion *hfi = NULL;
+		struct hal_vpe_color_space_conversion *hal = pdata;
+		pkt->rg_property_data[0] =
+				HFI_PROPERTY_PARAM_VPE_COLOR_SPACE_CONVERSION;
+		hfi = (struct hfi_vpe_color_space_conversion *)
+			&pkt->rg_property_data[1];
+		*hfi = *(struct hfi_vpe_color_space_conversion *) hal;
+		pkt->size += sizeof(u32) +
+				sizeof(struct hal_vpe_color_space_conversion);
+
+		dprintk(VIDC_DBG, "%s HAL_PARAM_VPE_COLOR_SPACE_CONVERSION\n",
+				__func__);
+		break;
+	}
+	case HAL_PARAM_VENC_H264_VUI_BITSTREAM_RESTRC:
+	{
+		struct hfi_enable *hfi;
+		struct hal_h264_vui_bitstream_restrc *hal = pdata;
+
+		pkt->rg_property_data[0] =
+			HFI_PROPERTY_PARAM_VENC_H264_VUI_BITSTREAM_RESTRC;
+		hfi = (struct hfi_enable *) &pkt->rg_property_data[1];
+		hfi->enable = hal->enable;
+		pkt->size += sizeof(u32) + sizeof(struct hfi_enable);
+		break;
+	}
+	case HAL_PARAM_VENC_PRESERVE_TEXT_QUALITY:
+	{
+		struct hfi_enable *hfi;
+		struct hal_preserve_text_quality *hal = pdata;
+
+		pkt->rg_property_data[0] =
+			HFI_PROPERTY_PARAM_VENC_PRESERVE_TEXT_QUALITY;
+		hfi = (struct hfi_enable *) &pkt->rg_property_data[1];
+		hfi->enable = hal->enable;
+		pkt->size += sizeof(u32) + sizeof(struct hfi_enable);
+		break;
+	}
+	case HAL_PARAM_VDEC_SCS_THRESHOLD:
+	{
+		struct hfi_scs_threshold *hfi;
+		pkt->rg_property_data[0] =
+			HFI_PROPERTY_PARAM_VDEC_SCS_THRESHOLD;
+		hfi = (struct hfi_scs_threshold *) &pkt->rg_property_data[1];
+		hfi->threshold_value =
+			((struct hfi_scs_threshold *) pdata)->threshold_value;
+		pkt->size += sizeof(u32) + sizeof(struct hfi_scs_threshold);
+		break;
+	}
+	case HAL_PARAM_MVC_BUFFER_LAYOUT:
+	{
+		struct hfi_mvc_buffer_layout_descp_type *hfi;
+		struct hal_mvc_buffer_layout *layout_info = pdata;
+		pkt->rg_property_data[0] = HFI_PROPERTY_PARAM_MVC_BUFFER_LAYOUT;
+		hfi = (struct hfi_mvc_buffer_layout_descp_type *)
+			&pkt->rg_property_data[1];
+		hfi->layout_type = get_hfi_layout(layout_info->layout_type);
+		hfi->bright_view_first = layout_info->bright_view_first;
+		hfi->ngap = layout_info->ngap;
+		pkt->size += sizeof(u32) +
+			sizeof(struct hfi_mvc_buffer_layout_descp_type);
+		break;
+	}
 	case HAL_PARAM_VENC_LTRMODE:
 	{
 		struct hfi_ltrmode *hfi;
 		struct hal_ltrmode *hal = pdata;
 		pkt->rg_property_data[0] =
-			HFI_PROPERTY_PARAM_VENC_LTRMODE;
+			HFI_PROPERTY_PARAM_VENC_H264_LTRMODE;
 		hfi = (struct hfi_ltrmode *) &pkt->rg_property_data[1];
 		hfi->ltrmode = get_hfi_ltr_mode(hal->ltrmode);
 		hfi->ltrcount = hal->ltrcount;
 		hfi->trustmode = hal->trustmode;
 		pkt->size += sizeof(u32) + sizeof(struct hfi_ltrmode);
-		pr_err("SET LTR\n");
 		break;
 	}
 	case HAL_CONFIG_VENC_USELTRFRAME:
@@ -1458,13 +1667,12 @@ int create_pkt_cmd_session_set_property(
 		struct hfi_ltruse *hfi;
 		struct hal_ltruse *hal = pdata;
 		pkt->rg_property_data[0] =
-			HFI_PROPERTY_CONFIG_VENC_USELTRFRAME;
+			HFI_PROPERTY_CONFIG_VENC_H264_USELTRFRAME;
 		hfi = (struct hfi_ltruse *) &pkt->rg_property_data[1];
 		hfi->frames = hal->frames;
 		hfi->refltr = hal->refltr;
 		hfi->useconstrnt = hal->useconstrnt;
 		pkt->size += sizeof(u32) + sizeof(struct hfi_ltruse);
-		pr_err("USE LTR\n");
 		break;
 	}
 	case HAL_CONFIG_VENC_MARKLTRFRAME:
@@ -1472,11 +1680,10 @@ int create_pkt_cmd_session_set_property(
 		struct hfi_ltrmark *hfi;
 		struct hal_ltrmark *hal = pdata;
 		pkt->rg_property_data[0] =
-			HFI_PROPERTY_CONFIG_VENC_MARKLTRFRAME;
+			HFI_PROPERTY_CONFIG_VENC_H264_MARKLTRFRAME;
 		hfi = (struct hfi_ltrmark *) &pkt->rg_property_data[1];
 		hfi->markframe = hal->markframe;
-		pkt->size += sizeof(u32) + sizeof(struct hfi_ltrmark);
-		pr_err("MARK LTR\n");
+		pkt->size += sizeof(u32) * 2;
 		break;
 	}
 	case HAL_PARAM_VENC_HIER_P_NUM_FRAMES:

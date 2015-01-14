@@ -20,16 +20,16 @@
 #include <linux/clk.h>
 #include <linux/iopoll.h>
 #include <linux/regulator/consumer.h>
+#include <linux/regulator/rpm-smd-regulator.h>
+#include <linux/clk/msm-clock-generic.h>
+#include <soc/qcom/clock-local2.h>
+#include <soc/qcom/clock-pll.h>
+#include <soc/qcom/clock-rpm.h>
+#include <soc/qcom/clock-voter.h>
 
-#include <mach/rpm-regulator-smd.h>
-#include <mach/socinfo.h>
-#include <mach/rpm-smd.h>
-#include <mach/clock-generic.h>
+#include <soc/qcom/socinfo.h>
+#include <soc/qcom/rpm-smd.h>
 
-#include "clock-local2.h"
-#include "clock-pll.h"
-#include "clock-rpm.h"
-#include "clock-voter.h"
 #include "clock-mdss-8974.h"
 #include "clock.h"
 
@@ -1801,68 +1801,6 @@ static struct rcg_clk jpeg0_clk_src = {
 	},
 };
 
-struct clk_ops clk_ops_pixel_clock;
-
-static long round_rate_pixel(struct clk *clk, unsigned long rate)
-{
-	int frac_num[] = {3, 2, 4, 1};
-	int frac_den[] = {8, 9, 9, 1};
-	int delta = 100000;
-	int i;
-
-	for (i = 0; i < ARRAY_SIZE(frac_num); i++) {
-		unsigned long request = (rate * frac_den[i]) / frac_num[i];
-		unsigned long src_rate;
-
-		src_rate = clk_round_rate(clk->parent, request);
-		if ((src_rate < (request - delta)) ||
-			(src_rate > (request + delta)))
-			continue;
-
-		return (src_rate * frac_num[i]) / frac_den[i];
-	}
-
-	return -EINVAL;
-}
-
-
-static int set_rate_pixel(struct clk *clk, unsigned long rate)
-{
-	struct rcg_clk *rcg = to_rcg_clk(clk);
-	struct clk_freq_tbl *pixel_freq = rcg->current_freq;
-	int frac_num[] = {3, 2, 4, 1};
-	int frac_den[] = {8, 9, 9, 1};
-	int delta = 100000;
-	int i, rc;
-
-	for (i = 0; i < ARRAY_SIZE(frac_num); i++) {
-		unsigned long request = (rate * frac_den[i]) / frac_num[i];
-		unsigned long src_rate;
-
-		src_rate = clk_round_rate(clk->parent, request);
-		if ((src_rate < (request - delta)) ||
-			(src_rate > (request + delta)))
-			continue;
-
-		rc =  clk_set_rate(clk->parent, src_rate);
-		if (rc)
-			return rc;
-
-		pixel_freq->div_src_val &= ~BM(4, 0);
-		if (frac_den[i] == frac_num[i]) {
-			pixel_freq->m_val = 0;
-			pixel_freq->n_val = 0;
-		} else {
-			pixel_freq->m_val = frac_num[i];
-			pixel_freq->n_val = ~(frac_den[i] - frac_num[i]);
-			pixel_freq->d_val = ~frac_den[i];
-		}
-		set_rate_mnd(rcg, pixel_freq);
-		return 0;
-	}
-	return -EINVAL;
-}
-
 static struct clk_freq_tbl pixel_freq_tbl[] = {
 	{
 		.src_clk = &pixel_clk_src_8226.c,
@@ -3146,8 +3084,11 @@ static struct clk_lookup msm_clocks_8226[] = {
 	CLK_LOOKUP("bus_clk", gcc_mss_q6_bimc_axi_clk.c, "fc880000.qcom,mss"),
 	CLK_LOOKUP("iface_clk",   gcc_mss_cfg_ahb_clk.c, "fc880000.qcom,mss"),
 	CLK_LOOKUP("mem_clk",    gcc_boot_rom_ahb_clk.c, "fc880000.qcom,mss"),
+
 	/* NFC */
-	CLK_LOOKUP("ref_clk",            cxo_d1_a_pin.c, "2-000e"),
+	CLK_LOOKUP("ref_clk",            cxo_d1_pin.c, "2-000e"),
+	CLK_LOOKUP("bb_clk2",            cxo_d1.c, ""),
+
 	/* PIL-PRONTO */
 	CLK_LOOKUP("xo", cxo_pil_pronto_clk.c, "fb21b000.qcom,pronto"),
 
@@ -3383,6 +3324,8 @@ static struct clk_lookup msm_clocks_8226[] = {
 	CLK_LOOKUP("iface_clk", mdss_ahb_clk.c, "fd922800.qcom,mdss_dsi"),
 	CLK_LOOKUP("bus_clk", mdss_axi_clk.c, "fd922800.qcom,mdss_dsi"),
 	CLK_LOOKUP("mdp_core_clk", mdss_mdp_clk.c, "fd922800.qcom,mdss_dsi"),
+	CLK_LOOKUP("core_mmss_clk", mmss_misc_ahb_clk.c,
+		"fd922800.qcom,mdss_dsi"),
 
 	CLK_LOOKUP("core_clk", mdss_mdp_clk.c, "fd900000.qcom,mdss_mdp"),
 	CLK_LOOKUP("lut_clk", mdss_mdp_lut_clk.c, "fd900000.qcom,mdss_mdp"),
@@ -3745,10 +3688,6 @@ static void __init msm8226_clock_pre_init(void)
 		cpp_clk_src.c.fmax = camss_vfe_cpp_fmax_v2;
 		vfe0_clk_src.c.fmax = camss_vfe_vfe0_fmax_v2;
 	}
-
-	clk_ops_pixel_clock = clk_ops_pixel;
-	clk_ops_pixel_clock.set_rate = set_rate_pixel;
-	clk_ops_pixel_clock.round_rate = round_rate_pixel;
 
 	/*
 	 * MDSS needs the ahb clock and needs to init before we register the

@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -15,9 +15,9 @@
 
 #include <linux/irq.h>
 #include <linux/kthread.h>
-#include <mach/msm_qmi_interface.h>
-#include <mach/subsystem_notif.h>
-#include <mach/msm_ipc_logging.h>
+#include <soc/qcom/msm_qmi_interface.h>
+#include <soc/qcom/subsystem_notif.h>
+#include <linux/ipc_logging.h>
 
 /* Per spec.max 40 bytes per received message */
 #define SLIM_MSGQ_BUF_LEN	40
@@ -188,7 +188,7 @@ enum msm_slim_msgq {
 };
 
 struct msm_slim_sps_bam {
-	u32			hdl;
+	unsigned long		hdl;
 	void __iomem		*base;
 	int			irq;
 };
@@ -368,8 +368,8 @@ int msm_alloc_port(struct slim_controller *ctrl, u8 pn);
 void msm_dealloc_port(struct slim_controller *ctrl, u8 pn);
 int msm_slim_connect_pipe_port(struct msm_slim_ctrl *dev, u8 pn);
 enum slim_port_err msm_slim_port_xfer_status(struct slim_controller *ctr,
-				u8 pn, u8 **done_buf, u32 *done_len);
-int msm_slim_port_xfer(struct slim_controller *ctrl, u8 pn, u8 *iobuf,
+				u8 pn, phys_addr_t *done_buf, u32 *done_len);
+int msm_slim_port_xfer(struct slim_controller *ctrl, u8 pn, phys_addr_t iobuf,
 			u32 len, struct completion *comp);
 int msm_send_msg_buf(struct msm_slim_ctrl *dev, u32 *buf, u8 len, u32 tx_reg);
 u32 *msm_get_msg_buf(struct msm_slim_ctrl *dev, int len);

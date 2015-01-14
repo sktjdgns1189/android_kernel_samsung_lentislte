@@ -337,8 +337,7 @@ static int ncp6335d_parse_tlmm(struct device_node *node,
 	return ret;
 }
 
-static int __devinit ncp6335d_init(struct i2c_client *client,
-			struct ncp6335d_info *dd,
+static int ncp6335d_init(struct i2c_client *client, struct ncp6335d_info *dd,
 			const struct ncp6335d_platform_data *pdata)
 {
 	int rc;
@@ -539,13 +538,14 @@ static struct ncp6335d_platform_data *
 	return pdata;
 }
 
-static int __devinit ncp6335d_regulator_probe(struct i2c_client *client,
+static int ncp6335d_regulator_probe(struct i2c_client *client,
 					const struct i2c_device_id *id)
 {
 	int rc;
 	unsigned int val = 0;
 	struct ncp6335d_info *dd;
 	const struct ncp6335d_platform_data *pdata;
+	struct regulator_config config = { };
 
 	if (client->dev.of_node)
 		pdata = ncp6335d_get_of_platform_data(client);
@@ -598,8 +598,13 @@ static int __devinit ncp6335d_regulator_probe(struct i2c_client *client,
 		return -EINVAL;
 	}
 
-	dd->regulator = regulator_register(&rdesc, &client->dev, dd->init_data,
-						dd, client->dev.of_node);
+	config.dev = &client->dev;
+	config.init_data = dd->init_data;
+	config.regmap = dd->regmap;
+	config.driver_data = dd;
+	config.of_node = client->dev.of_node;
+
+	dd->regulator = regulator_register(&rdesc, &config);
 
 	if (IS_ERR(dd->regulator)) {
 		dev_err(&client->dev, "Unable to register regulator rc(%ld)",
@@ -611,7 +616,7 @@ static int __devinit ncp6335d_regulator_probe(struct i2c_client *client,
 	return 0;
 }
 
-static int __devexit ncp6335d_regulator_remove(struct i2c_client *client)
+static int ncp6335d_regulator_remove(struct i2c_client *client)
 {
 	struct ncp6335d_info *dd = i2c_get_clientdata(client);
 
@@ -638,7 +643,7 @@ static struct i2c_driver ncp6335d_regulator_driver = {
 		.of_match_table = ncp6335d_match_table,
 	},
 	.probe = ncp6335d_regulator_probe,
-	.remove = __devexit_p(ncp6335d_regulator_remove),
+	.remove = ncp6335d_regulator_remove,
 	.id_table = ncp6335d_id,
 };
 

@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -25,7 +25,6 @@
 #include <linux/of.h>
 #include <asm/uaccess.h>
 
-#include <mach/msm_iomap.h>
 #include "rpm_stats.h"
 
 #define RPM_MASTERS_BUF_LEN 400
@@ -111,7 +110,7 @@ static int msm_rpm_master_copy_stats(
 		SNPRINTF(buf, count, "%s\n",
 				GET_MASTER_NAME(master_cnt, prvdata));
 
-		record.shutdown_req = readll_relaxed(prvdata->reg_base +
+		record.shutdown_req = readq_relaxed(prvdata->reg_base +
 			(master_cnt * pdata->master_offset +
 			offsetof(struct msm_rpm_master_stats, shutdown_req)));
 
@@ -119,7 +118,7 @@ static int msm_rpm_master_copy_stats(
 			GET_FIELD(record.shutdown_req),
 			record.shutdown_req);
 
-		record.wakeup_ind = readll_relaxed(prvdata->reg_base +
+		record.wakeup_ind = readq_relaxed(prvdata->reg_base +
 			(master_cnt * pdata->master_offset +
 			offsetof(struct msm_rpm_master_stats, wakeup_ind)));
 
@@ -127,7 +126,7 @@ static int msm_rpm_master_copy_stats(
 			GET_FIELD(record.wakeup_ind),
 			record.wakeup_ind);
 
-		record.bringup_req = readll_relaxed(prvdata->reg_base +
+		record.bringup_req = readq_relaxed(prvdata->reg_base +
 			(master_cnt * pdata->master_offset +
 			offsetof(struct msm_rpm_master_stats, bringup_req)));
 
@@ -135,7 +134,7 @@ static int msm_rpm_master_copy_stats(
 			GET_FIELD(record.bringup_req),
 			record.bringup_req);
 
-		record.bringup_ack = readll_relaxed(prvdata->reg_base +
+		record.bringup_ack = readq_relaxed(prvdata->reg_base +
 			(master_cnt * pdata->master_offset +
 			offsetof(struct msm_rpm_master_stats, bringup_ack)));
 
@@ -219,8 +218,8 @@ static int msm_rpm_master_copy_stats(
 	return RPM_MASTERS_BUF_LEN - count;
 }
 
-static int msm_rpm_master_stats_file_read(struct file *file, char __user *bufu,
-				  size_t count, loff_t *ppos)
+static ssize_t msm_rpm_master_stats_file_read(struct file *file,
+				char __user *bufu, size_t count, loff_t *ppos)
 {
 	struct msm_rpm_master_stats_private_data *prvdata;
 	struct msm_rpm_master_stats_platform_data *pdata;
@@ -266,8 +265,8 @@ static int msm_rpm_master_stats_file_open(struct inode *inode,
 	if (!prvdata->reg_base) {
 		kfree(file->private_data);
 		prvdata = NULL;
-		pr_err("%s: ERROR could not ioremap start=%p, len=%u\n",
-			__func__, (void *)pdata->phys_addr_base,
+		pr_err("%s: ERROR could not ioremap start=%pa, len=%u\n",
+			__func__, &pdata->phys_addr_base,
 			pdata->phys_size);
 		return -EBUSY;
 	}
@@ -349,7 +348,7 @@ err:
 	return NULL;
 }
 
-static  int __devinit msm_rpm_master_stats_probe(struct platform_device *pdev)
+static  int msm_rpm_master_stats_probe(struct platform_device *pdev)
 {
 	struct dentry *dent;
 	struct msm_rpm_master_stats_platform_data *pdata;
@@ -393,7 +392,7 @@ static  int __devinit msm_rpm_master_stats_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static int __devexit msm_rpm_master_stats_remove(struct platform_device *pdev)
+static int msm_rpm_master_stats_remove(struct platform_device *pdev)
 {
 	struct dentry *dent;
 
@@ -410,7 +409,7 @@ static struct of_device_id rpm_master_table[] = {
 
 static struct platform_driver msm_rpm_master_stats_driver = {
 	.probe	= msm_rpm_master_stats_probe,
-	.remove = __devexit_p(msm_rpm_master_stats_remove),
+	.remove = msm_rpm_master_stats_remove,
 	.driver = {
 		.name = "msm_rpm_master_stats",
 		.owner = THIS_MODULE,

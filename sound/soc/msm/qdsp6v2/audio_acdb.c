@@ -52,6 +52,12 @@ struct acdb_data {
 	/* LSM Cal */
 	struct acdb_cal_block		lsm_cal;
 
+	/* ULP Listen AFE cal */
+	struct acdb_cal_block		ulp_lsm_cal;
+
+	/* ULP Listen LSM cal */
+	struct acdb_cal_block		ulp_afe_cal;
+
 	/* AudProc Cal */
 	uint32_t			asm_topology;
 	uint32_t			adm_topology[MAX_AUDPROC_TYPES];
@@ -67,8 +73,8 @@ struct acdb_data {
 	struct acdb_cal_block		vocvol_cal;
 
 	/* Voice Column data */
-	struct acdb_cal_block		vocproc_col_cal[MAX_VOCPROC_TYPES];
-	uint32_t			*col_data[MAX_VOCPROC_TYPES];
+	struct acdb_cal_block	vocproc_col_cal[MAX_VOCPROC_TYPES];
+	void *col_data[MAX_VOCPROC_TYPES];
 
 	/* VocProc dev cfg cal*/
 	struct acdb_cal_block		vocproc_dev_cal;
@@ -89,8 +95,8 @@ struct acdb_data {
 	struct ion_client		*ion_client;
 	struct ion_handle		*ion_handle;
 	uint32_t			map_handle;
-	uint64_t			paddr;
-	uint64_t			kvaddr;
+	phys_addr_t			paddr;
+	void				*kvaddr;
 	uint64_t			mem_len;
 
 	/* Speaker protection */
@@ -108,7 +114,7 @@ uint32_t get_voice_rx_topology(void)
 	return acdb_data.voice_rx_topology;
 }
 
-void store_voice_rx_topology(uint32_t topology)
+static void store_voice_rx_topology(uint32_t topology)
 {
 	acdb_data.voice_rx_topology = topology;
 }
@@ -118,7 +124,7 @@ uint32_t get_voice_tx_topology(void)
 	return acdb_data.voice_tx_topology;
 }
 
-void store_voice_tx_topology(uint32_t topology)
+static void store_voice_tx_topology(uint32_t topology)
 {
 	acdb_data.voice_tx_topology = topology;
 }
@@ -128,7 +134,7 @@ uint32_t get_adm_rx_topology(void)
 	return acdb_data.adm_topology[RX_CAL];
 }
 
-void store_adm_rx_topology(uint32_t topology)
+static void store_adm_rx_topology(uint32_t topology)
 {
 	acdb_data.adm_topology[RX_CAL] = topology;
 }
@@ -138,7 +144,7 @@ uint32_t get_adm_tx_topology(void)
 	return acdb_data.adm_topology[TX_CAL];
 }
 
-void store_adm_tx_topology(uint32_t topology)
+static void store_adm_tx_topology(uint32_t topology)
 {
 	acdb_data.adm_topology[TX_CAL] = topology;
 }
@@ -148,7 +154,7 @@ uint32_t get_asm_topology(void)
 	return acdb_data.asm_topology;
 }
 
-void store_asm_topology(uint32_t topology)
+static void store_asm_topology(uint32_t topology)
 {
 	acdb_data.asm_topology = topology;
 }
@@ -189,7 +195,7 @@ done:
 	return result;
 }
 
-int store_adm_custom_topology(struct cal_block *cal_block)
+static int store_adm_custom_topology(struct cal_block *cal_block)
 {
 	int result = 0;
 	pr_debug("%s,\n", __func__);
@@ -205,7 +211,7 @@ int store_adm_custom_topology(struct cal_block *cal_block)
 	acdb_data.adm_custom_topology.cal_paddr =
 		cal_block->cal_offset + acdb_data.paddr;
 	acdb_data.adm_custom_topology.cal_kvaddr =
-		cal_block->cal_offset + acdb_data.kvaddr;
+		cal_block->cal_offset + (u8 *)acdb_data.kvaddr;
 done:
 	return result;
 }
@@ -238,7 +244,7 @@ done:
 	return result;
 }
 
-int store_asm_custom_topology(struct cal_block *cal_block)
+static int store_asm_custom_topology(struct cal_block *cal_block)
 {
 	int result = 0;
 	pr_debug("%s,\n", __func__);
@@ -254,7 +260,7 @@ int store_asm_custom_topology(struct cal_block *cal_block)
 	acdb_data.asm_custom_topology.cal_paddr =
 		cal_block->cal_offset + acdb_data.paddr;
 	acdb_data.asm_custom_topology.cal_kvaddr =
-		cal_block->cal_offset + acdb_data.kvaddr;
+		cal_block->cal_offset + (u8 *)acdb_data.kvaddr;
 done:
 	return result;
 }
@@ -295,7 +301,7 @@ done:
 	return result;
 }
 
-int store_aanc_cal(struct cal_block *cal_block)
+static int store_aanc_cal(struct cal_block *cal_block)
 {
 	int result = 0;
 	pr_debug("%s,\n", __func__);
@@ -311,10 +317,101 @@ int store_aanc_cal(struct cal_block *cal_block)
 	acdb_data.aanc_cal.cal_paddr =
 		cal_block->cal_offset + acdb_data.paddr;
 	acdb_data.aanc_cal.cal_kvaddr =
-		cal_block->cal_offset + acdb_data.kvaddr;
+		cal_block->cal_offset + (u8 *)acdb_data.kvaddr;
 done:
 	return result;
 }
+
+static int store_ulp_afe_cal(struct cal_block *cal_block)
+{
+	int rc = 0;
+
+	if (cal_block->cal_offset > acdb_data.mem_len) {
+		pr_err("%s: offset %d is > mem_len %llu\n",
+			__func__, cal_block->cal_offset,
+			acdb_data.mem_len);
+		rc = -EINVAL;
+		goto done;
+	}
+
+	pr_debug("%s: cal_size = %u, cal_offset = %u\n",
+		__func__, cal_block->cal_size,
+		cal_block->cal_offset);
+
+	acdb_data.ulp_afe_cal.cal_size = cal_block->cal_size;
+	acdb_data.ulp_afe_cal.cal_paddr =
+		cal_block->cal_offset + acdb_data.paddr;
+	acdb_data.ulp_afe_cal.cal_kvaddr =
+		cal_block->cal_offset + (u8 *)acdb_data.kvaddr;
+
+done:
+	return rc;
+}
+
+int get_ulp_afe_cal(struct acdb_cal_block *cal_block)
+{
+	int rc = 0;
+
+	if (cal_block == NULL) {
+		pr_err("ACDB=> NULL pointer sent to %s\n", __func__);
+		rc = -EINVAL;
+		goto done;
+	}
+
+	cal_block->cal_size = acdb_data.ulp_afe_cal.cal_size;
+	cal_block->cal_paddr = acdb_data.ulp_afe_cal.cal_paddr;
+	cal_block->cal_kvaddr = acdb_data.ulp_afe_cal.cal_kvaddr;
+
+done:
+	return rc;
+}
+EXPORT_SYMBOL(get_ulp_afe_cal);
+
+
+static int store_ulp_lsm_cal(struct cal_block *cal_block)
+{
+	int rc = 0;
+
+	if (cal_block->cal_offset > acdb_data.mem_len) {
+		pr_err("%s: offset %d is > mem_len %llu\n",
+			__func__, cal_block->cal_offset,
+			acdb_data.mem_len);
+		rc = -EINVAL;
+		goto done;
+	}
+
+	pr_debug("%s: cal_size = %u, cal_offset = %u\n",
+		__func__, cal_block->cal_size,
+		cal_block->cal_offset);
+
+	acdb_data.ulp_lsm_cal.cal_size = cal_block->cal_size;
+	acdb_data.ulp_lsm_cal.cal_paddr =
+		cal_block->cal_offset + acdb_data.paddr;
+	acdb_data.ulp_lsm_cal.cal_kvaddr =
+		cal_block->cal_offset + (u8 *)acdb_data.kvaddr;
+
+done:
+	return rc;
+}
+
+int get_ulp_lsm_cal(struct acdb_cal_block *cal_block)
+{
+	int rc = 0;
+
+	if (cal_block == NULL) {
+		pr_err("ACDB=> NULL pointer sent to %s\n", __func__);
+		rc = -EINVAL;
+		goto done;
+	}
+
+	cal_block->cal_size = acdb_data.ulp_lsm_cal.cal_size;
+	cal_block->cal_paddr = acdb_data.ulp_lsm_cal.cal_paddr;
+	cal_block->cal_kvaddr = acdb_data.ulp_lsm_cal.cal_kvaddr;
+
+done:
+	return rc;
+}
+EXPORT_SYMBOL(get_ulp_lsm_cal);
 
 int get_lsm_cal(struct acdb_cal_block *cal_block)
 {
@@ -334,7 +431,7 @@ done:
 	return result;
 }
 
-int store_lsm_cal(struct cal_block *cal_block)
+static int store_lsm_cal(struct cal_block *cal_block)
 {
 	int result = 0;
 	pr_debug("%s,\n", __func__);
@@ -350,7 +447,7 @@ int store_lsm_cal(struct cal_block *cal_block)
 	acdb_data.lsm_cal.cal_paddr =
 		cal_block->cal_offset + acdb_data.paddr;
 	acdb_data.lsm_cal.cal_kvaddr =
-		cal_block->cal_offset + acdb_data.kvaddr;
+		cal_block->cal_offset + (u8 *)acdb_data.kvaddr;
 done:
 	return result;
 }
@@ -411,7 +508,7 @@ ret:
 	return result;
 }
 
-int store_hw_delay(int32_t path, void *arg)
+static int store_hw_delay(int32_t path, void *arg)
 {
 	int result = 0;
 	struct hw_delay delay;
@@ -487,7 +584,7 @@ done:
 	return result;
 }
 
-int store_anc_cal(struct cal_block *cal_block)
+static int store_anc_cal(struct cal_block *cal_block)
 {
 	int result = 0;
 	pr_debug("%s,\n", __func__);
@@ -503,12 +600,12 @@ int store_anc_cal(struct cal_block *cal_block)
 	acdb_data.anc_cal.cal_paddr =
 		cal_block->cal_offset + acdb_data.paddr;
 	acdb_data.anc_cal.cal_kvaddr =
-		cal_block->cal_offset + acdb_data.kvaddr;
+		cal_block->cal_offset + (u8 *)acdb_data.kvaddr;
 done:
 	return result;
 }
 
-int store_afe_cal(int32_t path, struct cal_block *cal_block)
+static int store_afe_cal(int32_t path, struct cal_block *cal_block)
 {
 	int result = 0;
 	pr_debug("%s, path = %d\n", __func__, path);
@@ -530,7 +627,7 @@ int store_afe_cal(int32_t path, struct cal_block *cal_block)
 	acdb_data.afe_cal[path].cal_paddr =
 		cal_block->cal_offset + acdb_data.paddr;
 	acdb_data.afe_cal[path].cal_kvaddr =
-		cal_block->cal_offset + acdb_data.kvaddr;
+		cal_block->cal_offset + (u8 *)acdb_data.kvaddr;
 done:
 	return result;
 }
@@ -559,7 +656,7 @@ done:
 	return result;
 }
 
-int store_audproc_cal(int32_t path, struct cal_block *cal_block)
+static int store_audproc_cal(int32_t path, struct cal_block *cal_block)
 {
 	int result = 0;
 	pr_debug("%s, path = %d\n", __func__, path);
@@ -581,7 +678,7 @@ int store_audproc_cal(int32_t path, struct cal_block *cal_block)
 	acdb_data.audproc_cal[path].cal_paddr =
 		cal_block->cal_offset + acdb_data.paddr;
 	acdb_data.audproc_cal[path].cal_kvaddr =
-		cal_block->cal_offset + acdb_data.kvaddr;
+		cal_block->cal_offset + (u8 *)acdb_data.kvaddr;
 done:
 	return result;
 }
@@ -610,7 +707,7 @@ done:
 	return result;
 }
 
-int store_audstrm_cal(int32_t path, struct cal_block *cal_block)
+static int store_audstrm_cal(int32_t path, struct cal_block *cal_block)
 {
 	int result = 0;
 	pr_debug("%s, path = %d\n", __func__, path);
@@ -632,7 +729,7 @@ int store_audstrm_cal(int32_t path, struct cal_block *cal_block)
 	acdb_data.audstrm_cal[path].cal_paddr =
 		cal_block->cal_offset + acdb_data.paddr;
 	acdb_data.audstrm_cal[path].cal_kvaddr =
-		cal_block->cal_offset + acdb_data.kvaddr;
+		cal_block->cal_offset + (u8 *)acdb_data.kvaddr;
 done:
 	return result;
 }
@@ -661,7 +758,7 @@ done:
 	return result;
 }
 
-int store_audvol_cal(int32_t path, struct cal_block *cal_block)
+static int store_audvol_cal(int32_t path, struct cal_block *cal_block)
 {
 	int result = 0;
 	pr_debug("%s, path = %d\n", __func__, path);
@@ -683,7 +780,7 @@ int store_audvol_cal(int32_t path, struct cal_block *cal_block)
 	acdb_data.audvol_cal[path].cal_paddr =
 		cal_block->cal_offset + acdb_data.paddr;
 	acdb_data.audvol_cal[path].cal_kvaddr =
-		cal_block->cal_offset + acdb_data.kvaddr;
+		cal_block->cal_offset + (u8 *)acdb_data.kvaddr;
 done:
 	return result;
 }
@@ -712,7 +809,7 @@ done:
 	return result;
 }
 
-int store_voice_col_data(uint32_t vocproc_type, uint32_t cal_size,
+static int store_voice_col_data(uint32_t vocproc_type, uint32_t cal_size,
 			  uint32_t *cal_block)
 {
 	int result = 0;
@@ -774,7 +871,7 @@ done:
 	return result;
 }
 
-int store_vocproc_dev_cfg_cal(struct cal_block *cal_block)
+static int store_vocproc_dev_cfg_cal(struct cal_block *cal_block)
 {
 	int result = 0;
 	pr_debug("%s,\n", __func__);
@@ -793,7 +890,7 @@ int store_vocproc_dev_cfg_cal(struct cal_block *cal_block)
 	acdb_data.vocproc_dev_cal.cal_paddr =
 		cal_block->cal_offset + acdb_data.paddr;
 	acdb_data.vocproc_dev_cal.cal_kvaddr =
-		cal_block->cal_offset + acdb_data.kvaddr;
+		cal_block->cal_offset + (u8 *)acdb_data.kvaddr;
 done:
 	return result;
 }
@@ -818,7 +915,7 @@ done:
 
 
 
-int store_vocproc_cal(struct cal_block *cal_block)
+static int store_vocproc_cal(struct cal_block *cal_block)
 {
 	int result = 0;
 	pr_debug("%s,\n", __func__);
@@ -836,7 +933,7 @@ int store_vocproc_cal(struct cal_block *cal_block)
 	acdb_data.vocproc_cal.cal_paddr =
 		cal_block->cal_offset + acdb_data.paddr;
 	acdb_data.vocproc_cal.cal_kvaddr =
-		cal_block->cal_offset + acdb_data.kvaddr;
+		cal_block->cal_offset + (u8 *)acdb_data.kvaddr;
 done:
 	return result;
 }
@@ -859,7 +956,7 @@ done:
 	return result;
 }
 
-int store_vocstrm_cal(struct cal_block *cal_block)
+static int store_vocstrm_cal(struct cal_block *cal_block)
 {
 	int result = 0;
 	pr_debug("%s,\n", __func__);
@@ -877,7 +974,7 @@ int store_vocstrm_cal(struct cal_block *cal_block)
 	acdb_data.vocstrm_cal.cal_paddr =
 		cal_block->cal_offset + acdb_data.paddr;
 	acdb_data.vocstrm_cal.cal_kvaddr =
-		cal_block->cal_offset + acdb_data.kvaddr;
+		cal_block->cal_offset + (u8 *)acdb_data.kvaddr;
 done:
 	return result;
 }
@@ -900,7 +997,7 @@ done:
 	return result;
 }
 
-int store_vocvol_cal(struct cal_block *cal_block)
+static int store_vocvol_cal(struct cal_block *cal_block)
 {
 	int result = 0;
 	pr_debug("%s,\n", __func__);
@@ -917,7 +1014,7 @@ int store_vocvol_cal(struct cal_block *cal_block)
 	acdb_data.vocvol_cal.cal_paddr =
 		cal_block->cal_offset + acdb_data.paddr;
 	acdb_data.vocvol_cal.cal_kvaddr =
-		cal_block->cal_offset + acdb_data.kvaddr;
+		cal_block->cal_offset + (u8 *)acdb_data.kvaddr;
 done:
 	return result;
 }
@@ -940,7 +1037,7 @@ done:
 	return result;
 }
 
-void store_sidetone_cal(struct sidetone_cal *cal_data)
+static void store_sidetone_cal(struct sidetone_cal *cal_data)
 {
 	pr_debug("%s,\n", __func__);
 
@@ -1125,7 +1222,7 @@ static int allocate_col_data(void)
 			goto done;
 		}
 		acdb_data.vocproc_col_cal[i].cal_kvaddr =
-			(uint32_t)acdb_data.col_data[i];
+			acdb_data.col_data[i];
 	}
 
 done:
@@ -1201,7 +1298,7 @@ static int register_memory(void)
 	ion_phys_addr_t		paddr;
 	void                    *kvptr;
 	unsigned long		kvaddr;
-	unsigned long		mem_len;
+	size_t			mem_len;
 	pr_debug("%s\n", __func__);
 
 	result = allocate_col_data();
@@ -1223,7 +1320,7 @@ static int register_memory(void)
 				&acdb_data.ion_handle,
 				acdb_data.map_handle,
 				NULL, 0,
-				&paddr, (size_t *)&mem_len, &kvptr);
+				&paddr, &mem_len, &kvptr);
 	if (result) {
 		pr_err("%s: audio ION alloc failed, rc = %d\n",
 			__func__, result);
@@ -1232,11 +1329,11 @@ static int register_memory(void)
 
 	kvaddr = (unsigned long)kvptr;
 	acdb_data.paddr = paddr;
-	acdb_data.kvaddr = kvaddr;
+	acdb_data.kvaddr = (void *)kvaddr;
 	acdb_data.mem_len = mem_len;
 
-	pr_debug("%s done! paddr = 0x%llx, kvaddr = 0x%llx, len = 0x%llx\n",
-		 __func__, acdb_data.paddr, acdb_data.kvaddr,
+	pr_debug("%s done! paddr = 0x%pa, kvaddr = 0x%p, len = 0x%llx\n",
+		 __func__, &acdb_data.paddr, acdb_data.kvaddr,
 		 acdb_data.mem_len);
 
 	return result;
@@ -1469,6 +1566,12 @@ static long acdb_ioctl(struct file *f,
 		goto done;
 	case AUDIO_SET_AANC_CAL:
 		result = store_aanc_cal((struct cal_block *)data);
+		goto done;
+	case AUDIO_LISTEN_SET_ULP_LSM_CAL:
+		result = store_ulp_lsm_cal((struct cal_block *) data);
+		goto done;
+	case AUDIO_LISTEN_SET_ULP_AFE_CAL:
+		result = store_ulp_afe_cal((struct cal_block *) data);
 		goto done;
 	default:
 		pr_err("ACDB=> ACDB ioctl not found!\n");

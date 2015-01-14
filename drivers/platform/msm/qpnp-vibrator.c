@@ -224,7 +224,7 @@ static int qpnp_vibrator_suspend(struct device *dev)
 
 static SIMPLE_DEV_PM_OPS(qpnp_vibrator_pm_ops, qpnp_vibrator_suspend, NULL);
 
-static int __devinit qpnp_vibrator_probe(struct spmi_device *spmi)
+static int qpnp_vibrator_probe(struct spmi_device *spmi)
 {
 	struct qpnp_vib *vib;
 	struct resource *vib_resource;
@@ -299,7 +299,7 @@ static int __devinit qpnp_vibrator_probe(struct spmi_device *spmi)
 	return rc;
 }
 
-static int  __devexit qpnp_vibrator_remove(struct spmi_device *spmi)
+static int  qpnp_vibrator_remove(struct spmi_device *spmi)
 {
 	struct qpnp_vib *vib = dev_get_drvdata(&spmi->dev);
 
@@ -324,7 +324,7 @@ static struct spmi_driver qpnp_vibrator_driver = {
 		.pm	= &qpnp_vibrator_pm_ops,
 	},
 	.probe		= qpnp_vibrator_probe,
-	.remove		= __devexit_p(qpnp_vibrator_remove),
+	.remove		= qpnp_vibrator_remove,
 };
 
 static int __init qpnp_vibrator_init(void)

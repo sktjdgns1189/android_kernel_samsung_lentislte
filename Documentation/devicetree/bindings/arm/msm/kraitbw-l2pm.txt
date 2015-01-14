@@ -5,7 +5,7 @@ used to measure the bandwidth of read/write traffic from the Krait CPU
 subsystem.
 
 Required properties:
-- compatible:		Must be "qcom,kraitbw_l2pm"
+- compatible:		Must be "qcom,kraitbw-l2pm"
 - interrupts:		Lists the L2 PM counter overflow IRQ.
 - qcom,bytes-per-beat:	The number of bytes transferred in one data beat from
 			the Krait CPU subsystem.

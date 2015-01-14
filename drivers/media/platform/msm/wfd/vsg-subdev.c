@@ -24,6 +24,7 @@
 #define DEFAULT_MODE ((enum vsg_modes)VSG_MODE_CFR)
 #define MAX_BUFS_BUSY_WITH_ENC 5
 #define TICKS_PER_TIMEOUT 2
+#define LATENCY_PADDING (3*NSEC_PER_MSEC)
 
 
 static int vsg_release_input_buffer(struct vsg_context *context,
@@ -254,12 +255,12 @@ static enum hrtimer_restart vsg_threshold_timeout_func(struct hrtimer *timer)
 	max_frame_interval = context->max_frame_interval;
 	if (list_empty(&context->free_queue.node) && !context->vsync_wait) {
 		context->vsync_wait = true;
-		max_frame_interval = context->max_frame_interval /
-					TICKS_PER_TIMEOUT;
+		max_frame_interval = (context->max_frame_interval /
+			TICKS_PER_TIMEOUT) + LATENCY_PADDING;
 		goto restart_timer;
 	} else if (context->vsync_wait) {
-			max_frame_interval = context->max_frame_interval /
-						TICKS_PER_TIMEOUT;
+		max_frame_interval = (context->max_frame_interval /
+			TICKS_PER_TIMEOUT) + LATENCY_PADDING;
 		context->vsync_wait = false;
 	}
 
@@ -337,7 +338,6 @@ static int vsg_close(struct v4l2_subdev *sd)
 static int vsg_start(struct v4l2_subdev *sd)
 {
 	struct vsg_context *context = NULL;
-	int rc = 0;
 
 	if (!sd) {
 		WFD_MSG_ERR("ERROR, invalid arguments into %s\n", __func__);
@@ -346,24 +346,18 @@ static int vsg_start(struct v4l2_subdev *sd)
 
 	context = (struct vsg_context *)sd->dev_priv;
 
-	mutex_lock(&context->mutex);
 	if (context->state == VSG_STATE_STARTED) {
 		WFD_MSG_ERR("VSG not stopped, start not allowed\n");
-		rc = -EINPROGRESS;
-		goto err_bad_state;
+		return -EINPROGRESS;
 	} else if (context->state == VSG_STATE_ERROR) {
 		WFD_MSG_ERR("VSG in error state, not allowed to restart\n");
-		rc = -ENOTRECOVERABLE;
-		goto err_bad_state;
+		return -ENOTRECOVERABLE;
 	}
 
 	context->state = VSG_STATE_STARTED;
 	hrtimer_start(&context->threshold_timer, ns_to_ktime(context->
 			max_frame_interval), HRTIMER_MODE_REL);
-
-err_bad_state:
-	mutex_unlock(&context->mutex);
-	return rc;
+	return 0;
 }
 
 static int vsg_stop(struct v4l2_subdev *sd)

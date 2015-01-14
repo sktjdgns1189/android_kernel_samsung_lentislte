@@ -1,6 +1,6 @@
 /* arch/arm/mach-msm/smp2p_gpio_test.c
  *
- * Copyright (c) 2013, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -18,7 +18,7 @@
 #include <linux/gpio.h>
 #include <linux/debugfs.h>
 #include <linux/completion.h>
-#include <linux/irq.h>
+#include <linux/interrupt.h>
 #include <linux/bitmap.h>
 #include "smp2p_private.h"
 #include "smp2p_test_common.h"
@@ -66,7 +66,7 @@ static void cb_data_reset(struct gpio_info *info)
 	INIT_COMPLETION(info->cb_completion);
 }
 
-static int __devinit smp2p_gpio_test_probe(struct platform_device *pdev)
+static int smp2p_gpio_test_probe(struct platform_device *pdev)
 {
 	int id;
 	int cnt;
@@ -110,6 +110,8 @@ static int __devinit smp2p_gpio_test_probe(struct platform_device *pdev)
 		 * of the device tree nodes as well.
 		 */
 		id = of_get_gpio(node, 0);
+		if (id == -EPROBE_DEFER)
+			return id;
 		gpio_info_ptr->gpio_base_id = id;
 		gpio_info_ptr->irq_base_id = gpio_to_irq(id);
 	}
@@ -120,7 +122,7 @@ static int __devinit smp2p_gpio_test_probe(struct platform_device *pdev)
  * NOTE:  Instead of match table and device driver, you may be able to just
  * call of_find_compatible_node() in your init function.
  */
-static struct of_device_id msm_smp2p_match_table[] __devinitdata = {
+static struct of_device_id msm_smp2p_match_table[] = {
 	/* modem */
 	{.compatible = "qcom,smp2pgpio_test_smp2p_1_out", },
 	{.compatible = "qcom,smp2pgpio_test_smp2p_1_in", },
@@ -204,12 +206,12 @@ static void smp2p_ut_local_gpio_out(struct seq_file *s)
 		if (failed)
 			break;
 
-		seq_printf(s, "\tOK\n");
+		seq_puts(s, "\tOK\n");
 	} while (0);
 
 	if (failed) {
 		pr_err("%s: Failed\n", __func__);
-		seq_printf(s, "\tFailed\n");
+		seq_puts(s, "\tFailed\n");
 	}
 
 	smp2p_gpio_open_test_entry("smp2p",
@@ -311,7 +313,7 @@ static void smp2p_ut_local_gpio_in(struct seq_file *s)
 		UT_ASSERT_INT(0, <, cb_info->irq_base_id);
 		for (id = 0; id < SMP2P_BITS_PER_ENTRY && !failed; ++id) {
 			virq = cb_info->irq_base_id + id;
-			UT_ASSERT_INT(0, >, (unsigned int)irq_to_desc(virq));
+			UT_ASSERT_PTR(NULL, !=, irq_to_desc(virq));
 			ret = request_irq(virq,
 					smp2p_gpio_irq,	IRQF_TRIGGER_RISING,
 					"smp2p_test", cb_info);
@@ -389,12 +391,12 @@ static void smp2p_ut_local_gpio_in(struct seq_file *s)
 		if (failed)
 			break;
 
-		seq_printf(s, "\tOK\n");
+		seq_puts(s, "\tOK\n");
 	} while (0);
 
 	if (failed) {
 		pr_err("%s: Failed\n", __func__);
-		seq_printf(s, "\tFailed\n");
+		seq_puts(s, "\tFailed\n");
 	}
 
 	/* unregister for interrupts */
@@ -456,7 +458,7 @@ static void smp2p_ut_local_gpio_in_update_open(struct seq_file *s)
 		UT_ASSERT_INT(0, <, cb_info->irq_base_id);
 		for (id = 0; id < SMP2P_BITS_PER_ENTRY && !failed; ++id) {
 			virq = cb_info->irq_base_id + id;
-			UT_ASSERT_INT(0, >, (unsigned int)irq_to_desc(virq));
+			UT_ASSERT_PTR(NULL, !=, irq_to_desc(virq));
 			ret = request_irq(virq,
 					smp2p_gpio_irq,	IRQ_TYPE_EDGE_BOTH,
 					"smp2p_test", cb_info);
@@ -478,18 +480,18 @@ static void smp2p_ut_local_gpio_in_update_open(struct seq_file *s)
 			if (0x1 & (0xDEADDEAD >> id)) {
 				/* rising edge should have been triggered */
 				if (!test_bit(id, cb_info->triggered_irqs)) {
-					seq_printf(s,
-						"%s:%d bit %d clear, expected set\n",
+					seq_printf(s, "%s:%d bit %d clear, ",
 						__func__, __LINE__, id);
+					seq_puts(s, "expected set\n");
 					failed = 1;
 					break;
 				}
 			} else {
 				/* edge should not have been triggered */
 				if (test_bit(id, cb_info->triggered_irqs)) {
-					seq_printf(s,
-						"%s:%d bit %d set, expected clear\n",
+					seq_printf(s, "%s:%d bit %d set, ",
 						__func__, __LINE__, id);
+					seq_puts(s, "expected clear\n");
 					failed = 1;
 					break;
 				}
@@ -498,12 +500,12 @@ static void smp2p_ut_local_gpio_in_update_open(struct seq_file *s)
 		if (failed)
 			break;
 
-		seq_printf(s, "\tOK\n");
+		seq_puts(s, "\tOK\n");
 	} while (0);
 
 	if (failed) {
 		pr_err("%s: Failed\n", __func__);
-		seq_printf(s, "\tFailed\n");
+		seq_puts(s, "\tFailed\n");
 	}
 
 	/* unregister for interrupts */
@@ -600,7 +602,7 @@ static void smp2p_ut_remote_inout_core(struct seq_file *s, int remote_pid,
 		UT_ASSERT_INT(0, <, cb_in->irq_base_id);
 		for (id = 0; id < SMP2P_BITS_PER_ENTRY && !failed; ++id) {
 			int virq = cb_in->irq_base_id + id;
-			UT_ASSERT_INT(0, >, (unsigned int)irq_to_desc(virq));
+			UT_ASSERT_PTR(NULL, !=, irq_to_desc(virq));
 			ret = request_irq(virq,
 				smp2p_gpio_irq,
 				IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING,
@@ -664,12 +666,12 @@ static void smp2p_ut_remote_inout_core(struct seq_file *s, int remote_pid,
 		UT_ASSERT_HEX(request, ==, response);
 		UT_ASSERT_INT(24, ==, cb_in->cb_count);
 
-		seq_printf(s, "\tOK\n");
+		seq_puts(s, "\tOK\n");
 	} while (0);
 
 	if (failed) {
 		pr_err("%s: Failed\n", name);
-		seq_printf(s, "\tFailed\n");
+		seq_puts(s, "\tFailed\n");
 	}
 
 	/* unregister for interrupts */
@@ -697,7 +699,7 @@ static void smp2p_ut_remote_inout(struct seq_file *s)
 
 	int_cfg = smp2p_get_interrupt_config();
 	if (!int_cfg) {
-		seq_printf(s, "Remote processor config unavailable\n");
+		seq_puts(s, "Remote processor config unavailable\n");
 		return;
 	}
 

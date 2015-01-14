@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -34,9 +34,36 @@
 
 #define MBIM_BULK_BUFFER_SIZE		4096
 
-#define MBIM_IOCTL_MAGIC		'o'
-#define MBIM_GET_NTB_SIZE		_IOR(MBIM_IOCTL_MAGIC, 2, u32)
-#define MBIM_GET_DATAGRAM_COUNT		_IOR(MBIM_IOCTL_MAGIC, 3, u16)
+
+enum mbim_peripheral_ep_type {
+	MBIM_DATA_EP_TYPE_RESERVED   = 0x0,
+	MBIM_DATA_EP_TYPE_HSIC       = 0x1,
+	MBIM_DATA_EP_TYPE_HSUSB      = 0x2,
+	MBIM_DATA_EP_TYPE_PCIE       = 0x3,
+	MBIM_DATA_EP_TYPE_EMBEDDED   = 0x4,
+};
+
+struct mbim_peripheral_ep_info {
+	enum peripheral_ep_type	ep_type;
+	u32  peripheral_iface_id;
+};
+
+struct mbim_ipa_ep_pair {
+	u32 cons_pipe_num;
+	u32 prod_pipe_num;
+};
+
+struct mbim_ipa_ep_info {
+	struct mbim_peripheral_ep_info ph_ep_info;
+	struct mbim_ipa_ep_pair        ipa_ep_pair;
+};
+
+#define MBIM_IOCTL_MAGIC	 'o'
+#define MBIM_GET_NTB_SIZE	 _IOR(MBIM_IOCTL_MAGIC, 2, u32)
+#define MBIM_GET_DATAGRAM_COUNT	 _IOR(MBIM_IOCTL_MAGIC, 3, u16)
+
+#define MBIM_EP_LOOKUP	_IOR(MBIM_IOCTL_MAGIC, 4, struct mbim_ipa_ep_info)
+
 
 #define NR_MBIM_PORTS			1
 
@@ -81,7 +108,6 @@ struct f_mbim {
 	atomic_t	write_excl;
 
 	wait_queue_head_t read_wq;
-	wait_queue_head_t write_wq;
 
 	enum transport_type		xport;
 	u8				port_num;
@@ -90,6 +116,9 @@ struct f_mbim {
 
 	struct mbim_ep_descs		fs;
 	struct mbim_ep_descs		hs;
+
+	const struct usb_endpoint_descriptor *in_ep_desc_backup;
+	const struct usb_endpoint_descriptor *out_ep_desc_backup;
 
 	u8				ctrl_id, data_id;
 	u8				data_alt_int;
@@ -213,12 +242,12 @@ static struct usb_cdc_union_desc mbim_union_desc = {
 	/* .bSlaveInterface0 =	DYNAMIC */
 };
 
-static struct usb_cdc_mbb_desc mbb_desc = {
-	.bLength =		sizeof mbb_desc,
+static struct usb_cdc_mbim_desc mbim_desc = {
+	.bLength =		sizeof mbim_desc,
 	.bDescriptorType =	USB_DT_CS_INTERFACE,
-	.bDescriptorSubType =	USB_CDC_MBB_TYPE,
+	.bDescriptorSubType =	USB_CDC_MBIM_TYPE,
 
-	.bcdMbbVersion =	cpu_to_le16(0x0100),
+	.bcdMBIMVersion =	cpu_to_le16(0x0100),
 
 	.wMaxControlMessage =	cpu_to_le16(0x1000),
 	.bNumberFilters =	0x20,
@@ -234,7 +263,7 @@ static struct usb_cdc_ext_mbb_desc ext_mbb_desc = {
 
 	.bcdMbbExtendedVersion =	cpu_to_le16(0x0100),
 	.bMaxOutstandingCmdMsges =	64,
-	.wMTU =	1500,
+	.wMTU =	cpu_to_le16(1500),
 };
 
 /* the default data interface has no endpoints ... */
@@ -299,7 +328,7 @@ static struct usb_descriptor_header *mbim_fs_function[] = {
 	(struct usb_descriptor_header *) &mbim_control_intf,
 	(struct usb_descriptor_header *) &mbim_header_desc,
 	(struct usb_descriptor_header *) &mbim_union_desc,
-	(struct usb_descriptor_header *) &mbb_desc,
+	(struct usb_descriptor_header *) &mbim_desc,
 	(struct usb_descriptor_header *) &ext_mbb_desc,
 	(struct usb_descriptor_header *) &fs_mbim_notify_desc,
 	/* data interface, altsettings 0 and 1 */
@@ -345,7 +374,7 @@ static struct usb_descriptor_header *mbim_hs_function[] = {
 	(struct usb_descriptor_header *) &mbim_control_intf,
 	(struct usb_descriptor_header *) &mbim_header_desc,
 	(struct usb_descriptor_header *) &mbim_union_desc,
-	(struct usb_descriptor_header *) &mbb_desc,
+	(struct usb_descriptor_header *) &mbim_desc,
 	(struct usb_descriptor_header *) &ext_mbb_desc,
 	(struct usb_descriptor_header *) &hs_mbim_notify_desc,
 	/* data interface, altsettings 0 and 1 */
@@ -663,28 +692,6 @@ static int mbim_bam_setup(int no_ports)
 	return 0;
 }
 
-int mbim_configure_params(void)
-{
-	struct teth_aggr_params aggr_params;
-	int ret = 0;
-
-	aggr_params.dl.aggr_prot = TETH_AGGR_PROTOCOL_MBIM;
-	aggr_params.dl.max_datagrams = mbim_ntb_parameters.wNtbOutMaxDatagrams;
-	aggr_params.dl.max_transfer_size_byte =
-			mbim_ntb_parameters.dwNtbInMaxSize;
-
-	aggr_params.ul.aggr_prot = TETH_AGGR_PROTOCOL_MBIM;
-	aggr_params.ul.max_datagrams = mbim_ntb_parameters.wNtbOutMaxDatagrams;
-	aggr_params.ul.max_transfer_size_byte =
-			mbim_ntb_parameters.dwNtbOutMaxSize;
-
-	ret = teth_bridge_set_aggr_params(&aggr_params);
-	if (ret)
-		pr_err("%s: teth_bridge_set_aggr_params failed\n", __func__);
-
-	return ret;
-}
-
 static int mbim_bam_connect(struct f_mbim *dev)
 {
 	int ret;
@@ -696,9 +703,9 @@ static int mbim_bam_connect(struct f_mbim *dev)
 	pr_info("dev:%p portno:%d\n", dev, dev->port_num);
 
 	src_connection_idx = usb_bam_get_connection_idx(gadget->name, bam_name,
-					USB_TO_PEER_PERIPHERAL, dev->port_num);
+		USB_TO_PEER_PERIPHERAL, USB_BAM_DEVICE, dev->port_num);
 	dst_connection_idx = usb_bam_get_connection_idx(gadget->name, bam_name,
-					PEER_PERIPHERAL_TO_USB, dev->port_num);
+		PEER_PERIPHERAL_TO_USB, USB_BAM_DEVICE, dev->port_num);
 	if (src_connection_idx < 0 || dst_connection_idx < 0) {
 		pr_err("%s: usb_bam_get_connection_idx failed\n", __func__);
 		return ret;
@@ -720,9 +727,7 @@ static int mbim_bam_connect(struct f_mbim *dev)
 
 static int mbim_bam_disconnect(struct f_mbim *dev)
 {
-	pr_info("dev:%p port:%d. Do nothing.\n",
-			dev, dev->port_num);
-
+	pr_info("%s - dev:%p port:%d\n", __func__, dev, dev->port_num);
 	bam_data_disconnect(&dev->bam_port, dev->port_num);
 
 	return 0;
@@ -999,7 +1004,7 @@ mbim_setup(struct usb_function *f, const struct usb_ctrlrequest *ctrl)
 	 */
 
 	if (!atomic_read(&mbim->online)) {
-		pr_info("usb cable is not connected\n");
+		pr_warning("usb cable is not connected\n");
 		return -ENOTCONN;
 	}
 
@@ -1323,6 +1328,16 @@ static int mbim_set_alt(struct usb_function *f, unsigned intf, unsigned alt)
 				pr_info("Set mbim port out_desc = 0x%p",
 					mbim->bam_port.out->desc);
 
+				if (mbim->xport == USB_GADGET_XPORT_BAM2BAM_IPA
+					&& gadget_is_dwc3(cdev->gadget)) {
+					if (msm_ep_config(mbim->bam_port.in) ||
+					   msm_ep_config(mbim->bam_port.out)) {
+						pr_err("%s: ep_config failed\n",
+							__func__);
+						goto fail;
+					}
+				}
+
 				pr_debug("Activate mbim\n");
 				mbim_bam_connect(mbim);
 
@@ -1342,10 +1357,6 @@ static int mbim_set_alt(struct usb_function *f, unsigned intf, unsigned alt)
 	atomic_set(&mbim->online, 1);
 
 	pr_info("SET DEVICE ONLINE");
-
-	/* wakeup file threads */
-	wake_up(&mbim->read_wq);
-	wake_up(&mbim->write_wq);
 
 	return 0;
 
@@ -1373,6 +1384,7 @@ static int mbim_get_alt(struct usb_function *f, unsigned intf)
 static void mbim_disable(struct usb_function *f)
 {
 	struct f_mbim	*mbim = func_to_mbim(f);
+	struct usb_composite_dev *cdev = mbim->cdev;
 
 	pr_info("SET DEVICE OFFLINE");
 	atomic_set(&mbim->online, 0);
@@ -1381,6 +1393,12 @@ static void mbim_disable(struct usb_function *f)
 
 	mbim_clear_queues(mbim);
 	mbim_reset_function_queue(mbim);
+
+	if (mbim->xport == USB_GADGET_XPORT_BAM2BAM_IPA &&
+			gadget_is_dwc3(cdev->gadget)) {
+		msm_ep_unconfig(mbim->bam_port.out);
+		msm_ep_unconfig(mbim->bam_port.in);
+	}
 
 	mbim_bam_disconnect(mbim);
 
@@ -1398,14 +1416,40 @@ static void mbim_disable(struct usb_function *f)
 
 static void mbim_suspend(struct usb_function *f)
 {
+	struct f_mbim	*mbim = func_to_mbim(f);
+
 	pr_info("mbim suspended\n");
-	bam_data_suspend(MBIM_ACTIVE_PORT);
+
+	if (mbim->cdev->gadget->remote_wakeup) {
+		bam_data_suspend(MBIM_ACTIVE_PORT);
+	} else {
+		/*
+		 * When remote wakeup is disabled, IPA BAM is disconnected
+		 * because it cannot send new data until the USB bus is resumed.
+		 * Endpoint descriptors info is saved before it gets reset by
+		 * the BAM disconnect API. This lets us restore this info when
+		 * the USB bus is resumed.
+		 */
+		mbim->in_ep_desc_backup  = mbim->bam_port.in->desc;
+		mbim->out_ep_desc_backup = mbim->bam_port.out->desc;
+		mbim_bam_disconnect(mbim);
+	}
 }
 
 static void mbim_resume(struct usb_function *f)
 {
+	struct f_mbim	*mbim = func_to_mbim(f);
+
 	pr_info("mbim resumed\n");
-	bam_data_resume(MBIM_ACTIVE_PORT);
+
+	if (mbim->cdev->gadget->remote_wakeup) {
+		bam_data_resume(MBIM_ACTIVE_PORT);
+	} else {
+		/* Restore endpoint descriptors info. */
+		mbim->bam_port.in->desc  = mbim->in_ep_desc_backup;
+		mbim->bam_port.out->desc = mbim->out_ep_desc_backup;
+		mbim_bam_connect(mbim);
+	}
 }
 
 /*---------------------- function driver setup/binding ---------------------*/
@@ -1489,13 +1533,13 @@ mbim_bind(struct usb_configuration *c, struct usb_function *f)
 	mbim->not_port.notify_req->complete = mbim_notify_complete;
 
 	if (mbim->xport == USB_GADGET_XPORT_BAM2BAM_IPA)
-		mbb_desc.wMaxSegmentSize = cpu_to_le16(0x800);
+		mbim_desc.wMaxSegmentSize = cpu_to_le16(0x800);
 	else
-		mbb_desc.wMaxSegmentSize = cpu_to_le16(0xfe0);
+		mbim_desc.wMaxSegmentSize = cpu_to_le16(0xfe0);
 
 	/* copy descriptors, and track endpoint copies */
-	f->descriptors = usb_copy_descriptors(mbim_fs_function);
-	if (!f->descriptors)
+	f->fs_descriptors = usb_copy_descriptors(mbim_fs_function);
+	if (!f->fs_descriptors)
 		goto fail;
 
 	/*
@@ -1539,8 +1583,8 @@ mbim_bind(struct usb_configuration *c, struct usb_function *f)
 fail:
 	pr_err("%s failed to bind, err %d\n", f->name, status);
 
-	if (f->descriptors)
-		usb_free_descriptors(f->descriptors);
+	if (f->fs_descriptors)
+		usb_free_descriptors(f->fs_descriptors);
 
 	if (mbim->not_port.notify_req) {
 		kfree(mbim->not_port.notify_req->buf);
@@ -1563,10 +1607,11 @@ static void mbim_unbind(struct usb_configuration *c, struct usb_function *f)
 {
 	struct f_mbim	*mbim = func_to_mbim(f);
 
+	pr_debug("unbinding mbim");
 	bam_data_destroy(mbim->port_num);
 	if (gadget_is_dualspeed(c->cdev->gadget))
 		usb_free_descriptors(f->hs_descriptors);
-	usb_free_descriptors(f->descriptors);
+	usb_free_descriptors(f->fs_descriptors);
 
 	kfree(mbim->not_port.notify_req->buf);
 	usb_ep_free_request(mbim->not_port.notify, mbim->not_port.notify_req);
@@ -1691,18 +1736,6 @@ mbim_read(struct file *fp, char __user *buf, size_t count, loff_t *pos)
 	if (mbim_lock(&dev->read_excl)) {
 		pr_err("Previous reading is not finished yet\n");
 		return -EBUSY;
-	}
-
-	/* block until mbim online */
-	while (!(atomic_read(&dev->online) || atomic_read(&dev->error))) {
-		pr_err("USB cable not connected. Wait.\n");
-		ret = wait_event_interruptible(dev->read_wq,
-			(atomic_read(&dev->online) ||
-			atomic_read(&dev->error)));
-		if (ret < 0) {
-			mbim_unlock(&dev->read_excl);
-			return -ERESTARTSYS;
-		}
 	}
 
 	if (atomic_read(&dev->error)) {
@@ -1856,9 +1889,16 @@ static int mbim_release(struct inode *ip, struct file *fp)
 static long mbim_ioctl(struct file *fp, unsigned cmd, unsigned long arg)
 {
 	struct f_mbim *mbim = fp->private_data;
+	struct data_port *port;
+	struct mbim_ipa_ep_info info;
 	int ret = 0;
 
 	pr_debug("Received command %d", cmd);
+
+	if (!mbim) {
+		pr_err("Bad parameter");
+		return -EINVAL;
+	}
 
 	if (mbim_lock(&mbim->ioctl_excl))
 		return -EBUSY;
@@ -1884,6 +1924,34 @@ static long mbim_ioctl(struct file *fp, unsigned cmd, unsigned long arg)
 		pr_info("Sent NTB datagrams count %d",
 			mbim->ntb_max_datagrams);
 		break;
+
+	case MBIM_EP_LOOKUP:
+		if (!atomic_read(&mbim->online)) {
+			pr_warn("usb cable is not connected\n");
+			return -ENOTCONN;
+		}
+
+		port = &mbim->bam_port;
+		if ((port->ipa_producer_ep == -1) ||
+			(port->ipa_consumer_ep == -1)) {
+			pr_err("EP_LOOKUP failed - IPA pipes were not updated");
+			ret = -EAGAIN;
+			break;
+		}
+
+		info.ph_ep_info.ep_type = MBIM_DATA_EP_TYPE_HSUSB;
+		info.ph_ep_info.peripheral_iface_id = mbim->data_id;
+		info.ipa_ep_pair.cons_pipe_num = port->ipa_consumer_ep;
+		info.ipa_ep_pair.prod_pipe_num = port->ipa_producer_ep;
+
+		ret = copy_to_user((void __user *)arg, &info,
+			sizeof(info));
+		if (ret) {
+			pr_err("copying to user space failed");
+			ret = -EFAULT;
+		}
+		break;
+
 	default:
 		pr_err("wrong parameter");
 		ret = -EINVAL;
@@ -1932,6 +2000,9 @@ static int mbim_init(int instances)
 		}
 
 		dev->port_num = i;
+		dev->bam_port.ipa_consumer_ep = -1;
+		dev->bam_port.ipa_producer_ep = -1;
+
 		spin_lock_init(&dev->lock);
 		INIT_LIST_HEAD(&dev->cpkt_req_q);
 		INIT_LIST_HEAD(&dev->cpkt_resp_q);
@@ -1940,7 +2011,6 @@ static int mbim_init(int instances)
 		mbim_ports[i].port_num = i;
 
 		init_waitqueue_head(&dev->read_wq);
-		init_waitqueue_head(&dev->write_wq);
 
 		atomic_set(&dev->open_excl, 0);
 		atomic_set(&dev->ioctl_excl, 0);

@@ -21,14 +21,18 @@
 
 	.arm
 ENTRY(msm_pm_boot_entry)
+THUMB(	adr	r9, BSYM(2f)	)	/* Kernel is always entered in ARM. */
+THUMB(	bx	r9		)	/* If this is a Thumb-2 kernel, */
+THUMB(	.thumb			)	/* switch to Thumb now.		*/
+THUMB(2:			)
 	mrc     p15, 0, r0, c0, c0, 5    /* MPIDR                          */
 	and     r0, r0, #15              /* what CPU am I                  */
 
+	adr	r3, 3f
+	ldr	r1, [r3]
+	sub	r3, r1, r3
 	ldr	r1, =msm_pc_debug_counters_phys /*phys addr for IMEM reg */
-	ldr	r2, =msm_pm_boot_entry
-	adr	r3, msm_pm_boot_entry
-	add	r1, r1, r3               /* translate virt to phys addr    */
-	sub	r1, r1, r2
+	sub	r1, r1, r3			/* translate virt to phys */
 	ldr	r1,[r1]
 
 	cmp	r1, #0
@@ -41,13 +45,11 @@ ENTRY(msm_pm_boot_entry)
 
 skip_pc_debug3:
 	ldr     r1, =msm_pm_boot_vector
-	ldr     r2, =msm_pm_boot_entry
-	adr     r3, msm_pm_boot_entry
-	add     r1, r1, r3               /* translate virt to phys addr    */
-	sub     r1, r1, r2
+	sub	r1, r1, r3		/* translate virt to phys */
 
 	add     r1, r1, r0, LSL #2       /* locate boot vector for our cpu */
 	ldr     pc, [r1]                 /* jump                           */
+ENDPROC(msm_pm_boot_entry)
 
 3:	.long	.
 

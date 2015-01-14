@@ -32,9 +32,11 @@
 #include <linux/random.h>
 #include <linux/hw_breakpoint.h>
 #include <linux/cpuidle.h>
+#include <linux/leds.h>
 #include <linux/console.h>
 
 #include <asm/cacheflush.h>
+#include <asm/idmap.h>
 #include <asm/processor.h>
 #include <asm/thread_notify.h>
 #include <asm/stacktrace.h>
@@ -58,10 +60,6 @@ static const char *isa_modes[] = {
   "ARM" , "Thumb" , "Jazelle", "ThumbEE"
 };
 
-extern void setup_mm_for_reboot(void);
-
-static volatile int hlt_counter;
-
 #ifdef CONFIG_SMP
 void arch_trigger_all_cpu_backtrace(void)
 {
@@ -73,41 +71,6 @@ void arch_trigger_all_cpu_backtrace(void)
 	dump_stack();
 }
 #endif
-
-void disable_hlt(void)
-{
-	hlt_counter++;
-}
-
-EXPORT_SYMBOL(disable_hlt);
-
-void enable_hlt(void)
-{
-	hlt_counter--;
-}
-
-EXPORT_SYMBOL(enable_hlt);
-
-int get_hlt(void)
-{
-	return hlt_counter;
-}
-EXPORT_SYMBOL(get_hlt);
-
-static int __init nohlt_setup(char *__unused)
-{
-	hlt_counter = 1;
-	return 1;
-}
-
-static int __init hlt_setup(char *__unused)
-{
-	hlt_counter = 0;
-	return 1;
-}
-
-__setup("nohlt", nohlt_setup);
-__setup("hlt", hlt_setup);
 
 extern void call_with_stack(void (*fn)(void *), void *arg, void *sp);
 typedef void (*phys_reset_t)(unsigned long);
@@ -162,9 +125,6 @@ static void __soft_restart(void *addr)
 	/* Push out any further dirty data, and ensure cache is empty */
 	flush_cache_all();
 
-	/* Push out the dirty data from external caches */
-	outer_disable();
-
 	/* Switch to the identity mapping. */
 	phys_reset = (phys_reset_t)(unsigned long)virt_to_phys(cpu_reset);
 	phys_reset((unsigned long)addr);
@@ -205,26 +165,6 @@ EXPORT_SYMBOL(pm_power_off);
 void (*arm_pm_restart)(char str, const char *cmd) = null_restart;
 EXPORT_SYMBOL_GPL(arm_pm_restart);
 
-static void do_nothing(void *unused)
-{
-}
-
-/*
- * cpu_idle_wait - Used to ensure that all the CPUs discard old value of
- * pm_idle and update to new pm_idle value. Required while changing pm_idle
- * handler on SMP systems.
- *
- * Caller must have changed pm_idle to the new value before the call. Old
- * pm_idle value will not be used by any CPU after the return of this function.
- */
-void cpu_idle_wait(void)
-{
-	smp_mb();
-	/* kick all the CPUs so that they exit out of pm_idle */
-	smp_call_function(do_nothing, NULL, 1);
-}
-EXPORT_SYMBOL_GPL(cpu_idle_wait);
-
 /*
  * This is our default idle handler.
  */
@@ -241,58 +181,40 @@ static void default_idle(void)
 	local_irq_enable();
 }
 
-void (*pm_idle)(void) = default_idle;
-EXPORT_SYMBOL(pm_idle);
-
-/*
- * The idle thread, has rather strange semantics for calling pm_idle,
- * but this is what x86 does and we need to do the same, so that
- * things like cpuidle get called in the same way.  The only difference
- * is that we always respect 'hlt_counter' to prevent low power idle.
- */
-void cpu_idle(void)
+void arch_cpu_idle_prepare(void)
 {
 	local_fiq_enable();
+}
 
-	/* endless idle loop with no priority at all */
-	while (1) {
-		idle_notifier_call_chain(IDLE_START);
-		tick_nohz_idle_enter();
-		rcu_idle_enter();
-		while (!need_resched()) {
-			/*
-			 * We need to disable interrupts here
-			 * to ensure we don't miss a wakeup call.
-			 */
-			local_irq_disable();
+void arch_cpu_idle_enter(void)
+{
+	idle_notifier_call_chain(IDLE_START);
+	ledtrig_cpu(CPU_LED_IDLE_START);
 #ifdef CONFIG_PL310_ERRATA_769419
-			wmb();
+	wmb();
 #endif
-			if (hlt_counter) {
-				local_irq_enable();
-				cpu_relax();
-			} else if (!need_resched()) {
-				stop_critical_timings();
-				if (cpuidle_idle_call())
-					pm_idle();
-				start_critical_timings();
-				/*
-				 * pm_idle functions must always
-				 * return with IRQs enabled.
-				 */
-				WARN_ON(irqs_disabled());
-			} else
-				local_irq_enable();
-		}
-		rcu_idle_exit();
-		tick_nohz_idle_exit();
-		idle_notifier_call_chain(IDLE_END);
-		schedule_preempt_disabled();
+}
+
+void arch_cpu_idle_exit(void)
+{
+	ledtrig_cpu(CPU_LED_IDLE_END);
+	idle_notifier_call_chain(IDLE_END);
+}
+
 #ifdef CONFIG_HOTPLUG_CPU
-		if (cpu_is_offline(smp_processor_id()))
-			cpu_die();
+void arch_cpu_idle_dead(void)
+{
+	cpu_die();
+}
 #endif
-	}
+
+/*
+ * Called from the core idle loop.
+ */
+void arch_cpu_idle(void)
+{
+	if (cpuidle_idle_call())
+		default_idle();
 }
 
 static char reboot_mode = 'h';
@@ -305,30 +227,74 @@ int __init reboot_setup(char *str)
 
 __setup("reboot=", reboot_setup);
 
+/*
+ * Called by kexec, immediately prior to machine_kexec().
+ *
+ * This must completely disable all secondary CPUs; simply causing those CPUs
+ * to execute e.g. a RAM-based pin loop is not sufficient. This allows the
+ * kexec'd kernel to use any and all RAM as it sees fit, without having to
+ * avoid any code or data used by any SW CPU pin loop. The CPU hotplug
+ * functionality embodied in disable_nonboot_cpus() to achieve this.
+ */
 void machine_shutdown(void)
 {
-	preempt_disable();
 #ifdef CONFIG_SMP
-	smp_send_stop();
+	/*
+	 * Disable preemption so we're guaranteed to
+	 * run to power off or reboot and prevent
+	 * the possibility of switching to another
+	 * thread that might wind up blocking on
+	 * one of the stopped CPUs.
+	 */
+	preempt_disable();
 #endif
+	disable_nonboot_cpus();
 }
 
+/*
+ * Halting simply requires that the secondary CPUs stop performing any
+ * activity (executing tasks, handling interrupts). smp_send_stop()
+ * achieves this.
+ */
 void machine_halt(void)
 {
-	machine_shutdown();
+	preempt_disable();
+	smp_send_stop();
+
+	local_irq_disable();
 	while (1);
 }
 
+/*
+ * Power-off simply requires that the secondary CPUs stop performing any
+ * activity (executing tasks, handling interrupts). smp_send_stop()
+ * achieves this. When the system power is turned off, it will take all CPUs
+ * with it.
+ */
 void machine_power_off(void)
 {
-	machine_shutdown();
+	preempt_disable();
+	smp_send_stop();
+
 	if (pm_power_off)
 		pm_power_off();
 }
 
+/*
+ * Restart requires that the secondary CPUs stop performing any activity
+ * while the primary CPU resets the system. Systems with a single CPU can
+ * use soft_restart() as their machine descriptor's .restart hook, since that
+ * will cause the only available CPU to reset. Systems with multiple CPUs must
+ * provide a HW restart implementation, to ensure that all CPUs reset at once.
+ * This is required so that any code running after reset on the primary CPU
+ * doesn't have to co-ordinate with other CPUs to ensure they aren't still
+ * executing pre-reset code, and using RAM that the primary CPU's code wishes
+ * to use. Implementing such co-ordination would be essentially impossible.
+ */
 void machine_restart(char *cmd)
 {
-	machine_shutdown();
+	preempt_disable();
+	smp_send_stop();
 
 	/* Flush the console to make sure all the relevant messages make it
 	 * out to the console drivers */
@@ -341,6 +307,7 @@ void machine_restart(char *cmd)
 
 	/* Whoops - the platform was unable to reboot. Tell the user! */
 	printk("Reboot failed -- System halted\n");
+	local_irq_disable();
 	while (1);
 }
 
@@ -398,25 +365,44 @@ static void show_data(unsigned long addr, int nbytes, const char *name)
 static void show_extra_register_data(struct pt_regs *regs, int nbytes)
 {
 	mm_segment_t fs;
+	unsigned long is_user;
 
 	fs = get_fs();
+	is_user = user_mode(regs);
+
 	set_fs(KERNEL_DS);
-	show_data(regs->ARM_pc - nbytes, nbytes * 2, "PC");
-	show_data(regs->ARM_lr - nbytes, nbytes * 2, "LR");
-	show_data(regs->ARM_sp - nbytes, nbytes * 2, "SP");
-	show_data(regs->ARM_ip - nbytes, nbytes * 2, "IP");
-	show_data(regs->ARM_fp - nbytes, nbytes * 2, "FP");
-	show_data(regs->ARM_r0 - nbytes, nbytes * 2, "R0");
-	show_data(regs->ARM_r1 - nbytes, nbytes * 2, "R1");
-	show_data(regs->ARM_r2 - nbytes, nbytes * 2, "R2");
-	show_data(regs->ARM_r3 - nbytes, nbytes * 2, "R3");
-	show_data(regs->ARM_r4 - nbytes, nbytes * 2, "R4");
-	show_data(regs->ARM_r5 - nbytes, nbytes * 2, "R5");
-	show_data(regs->ARM_r6 - nbytes, nbytes * 2, "R6");
-	show_data(regs->ARM_r7 - nbytes, nbytes * 2, "R7");
-	show_data(regs->ARM_r8 - nbytes, nbytes * 2, "R8");
-	show_data(regs->ARM_r9 - nbytes, nbytes * 2, "R9");
-	show_data(regs->ARM_r10 - nbytes, nbytes * 2, "R10");
+	if (!is_user || regs->ARM_pc < TASK_SIZE)
+		show_data(regs->ARM_pc - nbytes, nbytes * 2, "PC");
+	if (!is_user || regs->ARM_lr < TASK_SIZE)
+		show_data(regs->ARM_lr - nbytes, nbytes * 2, "LR");
+	if (!is_user || regs->ARM_sp < TASK_SIZE)
+		show_data(regs->ARM_sp - nbytes, nbytes * 2, "SP");
+	if (!is_user || regs->ARM_ip < TASK_SIZE)
+		show_data(regs->ARM_ip - nbytes, nbytes * 2, "IP");
+	if (!is_user || regs->ARM_fp < TASK_SIZE)
+		show_data(regs->ARM_fp - nbytes, nbytes * 2, "FP");
+	if (!is_user || regs->ARM_r0 < TASK_SIZE)
+		show_data(regs->ARM_r0 - nbytes, nbytes * 2, "R0");
+	if (!is_user || regs->ARM_r1 < TASK_SIZE)
+		show_data(regs->ARM_r1 - nbytes, nbytes * 2, "R1");
+	if (!is_user || regs->ARM_r2 < TASK_SIZE)
+		show_data(regs->ARM_r2 - nbytes, nbytes * 2, "R2");
+	if (!is_user || regs->ARM_r3 < TASK_SIZE)
+		show_data(regs->ARM_r3 - nbytes, nbytes * 2, "R3");
+	if (!is_user || regs->ARM_r4 < TASK_SIZE)
+		show_data(regs->ARM_r4 - nbytes, nbytes * 2, "R4");
+	if (!is_user || regs->ARM_r5 < TASK_SIZE)
+		show_data(regs->ARM_r5 - nbytes, nbytes * 2, "R5");
+	if (!is_user || regs->ARM_r6 < TASK_SIZE)
+		show_data(regs->ARM_r6 - nbytes, nbytes * 2, "R6");
+	if (!is_user || regs->ARM_r7 < TASK_SIZE)
+		show_data(regs->ARM_r7 - nbytes, nbytes * 2, "R7");
+	if (!is_user || regs->ARM_r8 < TASK_SIZE)
+		show_data(regs->ARM_r8 - nbytes, nbytes * 2, "R8");
+	if (!is_user || regs->ARM_r9 < TASK_SIZE)
+		show_data(regs->ARM_r9 - nbytes, nbytes * 2, "R9");
+	if (!is_user || regs->ARM_r10 < TASK_SIZE)
+		show_data(regs->ARM_r10 - nbytes, nbytes * 2, "R10");
 	set_fs(fs);
 }
 
@@ -425,11 +411,8 @@ void __show_regs(struct pt_regs *regs)
 	unsigned long flags;
 	char buf[64];
 
-	printk("CPU: %d    %s  (%s %.*s)\n",
-		raw_smp_processor_id(), print_tainted(),
-		init_utsname()->release,
-		(int)strcspn(init_utsname()->version, " "),
-		init_utsname()->version);
+	show_regs_print_info(KERN_DEFAULT);
+
 	print_symbol("PC is at %s\n", instruction_pointer(regs));
 	print_symbol("LR is at %s\n", regs->ARM_lr);
 	printk("pc : [<%08lx>]    lr : [<%08lx>]    psr: %08lx\n"
@@ -486,7 +469,6 @@ void __show_regs(struct pt_regs *regs)
 void show_regs(struct pt_regs * regs)
 {
 	printk("\n");
-	printk("Pid: %d, comm: %20s\n", task_pid_nr(current), current->comm);
 	__show_regs(regs);
 	dump_stack();
 }
@@ -525,18 +507,26 @@ asmlinkage void ret_from_fork(void) __asm__("ret_from_fork");
 
 int
 copy_thread(unsigned long clone_flags, unsigned long stack_start,
-	    unsigned long stk_sz, struct task_struct *p, struct pt_regs *regs)
+	    unsigned long stk_sz, struct task_struct *p)
 {
 	struct thread_info *thread = task_thread_info(p);
 	struct pt_regs *childregs = task_pt_regs(p);
 
-	*childregs = *regs;
-	childregs->ARM_r0 = 0;
-	childregs->ARM_sp = stack_start;
-
 	memset(&thread->cpu_context, 0, sizeof(struct cpu_context_save));
-	thread->cpu_context.sp = (unsigned long)childregs;
+
+	if (likely(!(p->flags & PF_KTHREAD))) {
+		*childregs = *current_pt_regs();
+		childregs->ARM_r0 = 0;
+		if (stack_start)
+			childregs->ARM_sp = stack_start;
+	} else {
+		memset(childregs, 0, sizeof(struct pt_regs));
+		thread->cpu_context.r4 = stk_sz;
+		thread->cpu_context.r5 = stack_start;
+		childregs->ARM_cpsr = SVC_MODE;
+	}
 	thread->cpu_context.pc = (unsigned long)ret_from_fork;
+	thread->cpu_context.sp = (unsigned long)childregs;
 
 	clear_ptrace_hw_breakpoint(p);
 
@@ -573,63 +563,6 @@ int dump_fpu (struct pt_regs *regs, struct user_fp *fp)
 }
 EXPORT_SYMBOL(dump_fpu);
 
-/*
- * Shuffle the argument into the correct register before calling the
- * thread function.  r4 is the thread argument, r5 is the pointer to
- * the thread function, and r6 points to the exit function.
- */
-extern void kernel_thread_helper(void);
-asm(	".pushsection .text\n"
-"	.align\n"
-"	.type	kernel_thread_helper, #function\n"
-"kernel_thread_helper:\n"
-#ifdef CONFIG_TRACE_IRQFLAGS
-"	bl	trace_hardirqs_on\n"
-#endif
-"	msr	cpsr_c, r7\n"
-"	mov	r0, r4\n"
-"	mov	lr, r6\n"
-"	mov	pc, r5\n"
-"	.size	kernel_thread_helper, . - kernel_thread_helper\n"
-"	.popsection");
-
-#ifdef CONFIG_ARM_UNWIND
-extern void kernel_thread_exit(long code);
-asm(	".pushsection .text\n"
-"	.align\n"
-"	.type	kernel_thread_exit, #function\n"
-"kernel_thread_exit:\n"
-"	.fnstart\n"
-"	.cantunwind\n"
-"	bl	do_exit\n"
-"	nop\n"
-"	.fnend\n"
-"	.size	kernel_thread_exit, . - kernel_thread_exit\n"
-"	.popsection");
-#else
-#define kernel_thread_exit	do_exit
-#endif
-
-/*
- * Create a kernel thread.
- */
-pid_t kernel_thread(int (*fn)(void *), void *arg, unsigned long flags)
-{
-	struct pt_regs regs;
-
-	memset(&regs, 0, sizeof(regs));
-
-	regs.ARM_r4 = (unsigned long)arg;
-	regs.ARM_r5 = (unsigned long)fn;
-	regs.ARM_r6 = (unsigned long)kernel_thread_exit;
-	regs.ARM_r7 = SVC_MODE | PSR_ENDSTATE | PSR_ISETSTATE;
-	regs.ARM_pc = (unsigned long)kernel_thread_helper;
-	regs.ARM_cpsr = regs.ARM_r7 | PSR_I_BIT;
-
-	return do_fork(flags|CLONE_VM|CLONE_UNTRACED, 0, &regs, 0, NULL, NULL);
-}
-EXPORT_SYMBOL(kernel_thread);
-
 unsigned long get_wchan(struct task_struct *p)
 {
 	struct stackframe frame;
@@ -664,15 +597,15 @@ unsigned long arch_randomize_brk(struct mm_struct *mm)
  * atomic helpers. Insert it into the gate_vma so that it is visible
  * through ptrace and /proc/<pid>/mem.
  */
-static struct vm_area_struct gate_vma;
+static struct vm_area_struct gate_vma = {
+	.vm_start	= 0xffff0000,
+	.vm_end		= 0xffff0000 + PAGE_SIZE,
+	.vm_flags	= VM_READ | VM_EXEC | VM_MAYREAD | VM_MAYEXEC,
+};
 
 static int __init gate_vma_init(void)
 {
-	gate_vma.vm_start	= 0xffff0000;
-	gate_vma.vm_end		= 0xffff0000 + PAGE_SIZE;
-	gate_vma.vm_page_prot	= PAGE_READONLY_EXEC;
-	gate_vma.vm_flags	= VM_READ | VM_EXEC |
-				  VM_MAYREAD | VM_MAYEXEC;
+	gate_vma.vm_page_prot = PAGE_READONLY_EXEC;
 	return 0;
 }
 arch_initcall(gate_vma_init);

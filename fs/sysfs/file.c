@@ -485,8 +485,8 @@ const struct file_operations sysfs_file_operations = {
 	.poll		= sysfs_poll,
 };
 
-int sysfs_attr_ns(struct kobject *kobj, const struct attribute *attr,
-		  const void **pns)
+static int sysfs_attr_ns(struct kobject *kobj, const struct attribute *attr,
+			 const void **pns)
 {
 	struct sysfs_dirent *dir_sd = kobj->sd;
 	const struct sysfs_ops *ops;
@@ -615,6 +615,47 @@ int sysfs_add_file_to_group(struct kobject *kobj,
 	return error;
 }
 EXPORT_SYMBOL_GPL(sysfs_add_file_to_group);
+
+#if defined(CONFIG_MMC_BKOPS_NODE_UID) || defined(CONFIG_MMC_BKOPS_NODE_GID)
+/**
+ * sysfs_chown_file - modify the ownership of the object
+ * @kobj: object we're acting for.
+ * @attr: attribute descriptor.
+ * @uid: new uid.
+ * @gid: new gid.
+ *
+ */
+int sysfs_chown_file(struct kobject *kobj, const struct attribute *attr,
+		     uid_t uid, gid_t gid)
+{
+	struct sysfs_dirent *sd;
+	struct iattr newattrs;
+	const void *ns;
+	int rc;
+
+	rc = sysfs_attr_ns(kobj, attr, &ns);
+	if (rc)
+		return rc;
+
+	mutex_lock(&sysfs_mutex);
+
+	rc = -ENOENT;
+	sd = sysfs_find_dirent(kobj->sd, ns, attr->name);
+	if (!sd)
+		goto out;
+
+	memset(&newattrs, 0, sizeof(newattrs));
+	newattrs.ia_valid = ATTR_UID | ATTR_GID;
+	newattrs.ia_uid = uid;
+	newattrs.ia_gid = gid;
+
+	rc = sysfs_sd_setattr(sd, &newattrs);
+out:
+	mutex_unlock(&sysfs_mutex);
+	return rc;
+}
+EXPORT_SYMBOL_GPL(sysfs_chown_file);
+#endif
 
 /**
  * sysfs_chmod_file - update the modified mode value on an object attribute.

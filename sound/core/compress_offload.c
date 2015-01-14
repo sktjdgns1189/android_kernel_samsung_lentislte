@@ -102,12 +102,15 @@ static int snd_compr_open(struct inode *inode, struct file *f)
 
 	if (dirn != compr->direction) {
 		pr_err("this device doesn't support this direction\n");
+		snd_card_unref(compr->card);
 		return -EINVAL;
 	}
 
 	data = kzalloc(sizeof(*data), GFP_KERNEL);
-	if (!data)
+	if (!data) {
+		snd_card_unref(compr->card);
 		return -ENOMEM;
+	}
 	data->stream.ops = compr->ops;
 	data->stream.direction = dirn;
 	data->stream.private_data = compr->private_data;
@@ -115,6 +118,7 @@ static int snd_compr_open(struct inode *inode, struct file *f)
 	runtime = kzalloc(sizeof(*runtime), GFP_KERNEL);
 	if (!runtime) {
 		kfree(data);
+		snd_card_unref(compr->card);
 		return -ENOMEM;
 	}
 	runtime->state = SNDRV_PCM_STATE_OPEN;
@@ -128,7 +132,8 @@ static int snd_compr_open(struct inode *inode, struct file *f)
 		kfree(runtime);
 		kfree(data);
 	}
-	return ret;
+	snd_card_unref(compr->card);
+	return 0;
 }
 
 static int snd_compr_free(struct inode *inode, struct file *f)
@@ -140,7 +145,8 @@ static int snd_compr_free(struct inode *inode, struct file *f)
 	case SNDRV_PCM_STATE_RUNNING:
 	case SNDRV_PCM_STATE_DRAINING:
 	case SNDRV_PCM_STATE_PAUSED:
-		data->stream.ops->trigger(&data->stream, SNDRV_PCM_TRIGGER_STOP);
+		data->stream.ops->trigger(&data->stream,
+					SNDRV_PCM_TRIGGER_STOP);
 		break;
 	default:
 		break;
@@ -318,8 +324,16 @@ static ssize_t snd_compr_read(struct file *f, char __user *buf,
 	stream = &data->stream;
 	mutex_lock(&stream->device->lock);
 
-	/* read is allowed when stream is running */
-	if (stream->runtime->state != SNDRV_PCM_STATE_RUNNING) {
+	/* read is allowed when stream is running, paused, draining and setup
+	 * (yes setup is state which we transition to after stop, so if user
+	 * wants to read data after stop we allow that)
+	 */
+	switch (stream->runtime->state) {
+	case SNDRV_PCM_STATE_OPEN:
+	case SNDRV_PCM_STATE_PREPARED:
+	case SNDRV_PCM_STATE_XRUN:
+	case SNDRV_PCM_STATE_SUSPENDED:
+	case SNDRV_PCM_STATE_DISCONNECTED:
 		retval = -EBADFD;
 		goto out;
 	}
@@ -479,7 +493,7 @@ static int snd_compress_check_input(struct snd_compr_params *params)
 {
 	/* first let's check the buffer parameter's */
 	if (params->buffer.fragment_size == 0 ||
-			params->buffer.fragments > UINT_MAX / params->buffer.fragment_size)
+			params->buffer.fragments > SIZE_MAX / params->buffer.fragment_size)
 		return -EINVAL;
 
 	/* now codec parameters */
@@ -774,9 +788,9 @@ static int snd_compress_simple_ioctls(struct file *file,
 		retval = snd_compr_ioctl_avail(stream, arg);
 		break;
 
-		/* drain and partial drain need special handling
-	 * we need to drop the locks here as the streams would get blocked on the
-	 * dsp to get drained. The locking would be handled in respective
+	/* drain and partial drain need special handling
+	 * we need to drop the locks here as the streams would get blocked on
+	 * the dsp to get drained. The locking would be handled in respective
 	 * function here
 	 */
 	case _IOC_NR(SNDRV_COMPRESS_DRAIN):

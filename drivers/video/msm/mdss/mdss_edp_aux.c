@@ -26,13 +26,10 @@
 #include <linux/platform_device.h>
 #include <linux/bug.h>
 #include <linux/of_gpio.h>
-
-#include <asm/system.h>
-#include <asm/mach-types.h>
+#include <linux/clk/msm-clk.h>
 
 #include <mach/hardware.h>
 #include <mach/gpio.h>
-#include <mach/clk.h>
 #include <mach/dma.h>
 
 #include "mdss_panel.h"

@@ -22,7 +22,7 @@
 #include <linux/slab.h>
 #include <mach/board.h>
 #include <mach/iommu.h>
-#include <mach/iommu_domains.h>
+#include <linux/msm_iommu_domains.h>
 #include <media/msm_vidc.h>
 #include "msm_vidc_internal.h"
 #include "msm_vidc_debug.h"
@@ -35,7 +35,7 @@
 
 struct msm_vidc_drv *vidc_driver;
 
-uint32_t msm_vidc_pwr_collapse_delay = 10000;
+uint32_t msm_vidc_pwr_collapse_delay = 2000;
 
 static inline struct msm_vidc_inst *get_vidc_inst(struct file *filp, void *fh)
 {
@@ -173,7 +173,7 @@ int msm_v4l2_streamoff(struct file *file, void *fh,
 }
 
 static int msm_v4l2_subscribe_event(struct v4l2_fh *fh,
-				struct v4l2_event_subscription *sub)
+				const struct v4l2_event_subscription *sub)
 {
 	struct msm_vidc_inst *vidc_inst = container_of(fh,
 			struct msm_vidc_inst, event_handler);
@@ -181,7 +181,7 @@ static int msm_v4l2_subscribe_event(struct v4l2_fh *fh,
 }
 
 static int msm_v4l2_unsubscribe_event(struct v4l2_fh *fh,
-				struct v4l2_event_subscription *sub)
+				const struct v4l2_event_subscription *sub)
 {
 	struct msm_vidc_inst *vidc_inst = container_of(fh,
 			struct msm_vidc_inst, event_handler);
@@ -233,6 +233,7 @@ static int msm_v4l2_enum_framesizes(struct file *file, void *fh,
 	struct msm_vidc_inst *vidc_inst = get_vidc_inst(file, fh);
 	return msm_vidc_enum_framesizes((void *)vidc_inst, fsize);
 }
+
 static const struct v4l2_ioctl_ops msm_v4l2_ioctl_ops = {
 	.vidioc_querycap = msm_v4l2_querycap,
 	.vidioc_enum_fmt_vid_cap_mplane = msm_v4l2_enum_fmt,
@@ -353,7 +354,7 @@ static ssize_t msm_vidc_link_name_show(struct device *dev,
 		return 0;
 }
 
-static DEVICE_ATTR(link_name, 0644, msm_vidc_link_name_show, NULL);
+static DEVICE_ATTR(link_name, 0444, msm_vidc_link_name_show, NULL);
 
 static ssize_t store_pwr_collapse_delay(struct device *dev,
 		struct device_attribute *attr,
@@ -380,7 +381,7 @@ static ssize_t show_pwr_collapse_delay(struct device *dev,
 static DEVICE_ATTR(pwr_collapse_delay, 0644, show_pwr_collapse_delay,
 		store_pwr_collapse_delay);
 
-static int __devinit msm_vidc_probe(struct platform_device *pdev)
+static int msm_vidc_probe(struct platform_device *pdev)
 {
 	int rc = 0;
 	struct msm_vidc_core *core;
@@ -406,7 +407,7 @@ static int __devinit msm_vidc_probe(struct platform_device *pdev)
 		goto err_core_init;
 	}
 	if (core->hfi_type == VIDC_HFI_Q6) {
-		dprintk(VIDC_ERR, "Q6 hfi device probe called\n");
+		dprintk(VIDC_DBG, "Q6 hfi device probe called\n");
 		nr += MSM_VIDC_MAX_DEVICES;
 		core->id = MSM_VIDC_CORE_Q6;
 	} else {
@@ -422,6 +423,7 @@ static int __devinit msm_vidc_probe(struct platform_device *pdev)
 		msm_vidc_release_video_device;
 	core->vdev[MSM_VIDC_DECODER].vdev.fops = &msm_v4l2_vidc_fops;
 	core->vdev[MSM_VIDC_DECODER].vdev.ioctl_ops = &msm_v4l2_ioctl_ops;
+	core->vdev[MSM_VIDC_DECODER].vdev.vfl_dir = VFL_DIR_M2M;
 	core->vdev[MSM_VIDC_DECODER].type = MSM_VIDC_DECODER;
 	rc = video_register_device(&core->vdev[MSM_VIDC_DECODER].vdev,
 					VFL_TYPE_GRABBER, nr);
@@ -442,6 +444,7 @@ static int __devinit msm_vidc_probe(struct platform_device *pdev)
 		msm_vidc_release_video_device;
 	core->vdev[MSM_VIDC_ENCODER].vdev.fops = &msm_v4l2_vidc_fops;
 	core->vdev[MSM_VIDC_ENCODER].vdev.ioctl_ops = &msm_v4l2_ioctl_ops;
+	core->vdev[MSM_VIDC_ENCODER].vdev.vfl_dir = VFL_DIR_M2M;
 	core->vdev[MSM_VIDC_ENCODER].type = MSM_VIDC_ENCODER;
 	rc = video_register_device(&core->vdev[MSM_VIDC_ENCODER].vdev,
 				VFL_TYPE_GRABBER, nr + 1);
@@ -510,7 +513,7 @@ err_no_mem:
 	return rc;
 }
 
-static int __devexit msm_vidc_remove(struct platform_device *pdev)
+static int msm_vidc_remove(struct platform_device *pdev)
 {
 	int rc = 0;
 	struct msm_vidc_core *core;
@@ -544,35 +547,6 @@ static const struct of_device_id msm_vidc_dt_match[] = {
 	{}
 };
 
-static int msm_vidc_pm_suspend(struct device *pdev)
-{
-	struct msm_vidc_core *core;
-
-	if (!pdev) {
-		dprintk(VIDC_ERR, "%s invalid device\n", __func__);
-		return -EINVAL;
-	}
-
-	core = (struct msm_vidc_core *)pdev->platform_data;
-	if (!core) {
-		dprintk(VIDC_ERR, "%s invalid core\n", __func__);
-		return -EINVAL;
-	}
-	dprintk(VIDC_INFO, "%s\n", __func__);
-
-	return msm_vidc_suspend(core->id);
-}
-
-static int msm_vidc_pm_resume(struct device *dev)
-{
-	dprintk(VIDC_INFO, "%s\n", __func__);
-	return 0;
-}
-
-static const struct dev_pm_ops msm_vidc_pm_ops = {
-	SET_SYSTEM_SLEEP_PM_OPS(msm_vidc_pm_suspend, msm_vidc_pm_resume)
-};
-
 MODULE_DEVICE_TABLE(of, msm_vidc_dt_match);
 
 static struct platform_driver msm_vidc_driver = {
@@ -582,7 +556,6 @@ static struct platform_driver msm_vidc_driver = {
 		.name = "msm_vidc_v4l2",
 		.owner = THIS_MODULE,
 		.of_match_table = msm_vidc_dt_match,
-		.pm = &msm_vidc_pm_ops,
 	},
 };
 
@@ -599,7 +572,7 @@ static int __init msm_vidc_init(void)
 
 	INIT_LIST_HEAD(&vidc_driver->cores);
 	mutex_init(&vidc_driver->lock);
-	vidc_driver->debugfs_root = debugfs_create_dir("msm_vidc", NULL);
+	vidc_driver->debugfs_root = msm_vidc_debugfs_init_drv();
 	if (!vidc_driver->debugfs_root)
 		dprintk(VIDC_ERR,
 			"Failed to create debugfs for msm_vidc\n");

@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -26,12 +26,13 @@
 #include <linux/workqueue.h>
 #include <linux/wcnss_wlan.h>
 #include <linux/of_gpio.h>
+#include <soc/qcom/subsystem_restart.h>
+#include <soc/qcom/ramdump.h>
 
-#include <mach/subsystem_restart.h>
 #include <mach/msm_smsm.h>
-#include <mach/ramdump.h>
-#include <mach/msm_smem.h>
 #include <mach/msm_bus_board.h>
+
+#include <soc/qcom/smem.h>
 
 #include "peripheral-loader.h"
 #include "scm-pas.h"
@@ -83,7 +84,6 @@ struct pronto_data {
 	struct regulator *vreg;
 	bool restart_inprogress;
 	bool crash;
-	struct delayed_work cancel_vote_work;
 	struct ramdump_device *ramdump_dev;
 	struct work_struct wcnss_wdog_bite_work;
 };
@@ -113,6 +113,7 @@ err:
 static void pil_pronto_remove_proxy_vote(struct pil_desc *pil)
 {
 	struct pronto_data *drv = dev_get_drvdata(pil->dev);
+
 	regulator_disable(drv->vreg);
 	clk_disable_unprepare(drv->cxo);
 }
@@ -265,25 +266,15 @@ static struct pil_reset_ops pil_pronto_ops_trusted = {
 
 #define subsys_to_drv(d) container_of(d, struct pronto_data, subsys_desc)
 
-static int pronto_start(const struct subsys_desc *desc)
-{
-	struct pronto_data *drv = subsys_to_drv(desc);
-	return pil_boot(&drv->desc);
-}
-
-static void pronto_stop(const struct subsys_desc *desc)
-{
-	struct pronto_data *drv = subsys_to_drv(desc);
-	pil_shutdown(&drv->desc);
-}
-
 static void log_wcnss_sfr(void)
 {
 	char *smem_reset_reason;
 	unsigned smem_reset_size;
 
 	smem_reset_reason = smem_get_entry(SMEM_SSR_REASON_WCNSS0,
-					   &smem_reset_size);
+					   &smem_reset_size,
+					   0,
+					   SMEM_ANY_HOST_FLAG);
 
 	if (!smem_reset_reason || !smem_reset_size) {
 		pr_err("wcnss subsystem failure reason:\n"
@@ -338,9 +329,6 @@ static irqreturn_t wcnss_wdog_bite_irq_hdlr(int irq, void *dev_id)
 	struct pronto_data *drv = subsys_to_drv(dev_id);
 
 	drv->crash = true;
-
-	disable_irq_nosync(drv->subsys_desc.wdog_bite_irq);
-
 	if (drv->restart_inprogress) {
 		pr_err("Ignoring wcnss bite irq, restart in progress\n");
 		return IRQ_HANDLED;
@@ -352,46 +340,25 @@ static irqreturn_t wcnss_wdog_bite_irq_hdlr(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
-static void wcnss_post_bootup(struct work_struct *work)
-{
-	struct platform_device *pdev = wcnss_get_platform_device();
-	struct wcnss_wlan_config *pwlanconfig = wcnss_get_wlan_config();
-
-	wcnss_wlan_power(&pdev->dev, pwlanconfig, WCNSS_WLAN_SWITCH_OFF, NULL);
-}
-
-static int wcnss_shutdown(const struct subsys_desc *subsys)
+static int wcnss_shutdown(const struct subsys_desc *subsys, bool force_stop)
 {
 	struct pronto_data *drv = subsys_to_drv(subsys);
 
 	pil_shutdown(&drv->desc);
-	flush_delayed_work(&drv->cancel_vote_work);
-	wcnss_flush_delayed_boot_votes();
-
 	return 0;
 }
 
 static int wcnss_powerup(const struct subsys_desc *subsys)
 {
 	struct pronto_data *drv = subsys_to_drv(subsys);
-	struct platform_device *pdev = wcnss_get_platform_device();
-	struct wcnss_wlan_config *pwlanconfig = wcnss_get_wlan_config();
-	int    ret = -1;
+	int ret;
 
-	if (pdev && pwlanconfig)
-		ret = wcnss_wlan_power(&pdev->dev, pwlanconfig,
-					WCNSS_WLAN_SWITCH_ON, NULL);
-	if (!ret) {
-		msleep(1000);
-		ret = pil_boot(&drv->desc);
-		if (ret)
-			return ret;
-	}
+	ret = pil_boot(&drv->desc);
+	if (ret)
+		return ret;
+
 	drv->restart_inprogress = false;
-	enable_irq(drv->subsys_desc.wdog_bite_irq);
-	schedule_delayed_work(&drv->cancel_vote_work, msecs_to_jiffies(5000));
-
-	return 0;
+	return ret;
 }
 
 static void crash_shutdown(const struct subsys_desc *subsys)
@@ -413,7 +380,7 @@ static int wcnss_ramdump(int enable, const struct subsys_desc *subsys)
 	return pil_do_ramdump(&drv->desc, drv->ramdump_dev);
 }
 
-static int __devinit pil_pronto_probe(struct platform_device *pdev)
+static int pil_pronto_probe(struct platform_device *pdev)
 {
 	struct pronto_data *drv;
 	struct resource *res;
@@ -494,12 +461,9 @@ static int __devinit pil_pronto_probe(struct platform_device *pdev)
 	drv->subsys_desc.powerup = wcnss_powerup;
 	drv->subsys_desc.ramdump = wcnss_ramdump;
 	drv->subsys_desc.crash_shutdown = crash_shutdown;
-	drv->subsys_desc.start = pronto_start;
-	drv->subsys_desc.stop = pronto_stop;
 	drv->subsys_desc.err_fatal_handler = wcnss_err_fatal_intr_handler;
 	drv->subsys_desc.wdog_bite_handler = wcnss_wdog_bite_irq_hdlr;
 
-	INIT_DELAYED_WORK(&drv->cancel_vote_work, wcnss_post_bootup);
 	INIT_WORK(&drv->wcnss_wdog_bite_work, wcnss_wdog_bite_work_hdlr);
 
 	drv->subsys = subsys_register(&drv->subsys_desc);
@@ -530,7 +494,7 @@ err_subsys:
 	return ret;
 }
 
-static int __devexit pil_pronto_remove(struct platform_device *pdev)
+static int pil_pronto_remove(struct platform_device *pdev)
 {
 	struct pronto_data *drv = platform_get_drvdata(pdev);
 	subsys_unregister(drv->subsys);
@@ -546,7 +510,7 @@ static struct of_device_id msm_pil_pronto_match[] = {
 
 static struct platform_driver pil_pronto_driver = {
 	.probe = pil_pronto_probe,
-	.remove = __devexit_p(pil_pronto_remove),
+	.remove = pil_pronto_remove,
 	.driver = {
 		.name = "pil_pronto",
 		.owner = THIS_MODULE,

@@ -20,17 +20,16 @@
 #include <linux/clk.h>
 #include <linux/iopoll.h>
 #include <linux/regulator/consumer.h>
+#include <linux/regulator/rpm-smd-regulator.h>
+#include <linux/clk/msm-clock-generic.h>
+#include <soc/qcom/clock-local2.h>
+#include <soc/qcom/clock-pll.h>
+#include <soc/qcom/clock-rpm.h>
+#include <soc/qcom/clock-voter.h>
+#include <soc/qcom/rpm-smd.h>
+#include <soc/qcom/clock-krait.h>
 
-#include <mach/rpm-regulator-smd.h>
-#include <mach/rpm-smd.h>
-#include <mach/clock-generic.h>
-
-#include "clock-local2.h"
-#include "clock-pll.h"
-#include "clock-rpm.h"
-#include "clock-voter.h"
 #include "clock.h"
-#include "clock-krait.h"
 #include "clock-mdss-8974.h"
 
 enum {

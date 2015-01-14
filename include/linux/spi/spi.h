@@ -23,6 +23,7 @@
 #include <linux/mod_devicetable.h>
 #include <linux/slab.h>
 #include <linux/kthread.h>
+#include <linux/fprint_secure.h>
 
 /*
  * INTERFACES between SPI master-side drivers and SPI infrastructure.
@@ -57,6 +58,8 @@ extern struct bus_type spi_bus_type;
  * @modalias: Name of the driver to use with this device, or an alias
  *	for that name.  This appears in the sysfs "modalias" attribute
  *	for driver coldplugging, and in uevents used for hotplugging
+ * @cs_gpio: gpio number of the chipselect line (optional, -ENOENT when
+ *	when not using a GPIO line)
  *
  * A @spi_device is used to interchange data between an SPI slave
  * (usually a discrete chip) and CPU memory.
@@ -90,6 +93,7 @@ struct spi_device {
 	void			*controller_state;
 	void			*controller_data;
 	char			modalias[SPI_NAME_SIZE];
+	int			cs_gpio;	/* chip select gpio */
 
 	/*
 	 * likely need more hooks for more protocol options affecting how
@@ -225,6 +229,11 @@ static inline void spi_unregister_driver(struct spi_driver *sdrv)
  *	every chipselect is connected to a slave.
  * @dma_alignment: SPI controller constraint on DMA buffers alignment.
  * @mode_bits: flags understood by this controller driver
+ * @bits_per_word_mask: A mask indicating which values of bits_per_word are
+ *	supported by the driver. Bit n indicates that a bits_per_word n+1 is
+ *	suported. If set, the SPI core will reject any transfer with an
+ *	unsupported bits_per_word. If not set, this value is simply ignored,
+ *	and it's up to the individual driver to perform any validation.
  * @flags: other constraints relevant to this driver
  * @bus_lock_spinlock: spinlock for SPI bus locking
  * @bus_lock_mutex: mutex for SPI bus locking
@@ -257,6 +266,9 @@ static inline void spi_unregister_driver(struct spi_driver *sdrv)
  * @unprepare_transfer_hardware: there are currently no more messages on the
  *	queue so the subsystem notifies the driver that it may relax the
  *	hardware by issuing this call
+ * @cs_gpios: Array of GPIOs to use as chip select lines; one per CS
+ *	number. Any individual value may be -ENOENT for CS lines that
+ *	are not GPIOs (driven by the SPI controller itself).
  *
  * Each SPI master controller can communicate with one or more @spi_device
  * children.  These make a small bus, sharing MOSI, MISO and SCK signals
@@ -294,6 +306,9 @@ struct spi_master {
 
 	/* spi_device.mode flags understood by this controller driver */
 	u16			mode_bits;
+
+	/* bitmask of supported bits_per_word for transfers */
+	u32			bits_per_word_mask;
 
 	/* other constraints relevant to this driver */
 	u16			flags;
@@ -362,6 +377,8 @@ struct spi_master {
 	int (*transfer_one_message)(struct spi_master *master,
 				    struct spi_message *mesg);
 	int (*unprepare_transfer_hardware)(struct spi_master *master);
+	/* gpio chip select */
+	int			*cs_gpios;
 };
 
 static inline void *spi_master_get_devdata(struct spi_master *master)
@@ -651,7 +668,11 @@ extern int spi_sync(struct spi_device *spi, struct spi_message *message);
 extern int spi_sync_locked(struct spi_device *spi, struct spi_message *message);
 extern int spi_bus_lock(struct spi_master *master);
 extern int spi_bus_unlock(struct spi_master *master);
-
+#ifdef ENABLE_SENSORS_FPRINT_SECURE
+extern int fp_spi_clock_set_rate(struct spi_device *spidev);
+extern int fp_spi_clock_enable(struct spi_device *spidev);
+extern int fp_spi_clock_disable(struct spi_device *spidev);
+#endif
 /**
  * spi_write - SPI synchronous write
  * @spi: device to which data will be written

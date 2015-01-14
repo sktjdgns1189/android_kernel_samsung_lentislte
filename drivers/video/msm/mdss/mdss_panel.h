@@ -71,6 +71,13 @@ enum {
 	MODE_GPIO_LOW,
 };
 
+struct mdss_rect {
+	u16 x;
+	u16 y;
+	u16 w;
+	u16 h;
+};
+
 #define MDSS_MAX_PANEL_LEN      256
 #define MDSS_INTF_MAX_NAME_LEN 5
 struct mdss_panel_intf {
@@ -125,8 +132,9 @@ struct mdss_panel_recovery {
  * @MDSS_EVENT_PANEL_CLK_CTRL:	panel clock control
 				 - 0 clock disable
 				 - 1 clock enable
- * @MDSS_EVENT_ENABLE_PARTIAL_UPDATE: Event to update ROI of the panel.
  * @MDSS_EVENT_DSI_CMDLIST_KOFF: acquire dsi_mdp_busy lock before kickoff.
+ * @MDSS_EVENT_ENABLE_PARTIAL_ROI: Event to update ROI of the panel.
+ * @MDSS_EVENT_DSI_STREAM_SIZE: Event to update DSI controller's stream size
  */
 enum mdss_intf_events {
 	MDSS_EVENT_RESET = 1,
@@ -142,9 +150,12 @@ enum mdss_intf_events {
 	MDSS_EVENT_CONT_SPLASH_FINISH,
 	MDSS_EVENT_PANEL_UPDATE_FPS,
 	MDSS_EVENT_FB_REGISTERED,
+	MDSS_EVENT_FRAME_UPDATE,
 	MDSS_EVENT_PANEL_CLK_CTRL,
 	MDSS_EVENT_DSI_CMDLIST_KOFF,
-	MDSS_EVENT_ENABLE_PARTIAL_UPDATE,
+	MDSS_EVENT_MDNIE_DEFAULT_UPDATE,
+	MDSS_EVENT_ENABLE_PARTIAL_ROI,
+	MDSS_EVENT_DSI_STREAM_SIZE,
 };
 
 struct lcd_panel_info {
@@ -202,6 +213,7 @@ struct mipi_panel_info {
 	char hbp_power_stop;
 	char hsa_power_stop;
 	char eof_bllp_power_stop;
+	char last_line_interleave_en;
 	char bllp_power_stop;
 	char traffic_mode;
 	char frame_rate;
@@ -268,11 +280,24 @@ struct fbc_panel_info {
 	u32 lossy_mode_idx;
 };
 
+struct mdss_mdp_pp_tear_check {
+	u32 tear_check_en;
+	u32 sync_cfg_height;
+	u32 vsync_init_val;
+	u32 sync_threshold_start;
+	u32 sync_threshold_continue;
+	u32 start_pos;
+	u32 rd_ptr_irq;
+	u32 refx100;
+};
+
 struct mdss_panel_info {
 	u32 xres;
 	u32 yres;
 	u32 physical_width;
 	u32 physical_height;
+	u32 width;
+	u32 height;
 	u32 bpp;
 	u32 type;
 	u32 wait_cycle;
@@ -289,33 +314,63 @@ struct mdss_panel_info {
 	u32 out_format;
 	u32 rst_seq[MDSS_DSI_RST_SEQ_LEN];
 	u32 rst_seq_len;
+	u32 early_lcd_on;
 	u32 vic; /* video identification code */
+	struct mdss_rect roi;
 	u32 roi_x;
 	u32 roi_y;
 	u32 roi_w;
 	u32 roi_h;
+	u32 dsi_roi_x;
+	u32 dsi_roi_y;
+	u32 dsi_roi_w;
+	u32 dsi_roi_h;
 	int bklt_ctrl;	/* backlight ctrl */
 	int pwm_pmic_gpio;
 	int pwm_lpg_chan;
 	int pwm_period;
-	u32 mode_gpio_state;
 	bool dynamic_fps;
+	bool ulps_feature_enabled;
 	char dfps_update;
 	int new_fps;
+	u32 mode_gpio_state;
+	u32 xstart_pix_align;
+	u32 width_pix_align;
+	u32 ystart_pix_align;
+	u32 height_pix_align;
+	u32 min_width;
+	u32 min_height;
 
 	u32 cont_splash_enabled;
 	u32 partial_update_enabled;
+	u32 partial_update_dcs_cmd_by_left;
+	u32 partial_update_roi_merge;
 	struct ion_handle *splash_ihdl;
 	u32 panel_power_on;
 
 	uint32_t panel_dead;
+
+	struct mdss_mdp_pp_tear_check te;
 
 	struct lcd_panel_info lcdc;
 	struct fbc_panel_info fbc;
 	struct mipi_panel_info mipi;
 	struct lvds_panel_info lvds;
 	struct edp_panel_info edp;
+	u8 (*alpm_event) (u8 flag);
 };
+enum {
+	/* Status Flags */
+	MODE_OFF = 0,		/* Off ALPM or Normal Mode Status */
+	ALPM_MODE_ON,				/* ALPM Mode Status */
+	NORMAL_MODE_ON,			/* Normal Mode Status */
+	/* Event Flags */
+	CHECK_CURRENT_STATUS,	/* Check Current Mode */
+	CHECK_PREVIOUS_STATUS,	/* Check Previous Mode */
+	STORE_CURRENT_STATUS,	/* Store Current Mode to Previous Mode */
+	CLEAR_MODE_STATUS,		/* Clear Status Flag as 0 */
+};
+
 
 struct mdss_panel_data {
 	struct mdss_panel_info panel_info;
@@ -381,6 +436,19 @@ static inline u32 mdss_panel_get_framerate(struct mdss_panel_info *panel_info)
 }
 
 /*
+ * mdss_rect_cmp() - compares two rects
+ * @rect1 - rect value to compare
+ * @rect2 - rect value to compare
+ *
+ * Returns 1 if the rects are same, 0 otherwise.
+ */
+static inline int mdss_rect_cmp(struct mdss_rect *rect1,
+		struct mdss_rect *rect2) {
+	return (rect1->x == rect2->x && rect1->y == rect2->y &&
+		rect1->w == rect2->w && rect1->h == rect2->h);
+}
+
+/*
  * mdss_panel_get_vtotal() - return panel vertical height
  * @pinfo:	Pointer to panel info containing all panel information
  *
@@ -397,15 +465,25 @@ static inline int mdss_panel_get_vtotal(struct mdss_panel_info *pinfo)
 /*
  * mdss_panel_get_htotal() - return panel horizontal width
  * @pinfo:	Pointer to panel info containing all panel information
+ * @consider_fbc: true to factor fbc settings, false to ignore.
  *
  * Returns the total width of the panel including any blanking regions
- * which are not visible to user but used for calculations.
+ * which are not visible to user but used for calculations. For certain
+ * usescases where the fbc parameters need to be ignored like bandwidth
+ * calculation, the appropriate flag can be passed.
  */
-static inline int mdss_panel_get_htotal(struct mdss_panel_info *pinfo)
+static inline int mdss_panel_get_htotal(struct mdss_panel_info *pinfo, bool
+		consider_fbc)
 {
-	return pinfo->xres + pinfo->lcdc.h_back_porch +
-			pinfo->lcdc.h_front_porch +
-			pinfo->lcdc.h_pulse_width;
+	int adj_xres = pinfo->xres;
+
+	if (consider_fbc && pinfo->fbc.enabled)
+		adj_xres = mult_frac(pinfo->xres,
+				pinfo->fbc.target_bpp, pinfo->bpp);
+
+	return adj_xres + pinfo->lcdc.h_back_porch +
+		pinfo->lcdc.h_front_porch +
+		pinfo->lcdc.h_pulse_width;
 }
 
 int mdss_register_panel(struct platform_device *pdev,

@@ -25,7 +25,7 @@
 #include <linux/of_irq.h>
 #include <linux/slab.h>
 #include <linux/ratelimit.h>
-#include <mach/cpuidle.h>
+#include <soc/qcom/pm.h>
 
 #define BYTE_BIT_MASK(nr)		(1UL << ((nr) % BITS_PER_BYTE))
 #define BIT_BYTE(nr)			((nr) / BITS_PER_BYTE)
@@ -649,7 +649,7 @@ static int wcd9xxx_map_irq(struct wcd9xxx_core_resource *wcd9xxx_res, int irq)
 	return of_irq_to_resource(wcd9xxx_res->dev->of_node, irq, NULL);
 }
 
-static int __devinit wcd9xxx_irq_probe(struct platform_device *pdev)
+static int wcd9xxx_irq_probe(struct platform_device *pdev)
 {
 	int irq;
 	struct irq_domain *domain;

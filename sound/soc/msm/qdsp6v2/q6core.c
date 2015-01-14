@@ -19,7 +19,7 @@
 #include <linux/sched.h>
 #include <linux/slab.h>
 #include <mach/msm_smd.h>
-#include <mach/qdsp6v2/apr.h>
+#include <linux/qdsp6v2/apr.h>
 #include "q6core.h"
 #include <mach/ocmem.h>
 
@@ -42,7 +42,7 @@ static int32_t aprv2_core_fn_q(struct apr_client_data *data, void *priv)
 	int i, j;
 
 	if (data == NULL) {
-		pr_err("%s: data argument is null\n", __func__);
+		pr_err("%s: data argument is null", __func__);
 		return -EINVAL;
 	}
 

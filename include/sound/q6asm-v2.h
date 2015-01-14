@@ -12,8 +12,8 @@
 #ifndef __Q6_ASM_V2_H__
 #define __Q6_ASM_V2_H__
 
-#include <mach/qdsp6v2/apr.h>
-#include <mach/qdsp6v2/rtac.h>
+#include <linux/qdsp6v2/apr.h>
+#include <linux/qdsp6v2/rtac.h>
 #include <sound/apr_audio-v2.h>
 #include <linux/list.h>
 #include <linux/msm_ion.h>
@@ -44,6 +44,7 @@
 #define FORMAT_MULTI_CHANNEL_LINEAR_PCM 0x0012
 #define FORMAT_AC3          0x0013
 #define FORMAT_EAC3         0x0014
+#define FORMAT_MP2          0x0015
 
 #define ENCDEC_SBCBITRATE   0x0001
 #define ENCDEC_IMMEDIATE_DECODE 0x0002
@@ -130,7 +131,7 @@ struct audio_buffer {
 };
 
 struct audio_aio_write_param {
-	unsigned long paddr;
+	phys_addr_t   paddr;
 	uint32_t      len;
 	uint32_t      uid;
 	uint32_t      lsw_ts;
@@ -141,7 +142,7 @@ struct audio_aio_write_param {
 };
 
 struct audio_aio_read_param {
-	unsigned long paddr;
+	phys_addr_t   paddr;
 	uint32_t      len;
 	uint32_t      uid;
 };
@@ -165,7 +166,6 @@ struct audio_client {
 	/* Relative or absolute TS */
 	atomic_t	       time_flag;
 	atomic_t	       nowait_cmd_cnt;
-	atomic_t               mem_state;
 	void		       *priv;
 	uint32_t               io_mode;
 	uint64_t	       time_stamp;
@@ -177,11 +177,11 @@ struct audio_client {
 	struct audio_port_data port[2];
 	wait_queue_head_t      cmd_wait;
 	wait_queue_head_t      time_wait;
-	wait_queue_head_t      mem_wait;
 	int                    perf_mode;
 	int					   stream_id;
 	/* audio cache operations fptr*/
 	int (*fptr_cache_ops)(struct audio_buffer *abuff, int cache_op);
+	atomic_t               unmap_cb_success;
 };
 
 void q6asm_audio_client_free(struct audio_client *ac);
@@ -240,10 +240,10 @@ int q6asm_async_read(struct audio_client *ac,
 int q6asm_read(struct audio_client *ac);
 int q6asm_read_nolock(struct audio_client *ac);
 
-int q6asm_memory_map(struct audio_client *ac, uint32_t buf_add,
+int q6asm_memory_map(struct audio_client *ac, phys_addr_t buf_add,
 			int dir, uint32_t bufsz, uint32_t bufcnt);
 
-int q6asm_memory_unmap(struct audio_client *ac, uint32_t buf_add,
+int q6asm_memory_unmap(struct audio_client *ac, phys_addr_t buf_add,
 							int dir);
 
 int q6asm_unmap_cal_blocks(void);
@@ -402,6 +402,14 @@ int q6asm_media_format_block(struct audio_client *ac, uint32_t format);
 int q6asm_send_meta_data(struct audio_client *ac, uint32_t initial_samples,
 		uint32_t trailing_samples);
 
+#ifdef CONFIG_SEC_SOLUTION
+int q6asm_set_sa(struct audio_client *ac,int *param);
+int q6asm_set_vsp(struct audio_client *ac,int *param);
+int q6asm_set_dha(struct audio_client *ac,int *param);
+int q6asm_set_lrsm(struct audio_client *ac,int *param);
+int q6asm_set_sa_ep(struct audio_client *ac,int *param);
+int q6asm_get_sa_ep(struct audio_client *ac);
+#endif
 /* Send the stream meta data to remove initial and trailing silence */
 int q6asm_stream_send_meta_data(struct audio_client *ac, uint32_t stream_id,
 		uint32_t initial_samples, uint32_t trailing_samples);

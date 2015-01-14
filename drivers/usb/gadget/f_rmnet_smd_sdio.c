@@ -916,8 +916,8 @@ static int rmnet_mux_smd_enable(struct rmnet_mux_dev *dev)
 	if (test_bit(RMNET_MUX_CH_OPENED, &smd_dev->smd_data.flags))
 		goto smd_alloc_req;
 
-	ret = smd_open(rmnet_mux_smd_data_ch, &smd_dev->smd_data.ch,
-			dev, rmnet_mux_smd_notify);
+	ret = smd_named_open_on_edge(rmnet_mux_smd_data_ch, SMD_APPS_MODEM,
+			&smd_dev->smd_data.ch, dev, rmnet_mux_smd_notify);
 	if (ret) {
 		ERROR(cdev, "Unable to open data smd channel\n");
 		return ret;
@@ -1566,7 +1566,7 @@ static ssize_t transport_store(
 
 	return size;
 }
-static DEVICE_ATTR(transport, S_IRUGO | S_IWUSR, NULL, transport_store);
+static DEVICE_ATTR(transport, S_IWUSR, NULL, transport_store);
 
 static int rmnet_mux_bind(struct usb_configuration *c, struct usb_function *f)
 {
@@ -1989,7 +1989,7 @@ static int rmnet_smd_sdio_function_add(struct usb_configuration *c)
 
 	dev->function.name = "rmnet_smd_sdio";
 	dev->function.strings = rmnet_mux_strings;
-	dev->function.descriptors = rmnet_mux_fs_function;
+	dev->function.fs_descriptors = rmnet_mux_fs_function;
 	dev->function.hs_descriptors = rmnet_mux_hs_function;
 	dev->function.bind = rmnet_mux_bind;
 	dev->function.unbind = rmnet_mux_unbind;

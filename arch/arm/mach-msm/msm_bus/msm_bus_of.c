@@ -292,7 +292,11 @@ static u64 *get_th_params(struct platform_device *pdev,
 							GFP_KERNEL);
 	arr = kzalloc(size, GFP_KERNEL);
 	if ((size > 0) && (ZERO_OR_NULL_PTR(arr)
-				|| ZERO_OR_NULL_PTR(ret_arr))) {
+			|| ZERO_OR_NULL_PTR(ret_arr))) {
+		if (arr)
+			kfree(arr);
+		else if (ret_arr)
+			devm_kfree(&pdev->dev, ret_arr);
 		pr_err("Error: Failed to alloc mem for %s\n", prop);
 		return NULL;
 	}
@@ -314,7 +318,7 @@ static u64 *get_th_params(struct platform_device *pdev,
 	kfree(arr);
 	return ret_arr;
 err:
-	devm_kfree(&pdev->dev, arr);
+	kfree(arr);
 	devm_kfree(&pdev->dev, ret_arr);
 	return NULL;
 }
@@ -327,6 +331,7 @@ static struct msm_bus_node_info *get_nodes(struct device_node *of_node,
 	struct device_node *child_node = NULL;
 	int i = 0, ret;
 	int num_bw = 0;
+	u32 temp;
 
 	for_each_child_of_node(of_node, child_node) {
 		i++;
@@ -455,6 +460,29 @@ static struct msm_bus_node_info *get_nodes(struct device_node *of_node,
 			info[i].mode = ret;
 		}
 
+		info[i].nr_lim =
+			of_property_read_bool(child_node, "qcom,nr-lim");
+
+		ret = of_property_read_u32(child_node, "qcom,floor-bw",
+						&temp);
+		if (ret) {
+			pr_debug("fabdev floor bw not present %d", info[i].id);
+			info[i].floor_bw = 0;
+		} else
+			info[i].floor_bw = KBTOB(temp);
+
+
+		ret = of_property_read_u32(child_node, "qcom,ff",
+							&info[i].ff);
+
+		if (ret) {
+			pr_debug("fudge factor not present %d", info[i].id);
+			info[i].ff = 100;
+		}
+
+		info[i].rt_mas =
+			of_property_read_bool(child_node, "qcom,rt-mas");
+
 		ret = of_property_read_string(child_node, "qcom,perm-mode",
 			&sel_str);
 		if (ret)
@@ -523,6 +551,26 @@ err:
 	return NULL;
 }
 
+void msm_bus_of_get_nfab(struct platform_device *pdev,
+		struct msm_bus_fabric_registration *pdata)
+{
+	struct device_node *of_node;
+	int ret, nfab = 0;
+
+	if (!pdev) {
+		pr_err("Error: Null platform device\n");
+		return;
+	}
+
+	of_node = pdev->dev.of_node;
+	ret = of_property_read_u32(of_node, "qcom,nfab",
+		&nfab);
+	if (!ret)
+		pr_debug("Fab_of: Read number of buses: %u\n", nfab);
+
+	msm_bus_board_set_nfab(pdata, nfab);
+}
+
 struct msm_bus_fabric_registration
 	*msm_bus_of_get_fab_data(struct platform_device *pdev)
 {
@@ -531,6 +579,7 @@ struct msm_bus_fabric_registration
 	bool mem_err = false;
 	int ret = 0;
 	const char *sel_str;
+	u32 temp;
 
 	if (!pdev) {
 		pr_err("Error: Null platform device\n");
@@ -614,6 +663,24 @@ struct msm_bus_fabric_registration
 
 	if (of_property_read_bool(of_node, "qcom,rpm-en"))
 		pdata->rpm_enabled = 1;
+
+	ret = of_property_read_u32(of_node, "qcom,nr-lim-thresh",
+						&temp);
+
+	if (ret) {
+		pr_err("nr-lim threshold not specified");
+		pdata->nr_lim_thresh = 0;
+	} else
+		pdata->nr_lim_thresh = KBTOB(temp);
+
+	ret = of_property_read_u32(of_node, "qcom,eff-fact",
+						&pdata->eff_fact);
+	if (ret) {
+		pr_err("Fab eff-factor not present");
+		pdata->eff_fact = 0;
+	}
+
+
 
 	pdata->info = get_nodes(of_node, pdev, pdata);
 	return pdata;

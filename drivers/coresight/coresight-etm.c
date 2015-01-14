@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -31,10 +31,13 @@
 #include <linux/of_coresight.h>
 #include <linux/coresight.h>
 #include <asm/sections.h>
-#include <mach/socinfo.h>
-#include <mach/msm_memory_dump.h>
+#include <soc/qcom/socinfo.h>
+#include <soc/qcom/memory_dump.h>
 
 #include "coresight-priv.h"
+#if defined(CONFIG_CORESIGHT_ETM_DEFAULT_ENABLE) && defined(CONFIG_SEC_DEBUG)
+#include <mach/sec_debug.h>
+#endif
 
 #define etm_writel_mm(drvdata, val, off)  \
 			__raw_writel((val), drvdata->base + off)
@@ -1954,7 +1957,7 @@ static struct notifier_block etm_cpu_notifier = {
 	.notifier_call = etm_cpu_callback,
 };
 
-static bool __devinit etm_arch_supported(uint8_t arch)
+static bool etm_arch_supported(uint8_t arch)
 {
 	switch (arch) {
 	case PFT_ARCH_V1_1:
@@ -1967,7 +1970,7 @@ static bool __devinit etm_arch_supported(uint8_t arch)
 	return true;
 }
 
-static void __devinit etm_init_arch_data(void *info)
+static void etm_init_arch_data(void *info)
 {
 	uint32_t etmidr;
 	uint32_t etmccr;
@@ -2020,7 +2023,7 @@ static void __devinit etm_init_arch_data(void *info)
 	ETM_LOCK(drvdata);
 }
 
-static void __devinit etm_copy_arch_data(struct etm_drvdata *drvdata)
+static void etm_copy_arch_data(struct etm_drvdata *drvdata)
 {
 	drvdata->arch = etmdrvdata[0]->arch;
 	drvdata->nr_addr_cmp = etmdrvdata[0]->nr_addr_cmp;
@@ -2032,7 +2035,7 @@ static void __devinit etm_copy_arch_data(struct etm_drvdata *drvdata)
 	drvdata->data_trace_support = etmdrvdata[0]->data_trace_support;
 }
 
-static void __devinit etm_init_default_data(struct etm_drvdata *drvdata)
+static void etm_init_default_data(struct etm_drvdata *drvdata)
 {
 	int i;
 
@@ -2100,7 +2103,7 @@ static void __devinit etm_init_default_data(struct etm_drvdata *drvdata)
 	}
 }
 
-static int __devinit etm_probe(struct platform_device *pdev)
+static int etm_probe(struct platform_device *pdev)
 {
 	int ret;
 	struct device *dev = &pdev->dev;
@@ -2238,6 +2241,13 @@ static int __devinit etm_probe(struct platform_device *pdev)
 	}
 
 	dev_info(dev, "ETM initialized\n");
+	
+#if defined(CONFIG_CORESIGHT_ETM_DEFAULT_ENABLE) && defined(CONFIG_SEC_DEBUG)
+	if (kernel_sec_get_debug_level() == KERNEL_SEC_DEBUG_LEVEL_LOW)
+		boot_enable = 0;
+	else
+		boot_enable = 1;
+#endif
 
 	if (boot_enable) {
 		coresight_enable(drvdata->csdev);
@@ -2264,7 +2274,7 @@ err0:
 	return ret;
 }
 
-static int __devexit etm_remove(struct platform_device *pdev)
+static int etm_remove(struct platform_device *pdev)
 {
 	struct etm_drvdata *drvdata = platform_get_drvdata(pdev);
 
@@ -2283,7 +2293,7 @@ static struct of_device_id etm_match[] = {
 
 static struct platform_driver etm_driver = {
 	.probe          = etm_probe,
-	.remove         = __devexit_p(etm_remove),
+	.remove         = etm_remove,
 	.driver         = {
 		.name   = "coresight-etm",
 		.owner	= THIS_MODULE,

@@ -37,6 +37,9 @@ Required properties to define CPU low power modes :
 - qcom,energy-overhead: The energy used up in entering and exiting this level
 		 in mWatts.uSec
 - qcom,time-overhead: The time spent in entering and exiting this level in uS
+- qcom,use-broadcast-timer: Indicates that the timer gets reset during power
+		collapse and the cpu relies on Broadcast timer for scheduled
+		wakeups.
 
 Required propertieis to define System low power mode :
 - compatible: "qcom,system-modes"
@@ -51,13 +54,15 @@ Required propertieis to define System low power mode :
 - qcom,latency-us: The latency in handling the interrupt if this level was
 		chosen, in uSec
 - qcom,ss-power: The steady state power expelled when the processor is in this
-		 level in mWatts
+		level in mWatts
 - qcom,energy-overhead: The energy used up in entering and exiting this level
-		 in mWatts.uSec
+		in mWatts.uSec
 - qcom,time-overhead: The time spent in entering and exiting this level in uS
 - qcom,min-cpu-mode: The min cpu sleep mode at which the given system level is
-		 valid. All cpus should have entered this low power mode before
-		 this system level can be chosen.
+		valid. All cpus should have entered this low power mode before
+		this system level can be chosen.
+- qcom,sync-mode: The entry into this system mode should be synchronized across
+		between all online CPUs.
 - qcom,send-rpm-sleep-set: The system mode notifies RPM of Apps sleep and should
 		send the current sleep set votes and configure MPM before
 		entering this low power mode.

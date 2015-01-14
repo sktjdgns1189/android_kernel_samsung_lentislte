@@ -28,10 +28,6 @@ struct connection *connection_new(void)
 	struct connection *conn;
 
 	conn = kzalloc(sizeof(*conn), GFP_KERNEL);
-	if (conn == NULL) {
-		MCDRV_DBG_ERROR(mc_kapi, "Allocation failure");
-		return NULL;
-	}
 	conn->sequence_magic = mcapi_unique_id();
 	mutex_init(&conn->data_lock);
 	sema_init(&conn->data_available_sem, SEM_NO_DATA_AVAILABLE);
@@ -43,8 +39,6 @@ struct connection *connection_new(void)
 struct connection *connection_create(int socket_descriptor, pid_t dest)
 {
 	struct connection *conn = connection_new();
-	if (conn == NULL)
-		return NULL;
 
 	conn->peer_pid = dest;
 	return conn;

@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2010-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -17,7 +17,7 @@
 #include <linux/clk.h>
 #include <linux/list.h>
 #include <linux/regulator/consumer.h>
-#include <mach/socinfo.h>
+#include <soc/qcom/socinfo.h>
 
 extern pgprot_t     pgprot_kernel;
 extern struct bus_type msm_iommu_sec_bus_type;
@@ -86,12 +86,12 @@ struct msm_iommu_bfb_settings {
  * struct msm_iommu_drvdata - A single IOMMU hardware instance
  * @base:	IOMMU config port base address (VA)
  * @glb_base:	IOMMU config port base address for global register space (VA)
- * @phys_base:  IOMMU physical base address.
  * @ncb		The number of contexts on this IOMMU
  * @irq:	Interrupt number
  * @clk:	The bus clock for this IOMMU hardware instance
  * @pclk:	The clock for the IOMMU bus interconnect
- * @aclk:	Alternate clock for this IOMMU core, if any
+ * @aclk:	Alternate core clock for this IOMMU core, if any
+ * @aiclk:	Alternate interface clock for this IOMMU core, if any
  * @name:	Human-readable name of this IOMMU device
  * @gdsc:	Regulator needed to power this HW block (v2 only)
  * @bfb_settings: Optional BFB performance tuning parameters
@@ -103,19 +103,22 @@ struct msm_iommu_bfb_settings {
  * @ctx_attach_count: Count of how many context are attached.
  * @bus_client  : Bus client needed to vote for bus bandwidth.
  * @needs_rem_spinlock  : 1 if remote spinlock is needed, 0 otherwise
+ * @powered_on: Powered status of the IOMMU. 0 means powered off.
  *
  * A msm_iommu_drvdata holds the global driver data about a single piece
  * of an IOMMU hardware instance.
  */
 struct msm_iommu_drvdata {
 	void __iomem *base;
-	phys_addr_t phys_base;
 	void __iomem *glb_base;
+	void __iomem *cb_base;
+	void __iomem *smmu_local_base;
 	int ncb;
 	int ttbr_split;
 	struct clk *clk;
 	struct clk *pclk;
 	struct clk *aclk;
+	struct clk *aiclk;
 	const char *name;
 	struct regulator *gdsc;
 	struct regulator *alt_gdsc;
@@ -129,6 +132,8 @@ struct msm_iommu_drvdata {
 	unsigned int ctx_attach_count;
 	unsigned int bus_client;
 	int needs_rem_spinlock;
+	int powered_on;
+	int no_atos_support;
 };
 
 /**
@@ -240,6 +245,7 @@ void print_ctx_regs(struct msm_iommu_context_reg regs[]);
  * interrupt is not supported in the API yet, but this will print an error
  * message and dump useful IOMMU registers.
  */
+irqreturn_t msm_iommu_global_fault_handler(int irq, void *dev_id);
 irqreturn_t msm_iommu_fault_handler(int irq, void *dev_id);
 irqreturn_t msm_iommu_fault_handler_v2(int irq, void *dev_id);
 irqreturn_t msm_iommu_secure_fault_handler_v2(int irq, void *dev_id);
@@ -316,8 +322,10 @@ static inline struct device *msm_iommu_get_ctx(const char *ctx_name)
  * of global registers is not possible
  */
 void msm_iommu_sec_set_access_ops(struct iommu_access_ops *access_ops);
-int msm_iommu_sec_program_iommu(int sec_id);
+int msm_iommu_sec_program_iommu(int sec_id, u32 cb_num);
+int is_vfe_secure(void);
 
+#ifdef CONFIG_MSM_IOMMU_V0
 static inline int msm_soc_version_supports_iommu_v0(void)
 {
 	static int soc_supports_v0 = -1;
@@ -329,13 +337,6 @@ static inline int msm_soc_version_supports_iommu_v0(void)
 		return soc_supports_v0;
 
 #ifdef CONFIG_OF
-	node = of_find_compatible_node(NULL, NULL, "qcom,msm-smmu-v1");
-	if (node) {
-		soc_supports_v0 = 0;
-		of_node_put(node);
-		return 0;
-	}
-
 	node = of_find_compatible_node(NULL, NULL, "qcom,msm-smmu-v0");
 	if (node) {
 		soc_supports_v0 = 1;
@@ -359,4 +360,19 @@ static inline int msm_soc_version_supports_iommu_v0(void)
 	soc_supports_v0 = 1;
 	return 1;
 }
+#else
+static inline int msm_soc_version_supports_iommu_v0(void)
+{
+	return 0;
+}
+#endif
+
+int msm_iommu_get_scm_call_avail(void);
+void msm_iommu_check_scm_call_avail(void);
+
+u32 msm_iommu_get_mair0(void);
+u32 msm_iommu_get_mair1(void);
+u32 msm_iommu_get_prrr(void);
+u32 msm_iommu_get_nmrr(void);
+
 #endif

@@ -34,6 +34,7 @@ enum hdmi_tx_power_module_type {
 /* Data filled from device tree */
 struct hdmi_tx_platform_data {
 	bool primary;
+	bool cond_power_on;
 	struct dss_io_data io[HDMI_TX_MAX_IO];
 	struct dss_module_power power_data[HDMI_TX_MAX_PM];
 };
@@ -83,7 +84,9 @@ struct hdmi_tx_ctrl {
 	struct work_struct cable_notify_work;
 
 	bool hdcp_feature_on;
+	bool hpd_disabled;
 	bool ds_registered;
+	bool mhl_connect_status;
 	u32 present_hdcp;
 
 	u8 spd_vendor_name[9];
@@ -95,6 +98,14 @@ struct hdmi_tx_ctrl {
 	void *downstream_data;
 
 	void *feature_data[HDMI_TX_FEAT_MAX];
+#if defined(CONFIG_SEC_MHL_SUPPORT)
+        int is_power_enabled[HDMI_TX_MAX_PM];
+#endif
+
 };
+
+#if defined(CONFIG_SEC_MHL_SUPPORT)
+int hdmi_hpd_status(void);
+#endif
 
 #endif /* __MDSS_HDMI_TX_H__ */

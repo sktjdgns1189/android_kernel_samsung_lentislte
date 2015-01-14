@@ -3321,15 +3321,18 @@ static int tavarua_vidioc_s_ext_ctrls(struct file *file, void *priv,
 
 		chunk_index = 0;
 		bytes_copied = 0;
-		bytes_left = min((ctrl->controls[0]).size,
-			(__u32)MAX_PS_LENGTH);
+		bytes_left = min_t(__u32,
+				(ctrl->controls[0]).size,
+				(__u32)MAX_PS_LENGTH);
 		data = (ctrl->controls[0]).string;
 
 		/* send payload to FM hardware */
 		while (bytes_left) {
 			chunk_index++;
 			FMDBG("chunk is %d", chunk_index);
-			bytes_to_copy = min(bytes_left, (__u32)XFR_REG_NUM);
+			bytes_to_copy = min_t(__u32,
+						bytes_left,
+						(__u32)XFR_REG_NUM);
 			/*Clear the tx_data */
 			memset(tx_data, 0, XFR_REG_NUM);
 			if (copy_from_user(tx_data,
@@ -3370,13 +3373,16 @@ static int tavarua_vidioc_s_ext_ctrls(struct file *file, void *priv,
 		/*Pass a sample PS string */
 		FMDBG("Passed RT String : %s\n",
 			(ctrl->controls[0]).string);
-		bytes_left =
-		    min((ctrl->controls[0]).size, (__u32)MAX_RT_LENGTH);
+		bytes_left = min_t(__u32,
+				(ctrl->controls[0]).size,
+				(__u32)MAX_RT_LENGTH);
 		data = (ctrl->controls[0]).string;
 		/* send payload to FM hardware */
 		while (bytes_left) {
 			chunk_index++;
-			bytes_to_copy = min(bytes_left, (__u32)XFR_REG_NUM);
+			bytes_to_copy = min_t(__u32,
+						bytes_left,
+						(__u32)XFR_REG_NUM);
 			memset(tx_data, 0, XFR_REG_NUM);
 			if (copy_from_user(tx_data,
 				    data + bytes_copied, bytes_to_copy))
@@ -4867,8 +4873,8 @@ static int  __init tavarua_probe(struct platform_device *pdev)
 		if (kfifo_alloc_rc!=0) {
 			printk(KERN_ERR "%s: failed allocating buffers %d\n",
 				__func__, kfifo_alloc_rc);
-		        retval = -ENOMEM;
-		        goto err_all;
+			retval = -ENOMEM;
+			goto err_all;
 		}
 	}
 	/* initializing the device count  */
@@ -4908,12 +4914,14 @@ static int  __init tavarua_probe(struct platform_device *pdev)
 	as worker function*/
 	radio->wqueue  = create_singlethread_workqueue("kfmradio");
 	if (!radio->wqueue) {
-	        retval = -ENOMEM;
+		retval = -ENOMEM;
 		goto err_all;
-        }
+	}
 
 	/* register video device */
-	retval = video_register_device(radio->videodev, VFL_TYPE_RADIO, radio_nr);
+	retval = video_register_device(radio->videodev,
+			VFL_TYPE_RADIO,
+			radio_nr);
 	if (retval != 0) {
 		printk(KERN_WARNING DRIVER_NAME
 				": Could not register video device\n");
@@ -4926,9 +4934,8 @@ err_all:
 	video_device_release(radio->videodev);
 	if (radio->wqueue)
 		destroy_workqueue(radio->wqueue);
-	for (i--; i >= 0; i--) {
+	for (i--; i >= 0; i--)
 		kfifo_free(&radio->data_buf[i]);
-        }
 err_radio:
 	kfree(radio);
 err_initial:
@@ -4945,7 +4952,7 @@ FUNCTION:  tavarua_remove
 
   @return On success 0 is returned, else error code.
 */
-static int __devexit tavarua_remove(struct platform_device *pdev)
+static int tavarua_remove(struct platform_device *pdev)
 {
 	int i;
 	struct tavarua_device *radio = platform_get_drvdata(pdev);
@@ -4985,7 +4992,7 @@ static struct platform_driver tavarua_driver = {
 		.owner  = THIS_MODULE,
 		.name   = "marimba_fm",
 	},
-	.remove = __devexit_p(tavarua_remove),
+	.remove = tavarua_remove,
 	.suspend = tavarua_suspend,
 	.resume = tavarua_resume,
 }; /* platform device we're adding */

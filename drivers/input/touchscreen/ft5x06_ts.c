@@ -3,7 +3,7 @@
  * FocalTech ft5x06 TouchScreen driver.
  *
  * Copyright (c) 2010  Focal tech Ltd.
- * Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -69,6 +69,7 @@
 #define FT_REG_THGROUP		0x80
 #define FT_REG_ECC		0xCC
 #define FT_REG_RESET_FW		0x07
+#define FT_REG_FW_MAJ_VER	0xB1
 #define FT_REG_FW_MIN_VER	0xB2
 #define FT_REG_FW_SUB_MIN_VER	0xB3
 
@@ -288,7 +289,7 @@ static void ft5x06_update_fw_ver(struct ft5x06_ts_data *data)
 	u8 reg_addr;
 	int err;
 
-	reg_addr = FT_REG_FW_VER;
+	reg_addr = FT_REG_FW_MAJ_VER;
 	err = ft5x06_i2c_read(client, &reg_addr, 1, &data->fw_ver[0], 1);
 	if (err < 0)
 		dev_err(&client->dev, "fw major version read failed");
@@ -404,7 +405,11 @@ power_off:
 	if (rc) {
 		dev_err(&data->client->dev,
 			"Regulator vcc_i2c disable failed rc=%d\n", rc);
-		regulator_enable(data->vdd);
+		rc = regulator_enable(data->vdd);
+		if (rc) {
+			dev_err(&data->client->dev,
+				"Regulator vdd enable failed rc=%d\n", rc);
+		}
 	}
 
 	return rc;
@@ -876,11 +881,6 @@ static int ft5x06_fw_upgrade(struct device *dev, bool force)
 	u8 fw_file_maj, fw_file_min, fw_file_sub_min;
 	bool fw_upgrade = false;
 
-	if (data->suspended) {
-		dev_info(dev, "Device is in suspend state: Exit FW upgrade\n");
-		return -EBUSY;
-	}
-
 	rc = request_firmware(&fw, data->fw_name, dev);
 	if (rc < 0) {
 		dev_err(dev, "Request firmware failed - %s (%d)\n",
@@ -903,10 +903,17 @@ static int ft5x06_fw_upgrade(struct device *dev, bool force)
 	dev_info(dev, "New firmware: %d.%d.%d", fw_file_maj,
 				fw_file_min, fw_file_sub_min);
 
-	if (force)
+	if (force) {
 		fw_upgrade = true;
-	else if (data->fw_ver[0] < fw_file_maj)
-		fw_upgrade = true;
+	} else if (data->fw_ver[0] == fw_file_maj) {
+			if (data->fw_ver[1] < fw_file_min)
+				fw_upgrade = true;
+			else if (data->fw_ver[2] < fw_file_sub_min)
+				fw_upgrade = true;
+			else
+				dev_info(dev, "No need to upgrade\n");
+	} else
+		dev_info(dev, "Firmware versions do not match\n");
 
 	if (!fw_upgrade) {
 		dev_info(dev, "Exiting fw upgrade...\n");
@@ -1451,7 +1458,7 @@ static int ft5x06_ts_probe(struct i2c_client *client,
 	__set_bit(BTN_TOUCH, input_dev->keybit);
 	__set_bit(INPUT_PROP_DIRECT, input_dev->propbit);
 
-	input_mt_init_slots(input_dev, pdata->num_max_touches);
+	input_mt_init_slots(input_dev, pdata->num_max_touches, 0);
 	input_set_abs_params(input_dev, ABS_MT_POSITION_X, pdata->x_min,
 			     pdata->x_max, 0, 0);
 	input_set_abs_params(input_dev, ABS_MT_POSITION_Y, pdata->y_min,
@@ -1690,7 +1697,7 @@ free_inputdev:
 	return err;
 }
 
-static int __devexit ft5x06_ts_remove(struct i2c_client *client)
+static int ft5x06_ts_remove(struct i2c_client *client)
 {
 	struct ft5x06_ts_data *data = i2c_get_clientdata(client);
 
@@ -1746,7 +1753,7 @@ static struct of_device_id ft5x06_match_table[] = {
 
 static struct i2c_driver ft5x06_ts_driver = {
 	.probe = ft5x06_ts_probe,
-	.remove = __devexit_p(ft5x06_ts_remove),
+	.remove = ft5x06_ts_remove,
 	.driver = {
 		   .name = "ft5x06_ts",
 		   .owner = THIS_MODULE,

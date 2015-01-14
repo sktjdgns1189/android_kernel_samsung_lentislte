@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -33,14 +33,14 @@
 #include <linux/of.h>
 #include <linux/of_platform.h>
 #include <linux/rbtree.h>
-#include <mach/socinfo.h>
-#include <mach/msm_smd.h>
-#include <mach/rpm-smd.h>
-#define CREATE_TRACE_POINTS
-#include <mach/trace_rpm_smd.h>
-#include "rpm-notifier.h"
-/* Debug Definitions */
+#include <soc/qcom/rpm-notifier.h>
+#include <soc/qcom/rpm-smd.h>
 
+#include <mach/msm_smd.h>
+#define CREATE_TRACE_POINTS
+#include <trace/events/trace_rpm_smd.h>
+
+/* Debug Definitions */
 enum {
 	MSM_RPM_LOG_REQUEST_PRETTY	= BIT(0),
 	MSM_RPM_LOG_REQUEST_RAW		= BIT(1),
@@ -71,6 +71,7 @@ struct msm_rpm_driver_data {
 #define INV_RSC "resource does not exist"
 #define ERR "err\0"
 #define MAX_ERR_BUFFER_SIZE 128
+#define MAX_WAIT_ON_ACK 24
 #define INIT_ERROR 1
 
 static ATOMIC_NOTIFIER_HEAD(msm_rpm_sleep_notifier);
@@ -386,10 +387,15 @@ static void msm_rpm_print_sleep_buffer(struct slp_buf *s)
 	printk(buf);
 }
 
+static struct msm_rpm_driver_data msm_rpm_data;
+
 static int msm_rpm_flush_requests(bool print)
 {
 	struct rb_node *t;
 	int ret;
+	int pkt_sz;
+	char buf[MAX_ERR_BUFFER_SIZE] = {0};
+	int count = 0;
 
 	for (t = rb_first(&tr_root); t; t = rb_next(t)) {
 
@@ -404,12 +410,23 @@ static int msm_rpm_flush_requests(bool print)
 		get_msg_id(s->buf) = msm_rpm_get_next_msg_id();
 		ret = msm_rpm_send_smd_buffer(s->buf,
 				get_buf_len(s->buf), true);
-		/* By not adding the message to a wait list we can reduce
-		 * latency involved in waiting for a ACK from RPM. The ACK
-		 * messages will be processed when we wakeup from sleep but
-		 * processing should be minimal
-		 * msm_rpm_wait_for_ack_noirq(get_msg_id(s->buf));
+
+		/*
+		 * RPM acks need to be handled here if we have sent over
+		 * 24 messages such that we do not overrun SMD buffer. Since
+		 * we expect only sleep sets at this point (RPM PC would be
+		 * disallowed if we had pending active requests), we need not
+		 * process these sleep set acks.
 		 */
+		count++;
+		if (count > MAX_WAIT_ON_ACK) {
+			int len;
+			pkt_sz = smd_cur_packet_size(msm_rpm_data.ch_info);
+			if (pkt_sz)
+				len = smd_read(msm_rpm_data.ch_info, buf,
+							pkt_sz);
+			count--;
+		}
 
 		WARN_ON(ret != get_buf_len(s->buf));
 
@@ -421,13 +438,10 @@ static int msm_rpm_flush_requests(bool print)
 		s->valid = false;
 	}
 	return 0;
-
 }
 
 
 static atomic_t msm_rpm_msg_id = ATOMIC_INIT(0);
-
-static struct msm_rpm_driver_data msm_rpm_data;
 
 struct msm_rpm_request {
 	struct rpm_request_header req_hdr;
@@ -804,7 +818,8 @@ static inline int msm_rpm_get_error_from_ack(uint8_t *buf)
 
 	tmp += 2 * sizeof(uint32_t);
 
-	if (!(memcmp(tmp, INV_RSC, min(req_len, sizeof(INV_RSC))-1))) {
+	if (!(memcmp(tmp, INV_RSC, min_t(uint32_t, req_len,
+						sizeof(INV_RSC))-1))) {
 		pr_err("%s(): RPM NACK Unsupported resource\n", __func__);
 		rc = -EINVAL;
 	} else {
@@ -918,7 +933,7 @@ static void msm_rpm_log_request(struct msm_rpm_request *cdata)
 			for (j = 0; j < cdata->kvp[i].nbytes; j += 4) {
 				value = 0;
 				memcpy(&value, &cdata->kvp[i].value[j],
-					min(sizeof(uint32_t),
+					min_t(uint32_t, sizeof(uint32_t),
 						cdata->kvp[i].nbytes - j));
 				pos += scnprintf(buf + pos, buflen - pos, "%u",
 						value);
@@ -950,7 +965,7 @@ static void msm_rpm_log_request(struct msm_rpm_request *cdata)
 			for (j = 0; j < cdata->kvp[i].nbytes; j += 4) {
 				value = 0;
 				memcpy(&value, &cdata->kvp[i].value[j],
-					min(sizeof(uint32_t),
+					min_t(uint32_t, sizeof(uint32_t),
 						cdata->kvp[i].nbytes - j));
 				pos += scnprintf(buf + pos, buflen - pos, "%u",
 						value);
@@ -1316,7 +1331,7 @@ void msm_rpm_exit_sleep(void)
 }
 EXPORT_SYMBOL(msm_rpm_exit_sleep);
 
-static int __devinit msm_rpm_smd_remote_probe(struct platform_device *pdev)
+static int msm_rpm_smd_remote_probe(struct platform_device *pdev)
 {
 	if (pdev && pdev->id == msm_rpm_data.ch_type)
 		complete(&msm_rpm_data.remote_open);
@@ -1330,7 +1345,7 @@ static struct platform_driver msm_rpm_smd_remote_driver = {
 	},
 };
 
-static int __devinit msm_rpm_dev_probe(struct platform_device *pdev)
+static int msm_rpm_dev_probe(struct platform_device *pdev)
 {
 	char *key = NULL;
 	int ret;
@@ -1349,6 +1364,8 @@ static int __devinit msm_rpm_dev_probe(struct platform_device *pdev)
 
 	key = "rpm-standalone";
 	standalone = of_property_read_bool(pdev->dev.of_node, key);
+	if (standalone)
+		goto skip_smd_init;
 
 	msm_rpm_smd_remote_driver.driver.name = msm_rpm_data.ch_name;
 	init_completion(&msm_rpm_data.remote_open);
@@ -1369,28 +1386,19 @@ static int __devinit msm_rpm_dev_probe(struct platform_device *pdev)
 		pr_info("Cannot open RPM channel %s %d\n", msm_rpm_data.ch_name,
 				msm_rpm_data.ch_type);
 
-		BUG_ON(!standalone);
-		complete(&msm_rpm_data.smd_open);
-	} else {
-		/*
-		 * Override DT's suggestion to try standalone; since we have an
-		 * SMD channel.
-		 */
-		standalone = false;
 	}
 
 	wait_for_completion(&msm_rpm_data.smd_open);
 
 	smd_disable_read_intr(msm_rpm_data.ch_info);
 
-	if (!standalone) {
-		msm_rpm_smd_wq = alloc_workqueue("rpm-smd",
-				WQ_UNBOUND | WQ_MEM_RECLAIM | WQ_HIGHPRI, 1);
-		if (!msm_rpm_smd_wq)
-			return -EINVAL;
-		queue_work(msm_rpm_smd_wq, &msm_rpm_data.work);
-	}
+	msm_rpm_smd_wq = alloc_workqueue("rpm-smd",
+			WQ_UNBOUND | WQ_MEM_RECLAIM | WQ_HIGHPRI, 1);
+	if (!msm_rpm_smd_wq)
+		return -EINVAL;
+	queue_work(msm_rpm_smd_wq, &msm_rpm_data.work);
 
+skip_smd_init:
 	of_platform_populate(pdev->dev.of_node, NULL, NULL, &pdev->dev);
 
 	if (standalone)

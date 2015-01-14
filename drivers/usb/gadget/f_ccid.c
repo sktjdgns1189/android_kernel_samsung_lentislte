@@ -1,7 +1,7 @@
 /*
  * f_ccid.c -- CCID function Driver
  *
- * Copyright (c) 2011, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2011, 2013 The Linux Foundation. All rights reserved.
 
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -307,12 +307,11 @@ ccid_function_setup(struct usb_function *f, const struct usb_ctrlrequest *ctrl)
 		ctrl_dev->buf[3] = 0x00;
 		ctrl_dev->tx_ctrl_done = 1;
 		wake_up(&ctrl_dev->tx_wait_q);
-		return 0;
+		ret = 0;
+		break;
 
 	case ((USB_DIR_IN | USB_TYPE_CLASS | USB_RECIP_INTERFACE) << 8)
 			| CCIDGENERICREQ_GET_CLOCK_FREQUENCIES:
-		if (w_length > req->length)
-			goto invalid;
 		*(u32 *) req->buf =
 				cpu_to_le32(ccid_class_desc.dwDefaultClock);
 		ret = min_t(u32, w_length,
@@ -321,8 +320,6 @@ ccid_function_setup(struct usb_function *f, const struct usb_ctrlrequest *ctrl)
 
 	case ((USB_DIR_IN | USB_TYPE_CLASS | USB_RECIP_INTERFACE) << 8)
 			| CCIDGENERICREQ_GET_DATA_RATES:
-		if (w_length > req->length)
-			goto invalid;
 		*(u32 *) req->buf = cpu_to_le32(ccid_class_desc.dwDataRate);
 		ret = min_t(u32, w_length, sizeof(ccid_class_desc.dwDataRate));
 		break;
@@ -489,7 +486,7 @@ static void ccid_function_unbind(struct usb_configuration *c,
 {
 	if (gadget_is_dualspeed(c->cdev->gadget))
 		usb_free_descriptors(f->hs_descriptors);
-	usb_free_descriptors(f->descriptors);
+	usb_free_descriptors(f->fs_descriptors);
 
 }
 
@@ -535,8 +532,8 @@ static int ccid_function_bind(struct usb_configuration *c,
 	ccid_dev->out = ep;
 	ep->driver_data = cdev;
 
-	f->descriptors = usb_copy_descriptors(ccid_fs_descs);
-	if (!f->descriptors)
+	f->fs_descriptors = usb_copy_descriptors(ccid_fs_descs);
+	if (!f->fs_descriptors)
 		goto ep_auto_out_fail;
 
 	if (gadget_is_dualspeed(cdev->gadget)) {
@@ -685,6 +682,8 @@ requeue_req:
 			pr_debug("%s: USB cable not connected\n", __func__);
 			r = -ENODEV;
 			goto done;
+		} else {
+			r = xfer;
 		}
 		spin_unlock_irqrestore(&ccid_dev->lock, flags);
 	} else {
@@ -944,7 +943,7 @@ static int ccid_bind_config(struct usb_configuration *c)
 	pr_debug("ccid_bind_config\n");
 	ccid_dev->cdev = c->cdev;
 	ccid_dev->function.name = FUNCTION_NAME;
-	ccid_dev->function.descriptors = ccid_fs_descs;
+	ccid_dev->function.fs_descriptors = ccid_fs_descs;
 	ccid_dev->function.hs_descriptors = ccid_hs_descs;
 	ccid_dev->function.bind = ccid_function_bind;
 	ccid_dev->function.unbind = ccid_function_unbind;

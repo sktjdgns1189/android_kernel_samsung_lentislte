@@ -11,6 +11,7 @@
  */
 
 #include <linux/atomic.h>
+#include <linux/compat.h>
 #include <linux/device.h>
 #include <linux/fs.h>
 #include <linux/hid.h>
@@ -122,15 +123,40 @@ static int uhid_hid_input(struct input_dev *input, unsigned int type,
 	struct uhid_device *uhid = hid->driver_data;
 	unsigned long flags;
 	struct uhid_event *ev;
+	struct hid_field *field;
+	struct hid_report *report;
+	int offset;
 
 	ev = kzalloc(sizeof(*ev), GFP_ATOMIC);
 	if (!ev)
 		return -ENOMEM;
 
-	ev->type = UHID_OUTPUT_EV;
-	ev->u.output_ev.type = type;
-	ev->u.output_ev.code = code;
-	ev->u.output_ev.value = value;
+	switch (type) {
+	case EV_LED:
+		offset = hidinput_find_field(hid, type, code, &field);
+		if (offset == -1) {
+			hid_warn(input, "event field not found\n");
+			kfree(ev);
+			return -1;
+		}
+
+		hid_set_field(field, offset, value);
+
+		report = field->report;
+
+		ev->type = UHID_OUTPUT;
+		ev->u.output.rtype = UHID_OUTPUT_REPORT;
+		hid_output_report(report, ev->u.output.data);
+		ev->u.output.size = ((report->size - 1) >> 3) + 1 +
+							(report->id > 0);
+		break;
+
+	default:
+		ev->type = UHID_OUTPUT_EV;
+		ev->u.output_ev.type = type;
+		ev->u.output_ev.code = code;
+		ev->u.output_ev.value = value;
+	}
 
 	spin_lock_irqsave(&uhid->qlock, flags);
 	uhid_queue(uhid, ev);
@@ -275,6 +301,94 @@ static struct hid_ll_driver uhid_hid_driver = {
 	.hidinput_input_event = uhid_hid_input,
 	.parse = uhid_hid_parse,
 };
+
+#ifdef CONFIG_COMPAT
+
+/* Apparently we haven't stepped on these rakes enough times yet. */
+struct uhid_create_req_compat {
+	__u8 name[128];
+	__u8 phys[64];
+	__u8 uniq[64];
+
+	compat_uptr_t rd_data;
+	__u16 rd_size;
+
+	__u16 bus;
+	__u32 vendor;
+	__u32 product;
+	__u32 version;
+	__u32 country;
+} __attribute__((__packed__));
+
+static int uhid_event_from_user(const char __user *buffer, size_t len,
+				struct uhid_event *event)
+{
+	if (is_compat_task()) {
+		u32 type;
+
+		if (get_user(type, buffer))
+			return -EFAULT;
+
+		if (type == UHID_CREATE) {
+			/*
+			 * This is our messed up request with compat pointer.
+			 * It is largish (more than 256 bytes) so we better
+			 * allocate it from the heap.
+			 */
+			struct uhid_create_req_compat *compat;
+
+			compat = kmalloc(sizeof(*compat), GFP_KERNEL);
+			if (!compat)
+				return -ENOMEM;
+
+			buffer += sizeof(type);
+			len -= sizeof(type);
+			if (copy_from_user(compat, buffer,
+					   min(len, sizeof(*compat)))) {
+				kfree(compat);
+				return -EFAULT;
+			}
+
+			/* Shuffle the data over to proper structure */
+			event->type = type;
+
+			memcpy(event->u.create.name, compat->name,
+				sizeof(compat->name));
+			memcpy(event->u.create.phys, compat->phys,
+				sizeof(compat->phys));
+			memcpy(event->u.create.uniq, compat->uniq,
+				sizeof(compat->uniq));
+
+			event->u.create.rd_data = compat_ptr(compat->rd_data);
+			event->u.create.rd_size = compat->rd_size;
+
+			event->u.create.bus = compat->bus;
+			event->u.create.vendor = compat->vendor;
+			event->u.create.product = compat->product;
+			event->u.create.version = compat->version;
+			event->u.create.country = compat->country;
+
+			kfree(compat);
+			return 0;
+		}
+		/* All others can be copied directly */
+	}
+
+	if (copy_from_user(event, buffer, min(len, sizeof(*event))))
+		return -EFAULT;
+
+	return 0;
+}
+#else
+static int uhid_event_from_user(const char __user *buffer, size_t len,
+				struct uhid_event *event)
+{
+	if (copy_from_user(event, buffer, min(len, sizeof(*event))))
+		return -EFAULT;
+
+	return 0;
+}
+#endif
 
 static int uhid_dev_create(struct uhid_device *uhid,
 			   const struct uhid_event *ev)
@@ -498,10 +612,10 @@ static ssize_t uhid_char_write(struct file *file, const char __user *buffer,
 
 	memset(&uhid->input_buf, 0, sizeof(uhid->input_buf));
 	len = min(count, sizeof(uhid->input_buf));
-	if (copy_from_user(&uhid->input_buf, buffer, len)) {
-		ret = -EFAULT;
+
+	ret = uhid_event_from_user(buffer, len, &uhid->input_buf);
+	if (ret)
 		goto unlock;
-	}
 
 	switch (uhid->input_buf.type) {
 	case UHID_CREATE:

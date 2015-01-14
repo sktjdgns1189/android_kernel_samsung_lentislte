@@ -118,13 +118,14 @@ static int mdss_mdp_rotator_busy_wait(struct mdss_mdp_rotator_session *rot)
 {
 
 	mutex_lock(&rot->lock);
-	if (!rot->pipe || !rot->pipe->mixer || !rot->pipe->mixer->ctl) {
+	if (!rot->pipe || !rot->pipe->mixer_left ||
+		!rot->pipe->mixer_left->ctl) {
 		mutex_unlock(&rot->lock);
 		return -ENODEV;
 	}
 
 	if (rot->busy) {
-		struct mdss_mdp_ctl *ctl = rot->pipe->mixer->ctl;
+		struct mdss_mdp_ctl *ctl = rot->pipe->mixer_left->ctl;
 		mdss_mdp_display_wait4comp(ctl);
 		rot->busy = false;
 		if (ctl->shared_lock)
@@ -226,7 +227,7 @@ static int __mdss_mdp_rotator_to_pipe(struct mdss_mdp_rotator_session *rot,
 
 	ret = mdss_mdp_smp_reserve(pipe);
 	if (ret) {
-		pr_err("unable to mdss_mdp_smp_reserve rot data\n");
+		pr_debug("unable to mdss_mdp_smp_reserve rot data\n");
 		return ret;
 	}
 
@@ -254,7 +255,7 @@ static int mdss_mdp_rotator_queue_sub(struct mdss_mdp_rotator_session *rot,
 
 	pr_debug("queue rotator pnum=%d\n", rot_pipe->num);
 
-	orig_ctl = rot_pipe->mixer->ctl;
+	orig_ctl = rot_pipe->mixer_left->ctl;
 	if (orig_ctl->shared_lock)
 		mutex_lock(orig_ctl->shared_lock);
 
@@ -264,7 +265,7 @@ static int mdss_mdp_rotator_queue_sub(struct mdss_mdp_rotator_session *rot,
 		ret = -EINVAL;
 		goto error;
 	} else {
-		rot->pipe->mixer = rot_ctl->mixer_left;
+		rot->pipe->mixer_left = rot_ctl->mixer_left;
 	}
 
 	if (rot->params_changed || rot_ctl->mdata->mixer_switched) {
@@ -299,6 +300,7 @@ static void mdss_mdp_rotator_commit_wq_handler(struct work_struct *work)
 	rot = container_of(work, struct mdss_mdp_rotator_session, commit_work);
 
 	mutex_lock(&rotator_lock);
+
 	ret = mdss_mdp_rotator_queue_helper(rot);
 	if (ret)
 		pr_err("rotator queue failed\n");
@@ -471,6 +473,11 @@ int mdss_mdp_rotator_setup(struct msm_fb_data_type *mfd,
 			ret = -ENODEV;
 			goto rot_err;
 		}
+		if (work_pending(&rot->commit_work)) {
+			mutex_unlock(&rotator_lock);
+			flush_work(&rot->commit_work);
+			mutex_lock(&rotator_lock);
+		}
 	} else {
 		pr_err("invalid rotator session id=%x\n", req->id);
 		ret = -EINVAL;
@@ -627,6 +634,11 @@ static int mdss_mdp_rotator_finish(struct mdss_mdp_rotator_session *rot)
 
 	rot_pipe = rot->pipe;
 	if (rot_pipe) {
+		if (work_pending(&rot->commit_work)) {
+			mutex_unlock(&rotator_lock);
+			cancel_work_sync(&rot->commit_work);
+			mutex_lock(&rotator_lock);
+		}
 		mdss_mdp_rotator_busy_wait(rot);
 		list_del(&rot->head);
 	}
@@ -641,7 +653,7 @@ static int mdss_mdp_rotator_finish(struct mdss_mdp_rotator_session *rot)
 	rot->commit_work = commit_work;
 
 	if (rot_pipe) {
-		struct mdss_mdp_mixer *mixer = rot_pipe->mixer;
+		struct mdss_mdp_mixer *mixer = rot_pipe->mixer_left;
 		mdss_mdp_pipe_destroy(rot_pipe);
 		tmp = mdss_mdp_ctl_mixer_switch(mixer->ctl,
 				MDSS_MDP_WB_CTL_TYPE_BLOCK);
@@ -690,6 +702,7 @@ int mdss_mdp_rotator_play(struct msm_fb_data_type *mfd,
 			    struct msmfb_overlay_data *req)
 {
 	struct mdss_mdp_rotator_session *rot;
+	struct mdss_overlay_private *mdp5_data = mfd_to_mdp5_data(mfd);
 	int ret;
 	u32 flgs;
 
@@ -708,6 +721,9 @@ int mdss_mdp_rotator_play(struct msm_fb_data_type *mfd,
 		pr_err("rotator busy wait error\n");
 		goto dst_buf_fail;
 	}
+
+	if (!mfd->panel_info->cont_splash_enabled)
+		mdss_iommu_attach(mdp5_data->mdata);
 
 	mdss_mdp_overlay_free_buf(&rot->src_buf);
 	ret = mdss_mdp_overlay_get_buf(mfd, &rot->src_buf, &req->data, 1, flgs);

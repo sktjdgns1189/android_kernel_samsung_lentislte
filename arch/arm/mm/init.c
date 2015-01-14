@@ -21,15 +21,15 @@
 #include <linux/highmem.h>
 #include <linux/gfp.h>
 #include <linux/memblock.h>
-#include <linux/sort.h>
 #include <linux/dma-contiguous.h>
+#include <linux/sizes.h>
+#include <linux/sort.h>
 
 #include <asm/mach-types.h>
 #include <asm/memblock.h>
 #include <asm/prom.h>
 #include <asm/sections.h>
 #include <asm/setup.h>
-#include <asm/sizes.h>
 #include <asm/tlb.h>
 #include <asm/fixmap.h>
 #include <asm/cputype.h>
@@ -103,6 +103,9 @@ void show_mem(unsigned int filter)
 
 	printk("Mem-info:\n");
 	show_free_areas(filter);
+
+	if (filter & SHOW_MEM_FILTER_PAGE_COUNT)
+		return;
 
 	for_each_bank (i, mi) {
 		struct membank *bank = &mi->bank[i];
@@ -375,84 +378,6 @@ static int __init meminfo_cmp(const void *_a, const void *_b)
 	return cmp < 0 ? -1 : cmp > 0 ? 1 : 0;
 }
 
-phys_addr_t memory_hole_offset;
-EXPORT_SYMBOL(memory_hole_offset);
-phys_addr_t memory_hole_start;
-EXPORT_SYMBOL(memory_hole_start);
-phys_addr_t memory_hole_end;
-EXPORT_SYMBOL(memory_hole_end);
-unsigned long memory_hole_align;
-EXPORT_SYMBOL(memory_hole_align);
-unsigned long virtual_hole_start;
-unsigned long virtual_hole_end;
-
-#ifdef CONFIG_DONT_MAP_HOLE_AFTER_MEMBANK0
-void find_memory_hole(void)
-{
-	int i;
-	phys_addr_t hole_start;
-	phys_addr_t hole_size;
-	unsigned long hole_end_virt;
-
-	/*
-	 * Find the start and end of the hole, using meminfo.
-	 */
-	for (i = 0; i < (meminfo.nr_banks - 1); i++) {
-		if ((meminfo.bank[i].start + meminfo.bank[i].size) !=
-						meminfo.bank[i+1].start) {
-			if (meminfo.bank[i].start + meminfo.bank[i].size
-							<= MAX_HOLE_ADDRESS) {
-
-				hole_start = meminfo.bank[i].start +
-							meminfo.bank[i].size;
-				hole_size = meminfo.bank[i+1].start -
-								hole_start;
-
-				if (memory_hole_start == 0 &&
-							memory_hole_end == 0) {
-					memory_hole_start = hole_start;
-					memory_hole_end = hole_start +
-								hole_size;
-				} else if ((memory_hole_end -
-					memory_hole_start) <= hole_size) {
-					memory_hole_start = hole_start;
-					memory_hole_end = hole_start +
-								hole_size;
-				}
-			}
-		}
-	}
-
-	memory_hole_offset = memory_hole_start - PHYS_OFFSET;
-	if (!IS_ALIGNED(memory_hole_start, SECTION_SIZE)) {
-		pr_err("memory_hole_start %pa is not aligned to %lx\n",
-			&memory_hole_start, SECTION_SIZE);
-		BUG();
-	}
-	if (!IS_ALIGNED(memory_hole_end, SECTION_SIZE)) {
-		pr_err("memory_hole_end %pa is not aligned to %lx\n",
-			&memory_hole_end, SECTION_SIZE);
-		BUG();
-	}
-
-	hole_end_virt = __phys_to_virt(memory_hole_end);
-
-	if ((!IS_ALIGNED(hole_end_virt, PMD_SIZE) &&
-	     IS_ALIGNED(memory_hole_end, PMD_SIZE)) ||
-	     (IS_ALIGNED(hole_end_virt, PMD_SIZE) &&
-	      !IS_ALIGNED(memory_hole_end, PMD_SIZE))) {
-		memory_hole_align = !IS_ALIGNED(hole_end_virt, PMD_SIZE) ?
-					hole_end_virt & ~PMD_MASK :
-					memory_hole_end & ~PMD_MASK;
-		virtual_hole_start = hole_end_virt;
-		virtual_hole_end = hole_end_virt + memory_hole_align;
-		pr_info("Physical memory hole is not aligned. There will be a virtual memory hole from %lx to %lx\n",
-			virtual_hole_start, virtual_hole_end);
-	}
-}
-
-#endif
-
 void __init arm_memblock_init(struct meminfo *mi, struct machine_desc *mdesc)
 {
 	int i;
@@ -574,24 +499,6 @@ void __init bootmem_init(void)
 	max_pfn = max_high - PHYS_PFN_OFFSET;
 }
 
-static inline int free_area(unsigned long pfn, unsigned long end, char *s)
-{
-	unsigned int pages = 0, size = (end - pfn) << (PAGE_SHIFT - 10);
-
-	for (; pfn < end; pfn++) {
-		struct page *page = pfn_to_page(pfn);
-		ClearPageReserved(page);
-		init_page_count(page);
-		__free_page(page);
-		pages++;
-	}
-
-	if (size && s)
-		printk(KERN_INFO "Freeing %s memory: %dK\n", s, size);
-
-	return pages;
-}
-
 /*
  * Poison init memory with an undefined instruction (ARM) or a branch to an
  * undefined instruction (Thumb).
@@ -684,6 +591,14 @@ static void __init free_unused_memmap(struct meminfo *mi)
 #endif
 }
 
+#ifdef CONFIG_HIGHMEM
+static inline void free_area_high(unsigned long pfn, unsigned long end)
+{
+	for (; pfn < end; pfn++)
+		free_highmem_page(pfn_to_page(pfn));
+}
+#endif
+
 static void __init free_highpages(void)
 {
 #ifdef CONFIG_HIGHMEM
@@ -719,8 +634,7 @@ static void __init free_highpages(void)
 			if (res_end > end)
 				res_end = end;
 			if (res_start != start)
-				totalhigh_pages += free_area(start, res_start,
-							     NULL);
+				free_area_high(start, res_start);
 			start = res_end;
 			if (start == end)
 				break;
@@ -728,9 +642,8 @@ static void __init free_highpages(void)
 
 		/* And now free anything which remains */
 		if (start < end)
-			totalhigh_pages += free_area(start, end, NULL);
+			free_area_high(start, end);
 	}
-	totalram_pages += totalhigh_pages;
 #endif
 }
 
@@ -739,7 +652,7 @@ static void __init free_highpages(void)
 #define MLK_ROUNDUP(b, t) b, t, DIV_ROUND_UP(((t) - (b)), SZ_1K)
 
 #ifdef CONFIG_ENABLE_VMALLOC_SAVING
-void print_vmalloc_lowmem_info(void)
+static void print_vmalloc_lowmem_info(void)
 {
 	int i;
 	void *va_start, *va_end;
@@ -799,8 +712,7 @@ void __init mem_init(void)
 
 #ifdef CONFIG_SA1111
 	/* now that our DMA memory is actually so designated, we can free it */
-	totalram_pages += free_area(PHYS_PFN_OFFSET,
-				    __phys_to_pfn(__pa(swapper_pg_dir)), NULL);
+	free_reserved_area(__va(PHYS_PFN_OFFSET), swapper_pg_dir, 0, NULL);
 #endif
 
 	free_highpages();
@@ -856,9 +768,6 @@ void __init mem_init(void)
 
 	printk(KERN_NOTICE "Virtual kernel memory layout:\n"
 			"    vector  : 0x%08lx - 0x%08lx   (%4ld kB)\n"
-#ifdef CONFIG_ARM_USE_USER_ACCESSIBLE_TIMERS
-			"    timers  : 0x%08lx - 0x%08lx   (%4ld kB)\n"
-#endif
 #ifdef CONFIG_HAVE_TCM
 			"    DTCM    : 0x%08lx - 0x%08lx   (%4ld kB)\n"
 			"    ITCM    : 0x%08lx - 0x%08lx   (%4ld kB)\n"
@@ -866,11 +775,6 @@ void __init mem_init(void)
 			"    fixmap  : 0x%08lx - 0x%08lx   (%4ld kB)\n",
 			MLK(UL(CONFIG_VECTORS_BASE), UL(CONFIG_VECTORS_BASE) +
 				(PAGE_SIZE)),
-#ifdef CONFIG_ARM_USE_USER_ACCESSIBLE_TIMERS
-			MLK(UL(CONFIG_ARM_USER_ACCESSIBLE_TIMER_BASE),
-				UL(CONFIG_ARM_USER_ACCESSIBLE_TIMER_BASE)
-					+ (PAGE_SIZE)),
-#endif
 #ifdef CONFIG_HAVE_TCM
 			MLK(DTCM_OFFSET, (unsigned long) dtcm_end),
 			MLK(ITCM_OFFSET, (unsigned long) itcm_end),
@@ -885,7 +789,6 @@ void __init mem_init(void)
 		   MLM(VMALLOC_START, VMALLOC_END),
 		   MLM(PAGE_OFFSET, (unsigned long)high_memory));
 #endif
-
 	printk(KERN_NOTICE
 #ifdef CONFIG_HIGHMEM
 		   "    pkmap   : 0x%08lx - 0x%08lx   (%4ld MB)\n"
@@ -941,28 +844,26 @@ void __init mem_init(void)
 void free_initmem(void)
 {
 	unsigned long reclaimed_initmem;
+
 #ifdef CONFIG_HAVE_TCM
 	extern char __tcm_start, __tcm_end;
 
 	poison_init_mem(&__tcm_start, &__tcm_end - &__tcm_start);
-	totalram_pages += free_area(__phys_to_pfn(__pa(&__tcm_start)),
-				    __phys_to_pfn(__pa(&__tcm_end)),
-				    "TCM link");
+	free_reserved_area(&__tcm_start, &__tcm_end, 0, "TCM link");
 #endif
 
 #ifdef CONFIG_STRICT_MEMORY_RWX
 	poison_init_mem((char *)__arch_info_begin,
 		__init_end - (char *)__arch_info_begin);
-	reclaimed_initmem = free_area(__phys_to_pfn(__pa(__arch_info_begin)),
-				    __phys_to_pfn(__pa(__init_end)),
-				    "init");
+	reclaimed_initmem = free_reserved_area(
+				PAGE_ALIGN((unsigned long)&__arch_info_begin),
+				((unsigned long)&__init_end)&PAGE_MASK, 0,
+				"unused kernel");
 	totalram_pages += reclaimed_initmem;
 #else
 	poison_init_mem(__init_begin, __init_end - __init_begin);
 	if (!machine_is_integrator() && !machine_is_cintegrator()) {
-		reclaimed_initmem = free_area(__phys_to_pfn(__pa(__init_begin)),
-					    __phys_to_pfn(__pa(__init_end)),
-					    "init");
+		reclaimed_initmem = free_initmem_default(0);
 		totalram_pages += reclaimed_initmem;
 	}
 #endif
@@ -978,9 +879,8 @@ void free_initrd_mem(unsigned long start, unsigned long end)
 
 	if (!keep_initrd) {
 		poison_init_mem((void *)start, PAGE_ALIGN(end) - start);
-		reclaimed_initrd_mem = free_area(__phys_to_pfn(__pa(start)),
-						 __phys_to_pfn(__pa(end)),
-						 "initrd");
+		reclaimed_initrd_mem = free_reserved_area(start, end, 0,
+				"initrd");
 		totalram_pages += reclaimed_initrd_mem;
 	}
 }

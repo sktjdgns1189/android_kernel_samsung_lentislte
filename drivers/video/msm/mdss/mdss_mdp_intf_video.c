@@ -104,7 +104,7 @@ int mdss_mdp_video_addr_setup(struct mdss_data_type *mdata,
 		return -ENOMEM;
 
 	for (i = 0; i < count; i++) {
-		head[i].base = mdata->mdp_base + offsets[i];
+		head[i].base = mdata->mdss_base + offsets[i];
 		pr_debug("adding Video Intf #%d offset=0x%x virt=%p\n", i,
 				offsets[i], head[i].base);
 		head[i].ref_cnt = 0;
@@ -302,6 +302,7 @@ static int mdss_mdp_video_stop(struct mdss_mdp_ctl *ctl)
 {
 	struct mdss_mdp_video_ctx *ctx;
 	struct mdss_mdp_vsync_handler *tmp, *handle;
+	struct mdss_mdp_ctl *sctl;
 	int rc;
 	u32 frame_rate = 0;
 
@@ -331,8 +332,6 @@ static int mdss_mdp_video_stop(struct mdss_mdp_ctl *ctl)
 				frame_rate = 24;
 			msleep((1000/frame_rate) + 1);
 		}
-
-		mdss_iommu_ctrl(0);
 		mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_OFF, false);
 		ctx->timegen_en = false;
 
@@ -341,6 +340,10 @@ static int mdss_mdp_video_stop(struct mdss_mdp_ctl *ctl)
 
 		mdss_mdp_irq_disable(MDSS_MDP_IRQ_INTF_UNDER_RUN,
 			ctl->intf_num);
+		sctl = mdss_mdp_get_split_ctl(ctl);
+		if (sctl)
+			mdss_mdp_irq_disable(MDSS_MDP_IRQ_INTF_UNDER_RUN,
+				sctl->intf_num);
 	}
 
 	list_for_each_entry_safe(handle, tmp, &ctx->vsync_handlers, list)
@@ -501,7 +504,7 @@ static int mdss_mdp_video_vfp_fps_update(struct mdss_mdp_ctl *ctl, int new_fps)
 	}
 
 	vsync_period = mdss_panel_get_vtotal(&pdata->panel_info);
-	hsync_period = mdss_panel_get_htotal(&pdata->panel_info);
+	hsync_period = mdss_panel_get_htotal(&pdata->panel_info, true);
 	curr_fps = mdss_panel_get_framerate(&pdata->panel_info);
 
 	if (curr_fps > new_fps) {
@@ -563,7 +566,7 @@ static int mdss_mdp_video_config_fps(struct mdss_mdp_ctl *ctl,
 	}
 
 	vsync_period = mdss_panel_get_vtotal(&pdata->panel_info);
-	hsync_period = mdss_panel_get_htotal(&pdata->panel_info);
+	hsync_period = mdss_panel_get_htotal(&pdata->panel_info, true);
 
 	if (pdata->panel_info.dfps_update
 			!= DFPS_SUSPEND_RESUME_MODE) {
@@ -584,8 +587,8 @@ static int mdss_mdp_video_config_fps(struct mdss_mdp_ctl *ctl,
 			 */
 			msleep(20);
 			rc = mdss_mdp_ctl_intf_event(ctl,
-						MDSS_EVENT_PANEL_UPDATE_FPS,
-						(void *)new_fps);
+					MDSS_EVENT_PANEL_UPDATE_FPS,
+					(void *) (unsigned long) new_fps);
 			WARN(rc, "intf %d panel fps update error (%d)\n",
 							ctl->intf_num, rc);
 			mdp_video_write(ctx,
@@ -628,8 +631,8 @@ static int mdss_mdp_video_config_fps(struct mdss_mdp_ctl *ctl,
 				}
 			}
 			rc = mdss_mdp_ctl_intf_event(ctl,
-						MDSS_EVENT_PANEL_UPDATE_FPS,
-						(void *)new_fps);
+					MDSS_EVENT_PANEL_UPDATE_FPS,
+					(void *) (unsigned long) new_fps);
 			WARN(rc, "intf %d panel fps update error (%d)\n",
 							ctl->intf_num, rc);
 		} else {
@@ -639,8 +642,8 @@ static int mdss_mdp_video_config_fps(struct mdss_mdp_ctl *ctl,
 		}
 	} else {
 		rc = mdss_mdp_ctl_intf_event(ctl,
-					MDSS_EVENT_PANEL_UPDATE_FPS,
-					(void *)new_fps);
+				MDSS_EVENT_PANEL_UPDATE_FPS,
+				(void *) (unsigned long) new_fps);
 		WARN(rc, "intf %d panel fps update error (%d)\n",
 						ctl->intf_num, rc);
 	}
@@ -651,6 +654,7 @@ static int mdss_mdp_video_config_fps(struct mdss_mdp_ctl *ctl,
 static int mdss_mdp_video_display(struct mdss_mdp_ctl *ctl, void *arg)
 {
 	struct mdss_mdp_video_ctx *ctx;
+	struct mdss_mdp_ctl *sctl;
 	int rc;
 
 	pr_debug("kickoff ctl=%d\n", ctl->num);
@@ -683,15 +687,14 @@ static int mdss_mdp_video_display(struct mdss_mdp_ctl *ctl, void *arg)
 
 		pr_debug("enabling timing gen for intf=%d\n", ctl->intf_num);
 
-		rc = mdss_iommu_ctrl(1);
-		if (IS_ERR_VALUE(rc)) {
-			pr_err("IOMMU attach failed\n");
-			return rc;
-		}
-
 		mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_ON, false);
 
 		mdss_mdp_irq_enable(MDSS_MDP_IRQ_INTF_UNDER_RUN, ctl->intf_num);
+		sctl = mdss_mdp_get_split_ctl(ctl);
+		if (sctl)
+			mdss_mdp_irq_enable(MDSS_MDP_IRQ_INTF_UNDER_RUN,
+				sctl->intf_num);
+
 		mdp_video_write(ctx, MDSS_MDP_REG_INTF_TIMING_ENGINE_EN, 1);
 		wmb();
 
@@ -711,20 +714,22 @@ static int mdss_mdp_video_display(struct mdss_mdp_ctl *ctl, void *arg)
 int mdss_mdp_video_reconfigure_splash_done(struct mdss_mdp_ctl *ctl,
 	bool handoff)
 {
-	struct mdss_panel_data *pdata = ctl->panel_data;
-	int i, ret = 0;
+	struct mdss_panel_data *pdata;
+	int i, ret = 0, off;
+	u32 data, flush;
 	struct mdss_mdp_video_ctx *ctx;
-	struct mdss_data_type *mdata = ctl->mdata;
 
-	i = ctl->intf_num - MDSS_MDP_INTF0;
-	if (i < mdata->nintf) {
-		ctx = ((struct mdss_mdp_video_ctx *) mdata->video_intf) + i;
-		pr_debug("video Intf #%d base=%p", ctx->intf_num, ctx->base);
-	} else {
-		pr_err("Invalid intf number: %d\n", ctl->intf_num);
-		ret = -EINVAL;
-		goto error;
+	off = 0;
+	ctx = (struct mdss_mdp_video_ctx *) ctl->priv_data;
+	if (!ctx) {
+		pr_err("invalid ctx for ctl=%d\n", ctl->num);
+		return -ENODEV;
 	}
+
+	pdata = ctl->panel_data;
+
+	pdata->panel_info.cont_splash_enabled = 0;
+	pdata->panel_info.panel_power_on = 0;
 
 	if (!handoff) {
 		ret = mdss_mdp_ctl_intf_event(ctl, MDSS_EVENT_CONT_SPLASH_BEGIN,
@@ -735,9 +740,21 @@ int mdss_mdp_video_reconfigure_splash_done(struct mdss_mdp_ctl *ctl,
 			return ret;
 		}
 
-		mdss_mdp_ctl_write(ctl, 0, MDSS_MDP_LM_BORDER_COLOR);
-		mdp_video_write(ctx, MDSS_MDP_REG_INTF_TIMING_ENGINE_EN, 0);
+		/* clear up mixer0 and mixer1 */
+		flush = 0;
+		for (i = 0; i < 2; i++) {
+			data = mdss_mdp_ctl_read(ctl,
+				MDSS_MDP_REG_CTL_LAYER(i));
+			if (data) {
+				mdss_mdp_ctl_write(ctl,
+					MDSS_MDP_REG_CTL_LAYER(i),
+					MDSS_MDP_LM_BORDER_COLOR);
+				flush |= (0x40 << i);
+			}
+		}
+		mdss_mdp_ctl_write(ctl, MDSS_MDP_REG_CTL_FLUSH, flush);
 
+		mdp_video_write(ctx, MDSS_MDP_REG_INTF_TIMING_ENGINE_EN, 0);
 		/* wait for 1 VSYNC for the pipe to be unstaged */
 		msleep(20);
 
@@ -745,8 +762,6 @@ int mdss_mdp_video_reconfigure_splash_done(struct mdss_mdp_ctl *ctl,
 			MDSS_EVENT_CONT_SPLASH_FINISH, NULL);
 	}
 
-error:
-	pdata->panel_info.cont_splash_enabled = 0;
 	return ret;
 }
 
@@ -755,19 +770,12 @@ int mdss_mdp_video_start(struct mdss_mdp_ctl *ctl)
 	struct mdss_data_type *mdata;
 	struct mdss_panel_info *pinfo;
 	struct mdss_mdp_video_ctx *ctx;
-	struct mdss_mdp_mixer *mixer;
 	struct intf_timing_params itp = {0};
 	u32 dst_bpp;
 	int i;
 
 	mdata = ctl->mdata;
 	pinfo = &ctl->panel_data->panel_info;
-	mixer = mdss_mdp_mixer_get(ctl, MDSS_MDP_MIXER_MUX_LEFT);
-
-	if (!mixer) {
-		pr_err("mixer not setup correctly\n");
-		return -ENODEV;
-	}
 
 	i = ctl->intf_num - MDSS_MDP_INTF0;
 	if (i < mdata->nintf) {

@@ -1892,6 +1892,13 @@ static void hci_cc_fm_enable_rsp(struct radio_hci_dev *hdev,
 		return;
 	}
 
+	if (radio->mode == FM_RECV_TURNING_ON) {
+		radio->mode = FM_RECV;
+		iris_q_event(radio, IRIS_EVT_RADIO_READY);
+	} else if (radio->mode == FM_TRANS_TURNING_ON) {
+		radio->mode = FM_TRANS;
+		iris_q_event(radio, IRIS_EVT_RADIO_READY);
+	}
 	radio_hci_req_complete(hdev, rsp->status);
 }
 
@@ -1938,7 +1945,6 @@ static void hci_cc_sig_threshold_rsp(struct radio_hci_dev *hdev,
 	if (!rsp->status)
 		memcpy(&radio->sig_th, rsp,
 			sizeof(struct hci_fm_sig_threshold_rsp));
-
 	radio_hci_req_complete(hdev, rsp->status);
 }
 
@@ -3076,7 +3082,7 @@ static int iris_vidioc_queryctrl(struct file *file, void *priv,
 	unsigned char i;
 	int retval = -EINVAL;
 
-	if (unlikely(qc == NULL)) {
+	if (qc == NULL) {
 		FMDERR("%s, query ctrl is null\n", __func__);
 		return retval;
 	}
@@ -3141,7 +3147,7 @@ static int iris_vidioc_g_ctrl(struct file *file, void *priv,
 		goto END;
 	}
 
-	if (unlikely(ctrl == NULL)) {
+	if (ctrl == NULL) {
 		FMDERR("%s, v4l2 ctrl is null\n", __func__);
 		retval = -EINVAL;
 		goto END;
@@ -3480,8 +3486,8 @@ static int iris_vidioc_g_ext_ctrls(struct file *file, void *priv,
 		goto END;
 	}
 
-	if (unlikely((ctrl == NULL)) || unlikely((ctrl->count == 0))
-		|| unlikely((ctrl->controls == NULL))) {
+	if ((ctrl == NULL) || (ctrl->count == 0)
+		|| (ctrl->controls == NULL)) {
 		FMDERR("%s, invalid v4l2 ctrl\n", __func__);
 		retval = -EINVAL;
 		goto END;
@@ -3528,8 +3534,8 @@ static int iris_vidioc_s_ext_ctrls(struct file *file, void *priv,
 		goto END;
 	}
 
-	if (unlikely((ctrl == NULL)) || unlikely((ctrl->count == 0))
-		|| unlikely((ctrl->controls == NULL))) {
+	if ((ctrl == NULL) || (ctrl->count == 0)
+		|| (ctrl->controls == NULL)) {
 		FMDERR("%s, invalid v4l2 ctrl\n", __func__);
 		retval = -EINVAL;
 		goto END;
@@ -3541,8 +3547,8 @@ static int iris_vidioc_s_ext_ctrls(struct file *file, void *priv,
 		/*Pass a sample PS string */
 
 		memset(tx_ps.ps_data, 0, MAX_PS_LENGTH);
-		bytes_to_copy = min(ctrl->controls[0].size,
-			(size_t)MAX_PS_LENGTH);
+		bytes_to_copy = min_t(size_t, ctrl->controls[0].size,
+					MAX_PS_LENGTH);
 		data = (ctrl->controls[0]).string;
 
 		if (copy_from_user(tx_ps.ps_data,
@@ -3566,7 +3572,7 @@ static int iris_vidioc_s_ext_ctrls(struct file *file, void *priv,
 		break;
 	case V4L2_CID_RDS_TX_RADIO_TEXT:
 		bytes_to_copy =
-		    min((ctrl->controls[0]).size, (size_t)MAX_RT_LENGTH);
+		    min_t(size_t, (ctrl->controls[0]).size, MAX_RT_LENGTH);
 		data = (ctrl->controls[0]).string;
 
 		memset(tx_rt.rt_data, 0, MAX_RT_LENGTH);
@@ -3689,7 +3695,7 @@ static int iris_vidioc_s_ctrl(struct file *file, void *priv,
 		goto END;
 	}
 
-	if (unlikely(ctrl == NULL)) {
+	if (ctrl == NULL) {
 		FMDERR("%s, v4l2 ctrl is null\n", __func__);
 		retval = -EINVAL;
 		goto END;
@@ -3770,19 +3776,7 @@ static int iris_vidioc_s_ctrl(struct file *file, void *priv,
 				radio->mode = FM_OFF;
 				goto END;
 			} else {
-				retval = initialise_recv(radio);
-				if (retval < 0) {
-					FMDERR("Error while initialising"\
-						"radio %d\n", retval);
-					hci_cmd(HCI_FM_DISABLE_RECV_CMD,
-							radio->fm_hdev);
-					radio->mode = FM_OFF;
-					goto END;
-				}
-			}
-			if (radio->mode == FM_RECV_TURNING_ON) {
-				radio->mode = FM_RECV;
-				iris_q_event(radio, IRIS_EVT_RADIO_READY);
+				initialise_recv(radio);
 			}
 			break;
 		case FM_TRANS:
@@ -3799,19 +3793,7 @@ static int iris_vidioc_s_ctrl(struct file *file, void *priv,
 				radio->mode = FM_OFF;
 				goto END;
 			} else {
-				retval = initialise_trans(radio);
-				if (retval < 0) {
-					FMDERR("Error while initialising"\
-							"radio %d\n", retval);
-					hci_cmd(HCI_FM_DISABLE_TRANS_CMD,
-								radio->fm_hdev);
-					radio->mode = FM_OFF;
-					goto END;
-				}
-			}
-			if (radio->mode == FM_TRANS_TURNING_ON) {
-				radio->mode = FM_TRANS;
-				iris_q_event(radio, IRIS_EVT_RADIO_READY);
+				initialise_trans(radio);
 			}
 			break;
 		case FM_OFF:
@@ -4721,7 +4703,7 @@ static int iris_vidioc_g_tuner(struct file *file, void *priv,
 		FMDERR(":radio is null");
 		return -EINVAL;
 	}
-	if (unlikely(tuner == NULL)) {
+	if (tuner == NULL) {
 		FMDERR("%s, tuner is null\n", __func__);
 		return -EINVAL;
 	}
@@ -4764,7 +4746,7 @@ static int iris_vidioc_g_tuner(struct file *file, void *priv,
 }
 
 static int iris_vidioc_s_tuner(struct file *file, void *priv,
-		struct v4l2_tuner *tuner)
+		const struct v4l2_tuner *tuner)
 {
 	struct iris_device *radio = video_get_drvdata(video_devdata(file));
 	int retval = 0;
@@ -4774,7 +4756,7 @@ static int iris_vidioc_s_tuner(struct file *file, void *priv,
 		return -EINVAL;
 	}
 
-	if (unlikely(tuner == NULL)) {
+	if (tuner == NULL) {
 		FMDERR("%s, tuner is null\n", __func__);
 		return -EINVAL;
 	}
@@ -4824,13 +4806,13 @@ static int iris_vidioc_g_frequency(struct file *file, void *priv,
 }
 
 static int iris_vidioc_s_frequency(struct file *file, void *priv,
-					struct v4l2_frequency *freq)
+					const struct v4l2_frequency *freq)
 {
 	struct iris_device  *radio = video_get_drvdata(video_devdata(file));
 	int retval = -1;
 	u32 f;
 
-	if (unlikely(freq == NULL)) {
+	if (freq == NULL) {
 		FMDERR("%s, v4l2 freq is null\n", __func__);
 		return -EINVAL;
 	}
@@ -4951,12 +4933,12 @@ static int iris_vidioc_g_fmt_type_private(struct file *file, void *priv,
 }
 
 static int iris_vidioc_s_hw_freq_seek(struct file *file, void *priv,
-					struct v4l2_hw_freq_seek *seek)
+					const struct v4l2_hw_freq_seek *seek)
 {
 	struct iris_device *radio = video_get_drvdata(video_devdata(file));
 	int dir;
 
-	if (unlikely(seek == NULL)) {
+	if (seek == NULL) {
 		FMDERR("%s, v4l2_hw_freq_seek is null\n", __func__);
 		return -EINVAL;
 	}
@@ -4977,7 +4959,7 @@ static int iris_vidioc_querycap(struct file *file, void *priv,
 		FMDERR(":radio is null");
 		return -EINVAL;
 	}
-	if (unlikely(capability == NULL)) {
+	if (capability == NULL) {
 		FMDERR("%s, capability struct is null\n", __func__);
 		return -EINVAL;
 	}
@@ -5200,14 +5182,13 @@ static int __init iris_probe(struct platform_device *pdev)
 			for (; i > -1; i--)
 				kfifo_free(&radio->data_buf[i]);
 			kfree(radio);
-			return -ENOMEM;
 		}
 	}
 	return 0;
 }
 
 
-static int __devexit iris_remove(struct platform_device *pdev)
+static int iris_remove(struct platform_device *pdev)
 {
 	int i;
 	struct iris_device *radio = platform_get_drvdata(pdev);
@@ -5239,7 +5220,7 @@ static struct platform_driver iris_driver = {
 		.name   = "iris_fm",
 		.of_match_table = iris_fm_match,
 	},
-	.remove = __devexit_p(iris_remove),
+	.remove = iris_remove,
 };
 
 static int __init iris_radio_init(void)

@@ -79,11 +79,6 @@ enum mc_result mc_open_device(uint32_t device_id)
 
 		/* Open new connection to device */
 		dev_con = connection_new();
-		if (dev_con == NULL) {
-			mc_result = MC_DRV_ERR_NO_FREE_MEMORY;
-			break;
-		}
-
 		if (!connection_connect(dev_con, MC_DAEMON_PID)) {
 			MCDRV_DBG_ERROR(
 				mc_kapi,
@@ -149,10 +144,6 @@ enum mc_result mc_open_device(uint32_t device_id)
 		/* there is no payload to read */
 
 		device = mcore_device_create(device_id, dev_con);
-		if (device == NULL) {
-			mc_result = MC_DRV_ERR_NO_FREE_MEMORY;
-			break;
-		}
 		if (!mcore_device_open(device, MC_DRV_MOD_DEVNODE_FULLPATH)) {
 			mcore_device_cleanup(device);
 			MCDRV_DBG_ERROR(mc_kapi,
@@ -379,10 +370,6 @@ enum mc_result mc_open_session(struct mc_session_handle *session,
 
 		/* Set up second channel for notifications */
 		struct connection *session_connection = connection_new();
-		if (session_connection == NULL) {
-			mc_result = MC_DRV_ERR_NO_FREE_MEMORY;
-			break;
-		}
 
 		if (!connection_connect(session_connection, MC_DAEMON_PID)) {
 			MCDRV_DBG_ERROR(
@@ -435,13 +422,9 @@ enum mc_result mc_open_session(struct mc_session_handle *session,
 		/* there is no payload. */
 
 		/* Session established, new session object must be created */
-		if (!mcore_device_create_new_session(device,
-						     session->session_id,
-						     session_connection)) {
-			connection_cleanup(session_connection);
-			mc_result = MC_DRV_ERR_NO_FREE_MEMORY;
-			break;
-		}
+		mcore_device_create_new_session(device,
+						session->session_id,
+						session_connection);
 
 	} while (false);
 

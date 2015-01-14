@@ -61,7 +61,7 @@
 /* Memory type and cache policy attributes */
 #define MT_SO                   0
 #define MT_DEV                  1
-#define MT_NORMAL               2
+#define MT_IOMMU_NORMAL         2
 #define CP_NONCACHED            0
 #define CP_WB_WA                1
 #define CP_WT                   2
@@ -136,7 +136,7 @@ static int __get_pgprot(int prot, int len)
 	}
 
 	if (prot & IOMMU_CACHE)
-		tex = (pgprot_kernel >> 2) & 0x07;
+		tex = (pgprot_val(PAGE_KERNEL) >> 2) & 0x07;
 	else
 		tex = msm_iommu_tex_class[MSM_IOMMU_ATTR_NONCACHED];
 
@@ -259,7 +259,7 @@ int msm_iommu_pagetable_map(struct msm_iommu_pt *pt, unsigned long va,
 
 	if (len != SZ_16M && len != SZ_1M &&
 	    len != SZ_64K && len != SZ_4K) {
-		pr_debug("Bad size: %d\n", len);
+		pr_debug("Bad size: %zd\n", len);
 		ret = -EINVAL;
 		goto fail;
 	}
@@ -615,15 +615,55 @@ void msm_iommu_pagetable_unmap_range(struct msm_iommu_pt *pt, unsigned int va,
 	}
 }
 
+phys_addr_t msm_iommu_iova_to_phys_soft(struct iommu_domain *domain,
+					  phys_addr_t va)
+{
+	struct msm_iommu_priv *priv = domain->priv;
+	struct msm_iommu_pt *pt = &priv->pt;
+	unsigned long *fl_pte;
+	unsigned long fl_offset;
+	unsigned long *sl_table = NULL;
+	unsigned long sl_offset;
+	unsigned long *sl_pte;
+
+	if (!pt->fl_table) {
+		pr_err("Page table doesn't exist\n");
+		return 0;
+	}
+
+	fl_offset = FL_OFFSET(va);
+	fl_pte = pt->fl_table + fl_offset;
+
+	if (*fl_pte & FL_TYPE_TABLE) {
+		sl_table = __va(((*fl_pte) & FL_BASE_MASK));
+		sl_offset = SL_OFFSET(va);
+		sl_pte = sl_table + sl_offset;
+		/* 64 KB section */
+		if (*sl_pte & SL_TYPE_LARGE)
+			return (*sl_pte & 0xFFFF0000) | (va & ~0xFFFF0000);
+		/* 4 KB section */
+		if (*sl_pte & SL_TYPE_SMALL)
+			return (*sl_pte & 0xFFFFF000) | (va & ~0xFFFFF000);
+	} else {
+		/* 16 MB section */
+		if (*fl_pte & FL_SUPERSECTION)
+			return (*fl_pte & 0xFF000000) | (va & ~0xFF000000);
+		/* 1 MB section */
+		if (*fl_pte & FL_TYPE_SECT)
+			return (*fl_pte & 0xFFF00000) | (va & ~0xFFF00000);
+	}
+	return 0;
+}
+
 static int __init get_tex_class(int icp, int ocp, int mt, int nos)
 {
 	int i = 0;
-	unsigned int prrr = 0;
-	unsigned int nmrr = 0;
+	unsigned int prrr;
+	unsigned int nmrr;
 	int c_icp, c_ocp, c_mt, c_nos;
 
-	RCP15_PRRR(prrr);
-	RCP15_NMRR(nmrr);
+	prrr = msm_iommu_get_prrr();
+	nmrr = msm_iommu_get_nmrr();
 
 	for (i = 0; i < NUM_TEX_CLASS; i++) {
 		c_nos = PRRR_NOS(prrr, i);
@@ -641,16 +681,17 @@ static int __init get_tex_class(int icp, int ocp, int mt, int nos)
 static void __init setup_iommu_tex_classes(void)
 {
 	msm_iommu_tex_class[MSM_IOMMU_ATTR_NONCACHED] =
-			get_tex_class(CP_NONCACHED, CP_NONCACHED, MT_NORMAL, 1);
+			get_tex_class(CP_NONCACHED, CP_NONCACHED,
+			MT_IOMMU_NORMAL, 1);
 
 	msm_iommu_tex_class[MSM_IOMMU_ATTR_CACHED_WB_WA] =
-			get_tex_class(CP_WB_WA, CP_WB_WA, MT_NORMAL, 1);
+			get_tex_class(CP_WB_WA, CP_WB_WA, MT_IOMMU_NORMAL, 1);
 
 	msm_iommu_tex_class[MSM_IOMMU_ATTR_CACHED_WB_NWA] =
-			get_tex_class(CP_WB_NWA, CP_WB_NWA, MT_NORMAL, 1);
+			get_tex_class(CP_WB_NWA, CP_WB_NWA, MT_IOMMU_NORMAL, 1);
 
 	msm_iommu_tex_class[MSM_IOMMU_ATTR_CACHED_WT] =
-			get_tex_class(CP_WT, CP_WT, MT_NORMAL, 1);
+			get_tex_class(CP_WT, CP_WT, MT_IOMMU_NORMAL, 1);
 }
 
 void __init msm_iommu_pagetable_init(void)

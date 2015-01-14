@@ -896,8 +896,9 @@ static void rmnet_smd_connect_work(struct work_struct *w)
 	int ret = 0;
 
 	/* Control channel for QMI messages */
-	ret = smd_open(rmnet_ctl_ch, &dev->smd_ctl.ch,
-			&dev->smd_ctl, rmnet_smd_event_notify);
+	ret = smd_named_open_on_edge(rmnet_ctl_ch, SMD_APPS_MODEM,
+			&dev->smd_ctl.ch, &dev->smd_ctl,
+			rmnet_smd_event_notify);
 	if (ret) {
 		ERROR(cdev, "Unable to open control smd channel: %d\n", ret);
 		/*
@@ -918,8 +919,9 @@ static void rmnet_smd_connect_work(struct work_struct *w)
 				&dev->smd_ctl.flags));
 
 	/* Data channel for network packets */
-	ret = smd_open(rmnet_data_ch, &dev->smd_data.ch,
-			&dev->smd_data, rmnet_smd_event_notify);
+	ret = smd_named_open_on_edge(rmnet_data_ch, SMD_APPS_MODEM,
+			&dev->smd_data.ch, &dev->smd_data,
+			rmnet_smd_event_notify);
 	if (ret) {
 		ERROR(cdev, "Unable to open data smd channel\n");
 		smd_close(dev->smd_ctl.ch);
@@ -1370,7 +1372,7 @@ int rmnet_smd_bind_config(struct usb_configuration *c)
 
 	dev->function.name = "rmnet";
 	dev->function.strings = rmnet_smd_strings;
-	dev->function.descriptors = rmnet_smd_fs_function;
+	dev->function.fs_descriptors = rmnet_smd_fs_function;
 	dev->function.hs_descriptors = rmnet_smd_hs_function;
 	dev->function.bind = rmnet_smd_bind;
 	dev->function.unbind = rmnet_smd_unbind;

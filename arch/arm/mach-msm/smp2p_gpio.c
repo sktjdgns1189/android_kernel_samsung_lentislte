@@ -1,6 +1,6 @@
 /* arch/arm/mach-msm/smp2p_gpio.c
  *
- * Copyright (c) 2013, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -16,11 +16,12 @@
 #include <linux/bitmap.h>
 #include <linux/of.h>
 #include <linux/gpio.h>
+#include <linux/interrupt.h>
 #include <linux/irq.h>
 #include <linux/irqdomain.h>
 #include <linux/slab.h>
 #include <linux/list.h>
-#include <mach/msm_ipc_logging.h>
+#include <linux/ipc_logging.h>
 #include "smp2p_private_api.h"
 #include "smp2p_private.h"
 
@@ -132,7 +133,7 @@ static void smp2p_set_value(struct gpio_chip *cp, unsigned offset, int value)
 		return;
 
 	if (chip->is_inbound) {
-		SMP2P_ERR("%s: '%s':%d virq %d invalid operation\n",
+		SMP2P_INFO("%s: '%s':%d virq %d invalid operation\n",
 			__func__, chip->name, chip->remote_pid,
 			chip->irq_base + offset);
 		return;
@@ -444,28 +445,47 @@ static void msm_summary_irq_handler(struct smp2p_chip_dev *chip,
 static void smp2p_add_irq_domain(struct smp2p_chip_dev *chip,
 	struct device_node *node)
 {
-	int i;
+	int ret;
+	int irq_base;
 
 	/* map GPIO pins to interrupts */
-	chip->irq_domain = irq_domain_add_nomap(node, 0,
+	chip->irq_domain = irq_domain_add_linear(node, 0,
 			&smp2p_irq_domain_ops, chip);
 	if (!chip->irq_domain) {
 		SMP2P_ERR("%s: unable to create interrupt domain '%s':%d\n",
 				__func__, chip->name, chip->remote_pid);
-		return;
+		goto domain_fail;
 	}
 
-	for (i = 0; i < SMP2P_BITS_PER_ENTRY; ++i) {
-		unsigned int virt_irq;
-
-		virt_irq = irq_create_direct_mapping(chip->irq_domain);
-		if (virt_irq == NO_IRQ) {
-			SMP2P_ERR("%s: gpio->virt IRQ mapping failed '%s':%d\n",
-					__func__, chip->name, chip->remote_pid);
-		} else if (!chip->irq_base) {
-			chip->irq_base = virt_irq;
-		}
+	/* alloc a contiguous set of virt irqs from anywhere in the irq space */
+	irq_base = irq_alloc_descs_from(0, SMP2P_BITS_PER_ENTRY,
+				of_node_to_nid(chip->irq_domain->of_node));
+	if (irq_base < 0) {
+		SMP2P_ERR("alloc virt irqs failed:%d name:%s pid%d\n", irq_base,
+						chip->name, chip->remote_pid);
+		goto irq_alloc_fail;
 	}
+
+	/* map the allocated irqs to gpios */
+	ret = irq_domain_associate_many(chip->irq_domain, irq_base, 0,
+							SMP2P_BITS_PER_ENTRY);
+	if (ret < 0) {
+		SMP2P_ERR("map virt irqs failed:%d name:%s pid:%d\n", ret,
+						chip->name, chip->remote_pid);
+		goto irq_map_fail;
+	}
+
+	chip->irq_base = irq_base;
+	SMP2P_DBG("create mapping:%d naem:%s pid:%d\n", chip->irq_base,
+						chip->name, chip->remote_pid);
+	return;
+
+irq_map_fail:
+	irq_free_descs(irq_base, SMP2P_BITS_PER_ENTRY);
+irq_alloc_fail:
+	irq_domain_remove(chip->irq_domain);
+domain_fail:
+	return;
 }
 
 /**
@@ -537,7 +557,7 @@ static int smp2p_gpio_in_notify(struct notifier_block *self,
  *
  * Called for each smp2pgpio entry in the device tree.
  */
-static int __devinit smp2p_gpio_probe(struct platform_device *pdev)
+static int smp2p_gpio_probe(struct platform_device *pdev)
 {
 	struct device_node *node;
 	char *key;
@@ -608,7 +628,7 @@ static int __devinit smp2p_gpio_probe(struct platform_device *pdev)
 					   &chip->out_notifier,
 					   &chip->out_handle);
 			if (ret < 0)
-				goto fail;
+				goto error;
 		}
 	} else {
 		chip->in_notifier.notifier_call = smp2p_gpio_in_notify;
@@ -617,7 +637,7 @@ static int __devinit smp2p_gpio_probe(struct platform_device *pdev)
 					chip->name,
 					&chip->in_notifier);
 			if (ret < 0)
-				goto fail;
+				goto error;
 		}
 	}
 
@@ -642,6 +662,10 @@ static int __devinit smp2p_gpio_probe(struct platform_device *pdev)
 			chip->gpio.base, chip->irq_base);
 
 	return 0;
+error:
+	if (gpiochip_remove(&chip->gpio))
+		SMP2P_ERR("%s: unable to Remove GPIO '%s'\n",
+				__func__, chip->name);
 
 fail:
 	kfree(chip);
@@ -726,7 +750,7 @@ void smp2p_gpio_open_test_entry(const char *name, int remote_pid, bool do_open)
 	spin_unlock_irqrestore(&smp2p_entry_lock_lha1, flags);
 }
 
-static struct of_device_id msm_smp2p_match_table[] __devinitdata = {
+static struct of_device_id msm_smp2p_match_table[] = {
 	{.compatible = "qcom,smp2pgpio", },
 	{},
 };
@@ -740,7 +764,7 @@ static struct platform_driver smp2p_gpio_driver = {
 	},
 };
 
-static int __devinit smp2p_init(void)
+static int smp2p_init(void)
 {
 	INIT_LIST_HEAD(&smp2p_entry_list);
 	return platform_driver_register(&smp2p_gpio_driver);

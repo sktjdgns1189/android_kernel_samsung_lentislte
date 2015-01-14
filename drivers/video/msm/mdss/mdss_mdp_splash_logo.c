@@ -56,8 +56,7 @@ static int mdss_mdp_splash_alloc_memory(struct msm_fb_data_type *mfd,
 
 	rc = ion_map_iommu(mdata->iclient, sinfo->ion_handle,
 			mdss_get_iommu_domain(MDSS_IOMMU_DOMAIN_UNSECURE),
-			0, SZ_4K, 0, (unsigned long *)&sinfo->iova,
-				(unsigned long *)&buf_size, 0, 0);
+			0, SZ_4K, 0, &sinfo->iova, &buf_size, 0, 0);
 	if (rc) {
 		pr_err("ion memory map failed\n");
 		goto imap_err;
@@ -190,12 +189,19 @@ void mdss_mdp_release_splash_pipe(struct msm_fb_data_type *mfd)
 int mdss_mdp_splash_cleanup(struct msm_fb_data_type *mfd,
 					bool use_borderfill)
 {
-	struct mdss_overlay_private *mdp5_data = mfd_to_mdp5_data(mfd);
-	struct mdss_mdp_ctl *ctl = mdp5_data->ctl;
+	struct mdss_overlay_private *mdp5_data;
+	struct mdss_mdp_ctl *ctl;
 	int rc = 0;
 
-	if (!mfd || !mdp5_data)
+	if (!mfd)
 		return -EINVAL;
+
+	mdp5_data = mfd_to_mdp5_data(mfd);
+
+	if (!mdp5_data)
+		return -EINVAL;
+
+	ctl = mdp5_data->ctl;
 
 	if (mfd->splash_info.iommu_dynamic_attached ||
 			!mfd->panel_info->cont_splash_enabled)
@@ -235,14 +241,17 @@ int mdss_mdp_splash_cleanup(struct msm_fb_data_type *mfd,
 		mdss_mdp_handoff_cleanup_pipes(mfd, MDSS_MDP_PIPE_TYPE_DMA);
 	}
 
-	mdss_mdp_ctl_splash_finish(ctl, mdp5_data->handoff);
+	if(ctl)
+		mdss_mdp_ctl_splash_finish(ctl, mdp5_data->handoff);
 
-	if (mdp5_data->splash_mem_addr) {
-		/* Give back the reserved memory to the system */
-		memblock_free(mdp5_data->splash_mem_addr,
-					mdp5_data->splash_mem_size);
-		free_bootmem_late(mdp5_data->splash_mem_addr,
-				 mdp5_data->splash_mem_size);
+	if (!sec_debug_is_enabled()) {
+		if (mdp5_data->splash_mem_addr) {
+			/* Give back the reserved memory to the system */
+			memblock_free(mdp5_data->splash_mem_addr,
+						mdp5_data->splash_mem_size);
+			free_bootmem_late(mdp5_data->splash_mem_addr,
+					 mdp5_data->splash_mem_size);
+		}
 	}
 
 	mdss_mdp_footswitch_ctrl_splash(0);
@@ -266,7 +275,7 @@ static struct mdss_mdp_pipe *mdss_mdp_splash_get_pipe(
 	uint32_t image_size = SPLASH_IMAGE_WIDTH * SPLASH_IMAGE_HEIGHT
 						* SPLASH_IMAGE_BPP;
 
-	ret = mdss_mdp_overlay_pipe_setup(mfd, req, &pipe);
+	ret = mdss_mdp_overlay_pipe_setup(mfd, req, &pipe, NULL);
 	if (ret)
 		return NULL;
 
@@ -279,14 +288,15 @@ static struct mdss_mdp_pipe *mdss_mdp_splash_get_pipe(
 	buf->p[0].addr = mfd->splash_info.iova;
 	buf->p[0].len = image_size;
 	buf->num_planes = 1;
+	pipe->has_buf = 1;
 	mdss_mdp_pipe_unmap(pipe);
 
 	return pipe;
 }
 
 static int mdss_mdp_splash_kickoff(struct msm_fb_data_type *mfd,
-				struct mdss_mdp_img_rect *src_rect,
-				struct mdss_mdp_img_rect *dest_rect)
+				struct mdss_rect *src_rect,
+				struct mdss_rect *dest_rect)
 {
 	struct mdss_mdp_pipe *pipe;
 	struct fb_info *fbi;
@@ -330,12 +340,19 @@ static int mdss_mdp_splash_kickoff(struct msm_fb_data_type *mfd,
 	 * use single pipe for
 	 * 1. split display disabled
 	 * 2. splash image is only on one side of panel
+	 * 3. source split is enabled and splash image is within line
+	 *    buffer boundry
 	 */
 	use_single_pipe =
 		!mfd->split_display ||
 		(mfd->split_display &&
 		((dest_rect->x + dest_rect->w) < mfd->split_fb_left ||
-		dest_rect->x > mfd->split_fb_left));
+		dest_rect->x > mfd->split_fb_left)) ||
+		(mdata->has_src_split &&
+		src_rect->w < min_t(u16, mixer->width,
+					mdss_mdp_line_buffer_width()) &&
+		dest_rect->w < min_t(u16, mixer->width,
+					mdss_mdp_line_buffer_width()));
 
 	req.src.width = src_rect->w;
 	if (use_single_pipe)
@@ -399,7 +416,7 @@ static int mdss_mdp_display_splash_image(struct msm_fb_data_type *mfd)
 	struct fb_info *fbi;
 	uint32_t image_len = SPLASH_IMAGE_WIDTH * SPLASH_IMAGE_HEIGHT
 						* SPLASH_IMAGE_BPP;
-	struct mdss_mdp_img_rect src_rect, dest_rect;
+	struct mdss_rect src_rect, dest_rect;
 	struct msm_fb_splash_info *sinfo;
 
 	if (!mfd || !mfd->fbi) {
@@ -488,13 +505,14 @@ done:
 static int mdss_mdp_splash_thread(void *data)
 {
 	struct msm_fb_data_type *mfd = data;
-	struct mdss_overlay_private *mdp5_data = mfd_to_mdp5_data(mfd);
+	struct mdss_overlay_private *mdp5_data;
 	int ret = -EINVAL;
 
 	if (!mfd) {
 		pr_err("invalid input parameter\n");
 		goto end;
 	}
+	mdp5_data = mfd_to_mdp5_data(mfd);
 
 	lock_fb_info(mfd->fbi);
 	ret = fb_blank(mfd->fbi, FB_BLANK_UNBLANK);

@@ -18,6 +18,9 @@
 
 #define CPR_REGULATOR_DRIVER_NAME	"qcom,cpr-regulator"
 
+#define CPR_PVS_EFUSE_BITS_MAX		5
+#define CPR_PVS_EFUSE_BINS_MAX		(1 << CPR_PVS_EFUSE_BITS_MAX)
+
 /**
  * enum cpr_fuse_corner_enum - CPR fuse corner enum values
  * %CPR_FUSE_CORNER_SVS:		Lowest voltage for APC
@@ -25,6 +28,8 @@
  * %CPR_FUSE_CORNER_TURBO:		Turbo mode voltage
  * %CPR_FUSE_CORNER_SUPER_TURBO:	Super Turbo mode voltage
  *
+ * These should be used in regulator_set_voltage() for CPR
+ * regulator as if they had units of uV.
  */
 enum cpr_fuse_corner_enum {
 	CPR_FUSE_CORNER_SVS = 1,
@@ -34,36 +39,18 @@ enum cpr_fuse_corner_enum {
 };
 
 /**
- * enum cpr_corner_enum - CPR corner enum values
- * %CPR_CORNER_1:		Lowest voltage for APC
- * %CPR_CORNER_2:		Second lowest voltage for APC
- * %CPR_CORNER_3:		Third lowest voltage for APC
- * %CPR_CORNER_4:		Forth lowest voltage for APC
- * %CPR_CORNER_5:		Fifth lowest voltage for APC
- * %CPR_CORNER_6:		Sixth lowest voltage for APC
- * %CPR_CORNER_7:		Seventh lowest voltage for APC
- * %CPR_CORNER_8:		Eighth lowest voltage for APC
- * %CPR_CORNER_9:		Ninth lowest voltage for APC
- * %CPR_CORNER_10:		Tenth lowest voltage for APC
- * %CPR_CORNER_11:		Eleventh lowest voltage for APC
- * %CPR_CORNER_12:		Twelfth lowest voltage for APC
- *
- * These should be used in regulator_set_voltage() for CPR
- * regulator as if they had units of uV.
+ * enum pvs_process_enum - PVS process enum values
+ * %APC_PVS_NO:		No PVS
+ * %APC_PVS_SLOW:	Slow PVS process
+ * %APC_PVS_NOM:	Nominal PVS process
+ * %APC_PVS_FAST:	Fast PVS process
  */
-enum cpr_corner_enum {
-	CPR_CORNER_1 = 1,
-	CPR_CORNER_2,
-	CPR_CORNER_3,
-	CPR_CORNER_4,
-	CPR_CORNER_5,
-	CPR_CORNER_6,
-	CPR_CORNER_7,
-	CPR_CORNER_8,
-	CPR_CORNER_9,
-	CPR_CORNER_10,
-	CPR_CORNER_11,
-	CPR_CORNER_12,
+enum apc_pvs_process_enum {
+	APC_PVS_NO,
+	APC_PVS_SLOW,
+	APC_PVS_NOM,
+	APC_PVS_FAST,
+	NUM_APC_PVS,
 };
 
 /**

@@ -1915,7 +1915,7 @@ static ssize_t fwu_sysfs_config_area_store(struct device *dev,
 	if (config_area < 0x00 || config_area > 0x03) {
 		dev_err(&rmi4_data->i2c_client->dev,
 			"%s: Incorrect value of config_area\n",
-			 __func__);
+			__func__);
 		return -EINVAL;
 	}
 

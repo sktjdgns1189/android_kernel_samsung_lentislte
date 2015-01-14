@@ -27,10 +27,7 @@
 #include <linux/input/kxtj9.h>
 #include <linux/input-polldev.h>
 #include <linux/regulator/consumer.h>
-
-#ifdef CONFIG_OF
-#include <linux/of_gpio.h>
-#endif /* CONFIG_OF */
+#include <linux/of.h>
 
 #define ACCEL_INPUT_DEV_NAME	"accelerometer"
 #define DEVICE_NAME		"kxtj9"
@@ -263,7 +260,12 @@ static int kxtj9_power_on(struct kxtj9_data *data, bool on)
 		if (rc) {
 			dev_err(&data->client->dev,
 				"Regulator vio disable failed rc=%d\n", rc);
-			regulator_enable(data->vdd);
+			rc = regulator_enable(data->vdd);
+			if (rc) {
+				dev_err(&data->client->dev,
+					"Regulator vdd enable failed rc=%d\n",
+					rc);
+			}
 		}
 		data->power_enabled = false;
 	} else if (on && !data->power_enabled) {
@@ -365,7 +367,8 @@ static int kxtj9_device_power_on(struct kxtj9_data *tj9)
 			dev_err(&tj9->client->dev, "power on failed");
 			goto err_exit;
 		}
-		msleep(20);
+		/* Use 80ms as vendor suggested. */
+		msleep(80);
 	}
 
 err_exit:
@@ -449,7 +452,7 @@ static void kxtj9_disable(struct kxtj9_data *tj9)
 }
 
 
-static void __devinit kxtj9_init_input_device(struct kxtj9_data *tj9,
+static void kxtj9_init_input_device(struct kxtj9_data *tj9,
 					      struct input_dev *input_dev)
 {
 	__set_bit(EV_ABS, input_dev->evbit);
@@ -462,7 +465,7 @@ static void __devinit kxtj9_init_input_device(struct kxtj9_data *tj9,
 	input_dev->dev.parent = &tj9->client->dev;
 }
 
-static int __devinit kxtj9_setup_input_device(struct kxtj9_data *tj9)
+static int kxtj9_setup_input_device(struct kxtj9_data *tj9)
 {
 	struct input_dev *input_dev;
 	int err;
@@ -657,7 +660,7 @@ static void kxtj9_polled_input_close(struct input_polled_dev *dev)
 	kxtj9_disable(tj9);
 }
 
-static int __devinit kxtj9_setup_polled_device(struct kxtj9_data *tj9)
+static int kxtj9_setup_polled_device(struct kxtj9_data *tj9)
 {
 	int err;
 	struct input_polled_dev *poll_dev;
@@ -690,7 +693,7 @@ static int __devinit kxtj9_setup_polled_device(struct kxtj9_data *tj9)
 	return 0;
 }
 
-static void __devexit kxtj9_teardown_polled_device(struct kxtj9_data *tj9)
+static void kxtj9_teardown_polled_device(struct kxtj9_data *tj9)
 {
 	input_unregister_polled_device(tj9->poll_dev);
 	input_free_polled_device(tj9->poll_dev);
@@ -709,7 +712,7 @@ static inline void kxtj9_teardown_polled_device(struct kxtj9_data *tj9)
 
 #endif
 
-static int __devinit kxtj9_verify(struct kxtj9_data *tj9)
+static int kxtj9_verify(struct kxtj9_data *tj9)
 {
 	int retval;
 
@@ -815,7 +818,7 @@ static int kxtj9_parse_dt(struct device *dev,
 }
 #endif /* !CONFIG_OF */
 
-static int __devinit kxtj9_probe(struct i2c_client *client,
+static int kxtj9_probe(struct i2c_client *client,
 				 const struct i2c_device_id *id)
 {
 	struct kxtj9_data *tj9;
@@ -903,7 +906,7 @@ static int __devinit kxtj9_probe(struct i2c_client *client,
 
 		err = kxtj9_setup_input_device(tj9);
 		if (err)
-			goto err_class_sysfs;
+			goto err_power_off;
 
 		err = request_threaded_irq(client->irq, NULL, kxtj9_isr,
 					   IRQF_TRIGGER_RISING | IRQF_ONESHOT,
@@ -924,8 +927,9 @@ static int __devinit kxtj9_probe(struct i2c_client *client,
 	} else {
 		err = kxtj9_setup_polled_device(tj9);
 		if (err)
-			goto err_class_sysfs;
+			goto err_power_off;
 	}
+
 
 	dev_dbg(&client->dev, "%s: kxtj9_probe OK.\n", __func__);
 	kxtj9_device_power_off(tj9);
@@ -935,8 +939,6 @@ err_free_irq:
 	free_irq(client->irq, tj9);
 err_destroy_input:
 	input_unregister_device(tj9->input_dev);
-err_class_sysfs:
-	sensors_classdev_unregister(&tj9->cdev);
 err_power_off:
 	kxtj9_device_power_off(tj9);
 err_power_deinit:
@@ -951,7 +953,7 @@ err_free_mem:
 	return err;
 }
 
-static int __devexit kxtj9_remove(struct i2c_client *client)
+static int kxtj9_remove(struct i2c_client *client)
 {
 	struct kxtj9_data *tj9 = i2c_get_clientdata(client);
 
@@ -1030,7 +1032,7 @@ static struct i2c_driver kxtj9_driver = {
 		.pm	= &kxtj9_pm_ops,
 	},
 	.probe		= kxtj9_probe,
-	.remove		= __devexit_p(kxtj9_remove),
+	.remove		= kxtj9_remove,
 	.id_table	= kxtj9_id,
 };
 

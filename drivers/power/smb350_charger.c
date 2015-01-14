@@ -29,6 +29,7 @@
 #include <linux/of_device.h>
 #include <linux/of_gpio.h>
 #include <linux/printk.h>
+#include <linux/wakelock.h>
 
 /* Register definitions */
 #define CHG_CURRENT_REG			0x00	/* Non-Volatile + mirror */
@@ -619,7 +620,7 @@ static int smb350_set_volatile_params(struct smb350_device *dev)
 	return 0;
 }
 
-static int __devinit smb350_register_psy(struct smb350_device *dev)
+static int smb350_register_psy(struct smb350_device *dev)
 {
 	int ret;
 
@@ -642,7 +643,7 @@ static int __devinit smb350_register_psy(struct smb350_device *dev)
 	return 0;
 }
 
-static int __devinit smb350_probe(struct i2c_client *client,
+static int smb350_probe(struct i2c_client *client,
 				  const struct i2c_device_id *id)
 {
 	int ret = 0;
@@ -805,7 +806,7 @@ err_stat_gpio:
 	return ret;
 }
 
-static int __devexit smb350_remove(struct i2c_client *client)
+static int smb350_remove(struct i2c_client *client)
 {
 	struct smb350_device *dev = i2c_get_clientdata(client);
 
@@ -842,7 +843,7 @@ static struct i2c_driver smb350_driver = {
 			.of_match_table = of_match_ptr(smb350_match),
 	},
 	.probe		= smb350_probe,
-	.remove		= __devexit_p(smb350_remove),
+	.remove		= smb350_remove,
 	.id_table	= smb350_id,
 };
 

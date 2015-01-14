@@ -895,10 +895,9 @@ int32_t qpnp_iadc_calibrate_for_trim(struct qpnp_iadc_chip *iadc,
 							bool batfet_closed)
 {
 	uint8_t rslt_lsb, rslt_msb;
-	int32_t rc = 0, version = 0;
+	int32_t rc = 0;
 	uint16_t raw_data;
 	uint32_t mode_sel = 0;
-	bool iadc_offset_ch_batfet_check;
 
 	if (qpnp_iadc_is_valid(iadc) < 0)
 		return -EPROBE_DEFER;
@@ -920,22 +919,13 @@ int32_t qpnp_iadc_calibrate_for_trim(struct qpnp_iadc_chip *iadc,
 	iadc->adc->calib.gain_raw = raw_data;
 
 	/*
-	 * there is a features on PM8941 in the BMS where if the batfet is
-	 * opened the BMS reads from INTERNAL_RSENSE (channel 0) actually go to
+	 * there is a features in the BMS where if the batfet is opened
+	 * the BMS reads from INTERNAL_RSENSE (channel 0) actually go to
 	 * OFFSET_CALIBRATION_CSP_CSN (channel 5). Hence if batfet is opened
 	 * we have to calibrate based on OFFSET_CALIBRATION_CSP_CSN even for
 	 * internal rsense.
 	 */
-	version = qpnp_adc_get_revid_version(iadc->dev);
-	if ((version == QPNP_REV_ID_8941_3_1) ||
-			(version == QPNP_REV_ID_8941_3_0) ||
-			(version == QPNP_REV_ID_8941_2_0))
-		iadc_offset_ch_batfet_check = true;
-	else
-		iadc_offset_ch_batfet_check = false;
-
-	if ((iadc_offset_ch_batfet_check && !batfet_closed) ||
-						(iadc->external_rsense)) {
+	if (!batfet_closed || iadc->external_rsense) {
 		/* external offset calculation */
 		rc = qpnp_iadc_configure(iadc, OFFSET_CALIBRATION_CSP_CSN,
 						&raw_data, mode_sel);
@@ -1399,7 +1389,7 @@ hwmon_err_sens:
 	return rc;
 }
 
-static int __devinit qpnp_iadc_probe(struct spmi_device *spmi)
+static int qpnp_iadc_probe(struct spmi_device *spmi)
 {
 	struct qpnp_iadc_chip *iadc;
 	struct qpnp_adc_drv *adc_qpnp;
@@ -1539,7 +1529,7 @@ fail:
 	return rc;
 }
 
-static int __devexit qpnp_iadc_remove(struct spmi_device *spmi)
+static int qpnp_iadc_remove(struct spmi_device *spmi)
 {
 	struct qpnp_iadc_chip *iadc = dev_get_drvdata(&spmi->dev);
 	struct device_node *node = spmi->dev.of_node;

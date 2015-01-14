@@ -402,8 +402,6 @@ static int smsc_hub_enable(struct hsic_hub *hub)
 
 	pm_runtime_allow(hub->dev);
 
-	return 0;
-
 reset:
 	gpio_direction_output(pdata->hub_reset, 0);
 disable_xo:
@@ -527,14 +525,14 @@ struct smsc_hub_platform_data *msm_hub_dt_to_pdata(
 	return pdata;
 }
 
-static int __devinit smsc_hub_probe(struct platform_device *pdev)
+static int smsc_hub_probe(struct platform_device *pdev)
 {
 	int ret = 0;
 	struct smsc_hub_platform_data *pdata;
 	struct device_node *node = pdev->dev.of_node;
 	struct i2c_adapter *i2c_adap;
 	struct i2c_board_info i2c_info;
-	struct of_dev_auxdata *hsic_host_auxdata;
+	struct of_dev_auxdata *hsic_host_auxdata = NULL;
 
 	if (pdev->dev.of_node) {
 		dev_dbg(&pdev->dev, "device tree enabled\n");

@@ -26,7 +26,7 @@
 #include <linux/of_device.h>
 #include <linux/of_gpio.h>
 #include <linux/gpio.h>
-#include <mach/camera2.h>
+#include <soc/qcom/camera2.h>
 #include <media/msm_cam_sensor.h>
 #include <media/v4l2-subdev.h>
 #include "msm_camera_i2c.h"
@@ -63,6 +63,8 @@ struct msm_sensor_ctrl_t {
 	enum cci_i2c_master_t cci_i2c_master;
 
 	struct msm_camera_i2c_client *sensor_i2c_client;
+	struct device *dev;
+
 	struct v4l2_subdev_info *sensor_v4l2_subdev_info;
 	uint8_t sensor_v4l2_subdev_info_size;
 	struct v4l2_subdev_ops *sensor_v4l2_subdev_ops;
@@ -86,10 +88,12 @@ int msm_sensor_check_id(struct msm_sensor_ctrl_t *s_ctrl);
 int msm_sensor_match_id(struct msm_sensor_ctrl_t *s_ctrl);
 
 int32_t msm_sensor_platform_probe(struct platform_device *pdev,
-	void *data);
-
+	const void *data);
 int msm_sensor_update_cfg(struct msm_sensor_ctrl_t *s_ctrl);
-
+#ifdef CHECK_MERGE
+int msm_sensor_platform_probe(struct platform_device *pdev,
+	void *data);
+#endif
 int msm_sensor_i2c_probe(struct i2c_client *client,
 	const struct i2c_device_id *id, struct msm_sensor_ctrl_t *s_ctrl);
 

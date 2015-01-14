@@ -12,8 +12,8 @@
 #ifndef __QDSP6VOICE_H__
 #define __QDSP6VOICE_H__
 
-#include <mach/qdsp6v2/apr.h>
-#include <mach/qdsp6v2/rtac.h>
+#include <linux/qdsp6v2/apr.h>
+#include <linux/qdsp6v2/rtac.h>
 #include <linux/msm_ion.h>
 #include <sound/voice_params.h>
 
@@ -70,6 +70,13 @@ struct voice_rec_route_state {
 	u16 ul_flag;
 	u16 dl_flag;
 };
+#ifdef CONFIG_SEC_SOLUTION
+struct voice_dha_data {
+	short dha_mode;
+	short dha_select;
+	short dha_params[12];
+};
+#endif /* CONFIG_SEC_SOLUTION */
 
 enum {
 	VOC_INIT = 0,
@@ -99,6 +106,9 @@ struct mem_map_table {
 	struct ion_handle	*handle;
 	struct ion_client	*client;
 };
+#ifdef CONFIG_SEC_SOLUTION
+#define VSS_ICOMMON_CMD_DHA_SET 0x0001128A
+#endif /*CONFIG_SEC_SOLUTION*/
 
 /* Common */
 #define VSS_ICOMMON_CMD_SET_UI_PROPERTY 0x00011103
@@ -757,6 +767,52 @@ struct vss_icommon_cmd_set_ui_property_enable_t {
 	/* Reserved, set to 0. */
 };
 
+#ifdef CONFIG_SEC_SOLUTION
+
+#define VOICE_MODULE_DHA        0x10001020
+#define VOICE_PARAM_DHA_DYNAMIC  0x10001022
+
+#define VOICEPROC_MODULE_VENC          0x00010F07
+#define VOICE_PARAM_LOOPBACK_ENABLE  0x00010E18
+
+struct vss_icommon_cmd_set_loopback_enable_t {
+	uint32_t module_id;
+	/* Unique ID of the module. */
+	uint32_t param_id;
+	/* Unique ID of the parameter. */
+	uint16_t param_size;
+	/* Size of the parameter in bytes: MOD_ENABLE_PARAM_LEN */
+	uint16_t reserved;
+	/* Reserved; set to 0. */
+	uint16_t loopback_enable;
+	uint16_t reserved_field;
+	/* Reserved, set to 0. */
+};
+
+struct oem_dha_parm_send_t {
+	uint32_t module_id;
+	/* Unique ID of the module. */
+	uint32_t param_id;
+	/* Unique ID of the parameter. */
+	uint16_t param_size;
+	/* Size of the parameter in bytes: MOD_ENABLE_PARAM_LEN */
+	uint16_t reserved;
+	/* Reserved; set to 0. */
+	uint16_t eq_mode;
+	uint16_t select;
+	int16_t param[12];
+} __packed;
+
+struct oem_dha_parm_send_cmd {
+	struct apr_hdr hdr;
+	uint32_t mem_handle;
+	uint64_t mem_address;
+	uint32_t mem_size;
+	struct oem_dha_parm_send_t dha_send;
+} __packed;
+#endif /* CONFIG_SEC_SOLUTION*/
+
+
 /*
  * Event sent by the stream to the client that enables Rx DTMF
  * detection whenever DTMF is detected in the Rx path.
@@ -766,7 +822,7 @@ struct vss_icommon_cmd_set_ui_property_enable_t {
  * structure.
  */
 
-#define VSS_ISTREAM_EVT_RX_DTMF_DETECTED (0x0001101A)
+#define VSS_ISTREAM_EVT_RX_DTMF_DETECTED 0x0001101A
 
 struct vss_istream_cmd_set_rx_dtmf_detection {
 	/*
@@ -780,7 +836,7 @@ struct vss_istream_cmd_set_rx_dtmf_detection {
 	uint32_t enable;
 };
 
-#define VSS_ISTREAM_CMD_SET_RX_DTMF_DETECTION (0x00011027)
+#define VSS_ISTREAM_CMD_SET_RX_DTMF_DETECTION 0x00011027
 
 struct vss_istream_evt_rx_dtmf_detected {
 	uint16_t low_freq;
@@ -886,6 +942,15 @@ struct cvs_dec_buffer_ready_cmd {
 struct cvs_enc_buffer_consumed_cmd {
 	struct apr_hdr hdr;
 } __packed;
+#ifdef CONFIG_SEC_SOLUTION
+struct cvs_set_loopback_enable_cmd {
+	struct apr_hdr hdr;
+	uint32_t mem_handle;
+	uint64_t mem_address;
+	uint32_t mem_size;
+	struct vss_icommon_cmd_set_loopback_enable_t vss_set_loopback;
+} __packed;
+#endif
 
 struct vss_istream_cmd_set_oob_packet_exchange_config_t {
 	struct apr_hdr hdr;
@@ -1151,6 +1216,111 @@ struct vss_ivocproc_cmd_register_volume_cal_data_t {
 	 */
 } __packed;
 
+/* Starts a vocoder PCM session */
+#define VSS_IVPCM_CMD_START_V2	0x00011339
+
+/* Default tap point location on the TX path. */
+#define VSS_IVPCM_TAP_POINT_TX_DEFAULT	0x00011289
+
+/* Default tap point location on the RX path. */
+#define VSS_IVPCM_TAP_POINT_RX_DEFAULT	0x0001128A
+
+/* Indicates tap point direction is output. */
+#define VSS_IVPCM_TAP_POINT_DIR_OUT	0
+
+/* Indicates tap point direction is input. */
+#define VSS_IVPCM_TAP_POINT_DIR_IN	1
+
+/* Indicates tap point direction is output and input. */
+#define VSS_IVPCM_TAP_POINT_DIR_OUT_IN	2
+
+
+#define VSS_IVPCM_SAMPLING_RATE_AUTO	0
+
+/* Indicates 8 KHz vocoder PCM sampling rate. */
+#define VSS_IVPCM_SAMPLING_RATE_8K	8000
+
+/* Indicates 16 KHz vocoder PCM sampling rate. */
+#define VSS_IVPCM_SAMPLING_RATE_16K	16000
+
+/* RX and TX */
+#define MAX_TAP_POINTS_SUPPORTED	1
+
+struct vss_ivpcm_tap_point {
+	uint32_t tap_point;
+	uint16_t direction;
+	uint16_t sampling_rate;
+	uint16_t duration;
+} __packed;
+
+
+struct vss_ivpcm_cmd_start_v2_t {
+	uint32_t mem_handle;
+	uint32_t num_tap_points;
+	struct vss_ivpcm_tap_point tap_points[MAX_TAP_POINTS_SUPPORTED];
+} __packed;
+
+#define VSS_IVPCM_EVT_PUSH_BUFFER_V2	0x0001133A
+
+/* Push buffer event mask indicating output buffer is filled. */
+#define VSS_IVPCM_PUSH_BUFFER_MASK_OUTPUT_BUFFER 1
+
+/* Push buffer event mask indicating input buffer is consumed. */
+#define VSS_IVPCM_PUSH_BUFFER_MASK_INPUT_BUFFER 2
+
+
+struct vss_ivpcm_evt_push_buffer_v2_t {
+	uint32_t tap_point;
+	uint32_t push_buf_mask;
+	uint64_t out_buf_mem_address;
+	uint16_t out_buf_mem_size;
+	uint64_t in_buf_mem_address;
+	uint16_t in_buf_mem_size;
+	uint16_t sampling_rate;
+	uint16_t num_in_channels;
+} __packed;
+
+#define VSS_IVPCM_EVT_NOTIFY_V2 0x0001133B
+
+/* Notify event mask indicates output buffer is filled. */
+#define VSS_IVPCM_NOTIFY_MASK_OUTPUT_BUFFER 1
+
+/* Notify event mask indicates input buffer is consumed. */
+#define VSS_IVPCM_NOTIFY_MASK_INPUT_BUFFER 2
+
+/* Notify event mask indicates a timetick */
+#define VSS_IVPCM_NOTIFY_MASK_TIMETICK 4
+
+/* Notify event mask indicates an error occured in output buffer operation */
+#define VSS_IVPCM_NOTIFY_MASK_OUTPUT_ERROR 8
+
+/* Notify event mask indicates an error occured in input buffer operation */
+#define VSS_IVPCM_NOTIFY_MASK_INPUT_ERROR 16
+
+
+struct vss_ivpcm_evt_notify_v2_t {
+	uint32_t tap_point;
+	uint32_t notify_mask;
+	uint64_t out_buff_addr;
+	uint64_t in_buff_addr;
+	uint16_t filled_out_size;
+	uint16_t request_buf_size;
+	uint16_t sampling_rate;
+	uint16_t num_out_channels;
+} __packed;
+
+struct cvp_start_cmd {
+	struct apr_hdr hdr;
+	struct vss_ivpcm_cmd_start_v2_t vpcm_start_cmd;
+} __packed;
+
+struct cvp_push_buf_cmd {
+	struct apr_hdr hdr;
+	struct vss_ivpcm_evt_push_buffer_v2_t vpcm_evt_push_buffer;
+} __packed;
+
+#define VSS_IVPCM_CMD_STOP 0x0001100B
+
 struct cvp_create_full_ctl_session_cmd {
 	struct apr_hdr hdr;
 	struct vss_ivocproc_cmd_create_full_control_session_v2_t cvp_session;
@@ -1226,6 +1396,10 @@ typedef void (*dtmf_rx_det_cb_fn)(uint8_t *pkt,
 				  char *session,
 				  void *private_data);
 
+typedef void (*hostpcm_cb_fn)(uint8_t *data,
+			   char *session,
+			   void *private_data);
+
 struct mvs_driver_info {
 	uint32_t media_type;
 	uint32_t rate;
@@ -1240,6 +1414,11 @@ struct mvs_driver_info {
 
 struct dtmf_driver_info {
 	dtmf_rx_det_cb_fn dtmf_rx_ul_cb;
+	void *private_data;
+};
+
+struct hostpcm_driver_info {
+	hostpcm_cb_fn hostpcm_evt_cb;
 	void *private_data;
 };
 
@@ -1311,6 +1490,11 @@ struct voice_data {
 	struct incall_music_info music_info;
 
 	struct voice_rec_route_state rec_route_state;
+
+#ifdef CONFIG_SEC_SOLUTION
+	struct voice_dha_data sec_dha_data;
+#endif /* CONFIG_SEC_DHA_SOL_MAL */
+
 };
 
 struct cal_mem {
@@ -1319,7 +1503,7 @@ struct cal_mem {
 	void *buf;
 };
 
-#define MAX_VOC_SESSIONS 6
+#define MAX_VOC_SESSIONS 5
 
 struct common_data {
 	/* these default values are for all devices */
@@ -1344,6 +1528,8 @@ struct common_data {
 	struct mem_map_table rtac_mem_map_table;
 	uint32_t rtac_mem_handle;
 
+	uint32_t voice_host_pcm_mem_handle;
+
 	struct cal_mem cvp_cal;
 	struct cal_mem cvs_cal;
 
@@ -1352,6 +1538,8 @@ struct common_data {
 	struct mvs_driver_info mvs_info;
 
 	struct dtmf_driver_info dtmf_info;
+
+	struct hostpcm_driver_info hostpcm_info;
 
 	struct voice_data voice[MAX_VOC_SESSIONS];
 
@@ -1393,27 +1581,27 @@ enum {
 #define VOC_PATH_VOLTE_PASSIVE 2
 #define VOC_PATH_VOICE2_PASSIVE 3
 #define VOC_PATH_QCHAT_PASSIVE 4
-#define VOC_PATH_VOWLAN_PASSIVE 5
 
 #define MAX_SESSION_NAME_LEN 32
-#define VOICE_SESSION_NAME   "Voice session"
-#define VOIP_SESSION_NAME    "VoIP session"
-#define VOLTE_SESSION_NAME   "VoLTE session"
-#define VOICE2_SESSION_NAME  "Voice2 session"
-#define QCHAT_SESSION_NAME   "QCHAT session"
-#define VOWLAN_SESSION_NAME  "VoWLAN session"
+#define VOICE_SESSION_NAME  "Voice session"
+#define VOIP_SESSION_NAME   "VoIP session"
+#define VOLTE_SESSION_NAME  "VoLTE session"
+#define VOICE2_SESSION_NAME "Voice2 session"
+#define QCHAT_SESSION_NAME  "QCHAT session"
 
 #define VOICE2_SESSION_VSID_STR "10DC1000"
 #define QCHAT_SESSION_VSID_STR "10803000"
-#define VOWLAN_SESSION_VSID_STR "10002000"
 #define VOICE_SESSION_VSID  0x10C01000
 #define VOICE2_SESSION_VSID 0x10DC1000
 #define VOLTE_SESSION_VSID  0x10C02000
 #define VOIP_SESSION_VSID   0x10004000
 #define QCHAT_SESSION_VSID  0x10803000
-#define VOWLAN_SESSION_VSID 0x10002000
 #define ALL_SESSION_VSID    0xFFFFFFFF
 #define VSID_MAX            ALL_SESSION_VSID
+#ifdef CONFIG_SEC_SOLUTION
+int voice_sec_set_dha_data(uint32_t session_id, short mode,
+					short select, short *parameters);
+#endif /* CONFIG_SEC_DHA_SOL_MAL*/
 
 #define APP_ID_MASK         0x3F000
 #define APP_ID_SHIFT		12
@@ -1444,11 +1632,9 @@ int voc_set_rx_vol_step(uint32_t session_id, uint32_t dir, uint32_t vol_step,
 			uint32_t ramp_duration);
 int voc_set_tx_mute(uint32_t session_id, uint32_t dir, uint32_t mute,
 		    uint32_t ramp_duration);
-int voc_set_rx_device_mute(uint32_t session_id, uint32_t mute,
-			   uint32_t ramp_duration);
+int voc_set_device_mute(uint32_t session_id, uint32_t dir, uint32_t mute,
+			uint32_t ramp_duration);
 int voc_get_rx_device_mute(uint32_t session_id);
-int voc_disable_cvp(uint32_t session_id);
-int voc_enable_cvp(uint32_t session_id);
 int voc_set_route_flag(uint32_t session_id, uint8_t path_dir, uint8_t set);
 uint8_t voc_get_route_flag(uint32_t session_id, uint8_t path_dir);
 int voc_enable_dtmf_rx_detection(uint32_t session_id, uint32_t enable);
@@ -1458,6 +1644,19 @@ int voc_alloc_voip_shared_memory(void);
 int is_voc_initialized(void);
 int voc_register_vocproc_vol_table(void);
 int voc_deregister_vocproc_vol_table(void);
+int voc_send_cvp_map_vocpcm_memory(uint32_t session_id,
+				   struct mem_map_table *tp_mem_table,
+				   phys_addr_t paddr, uint32_t bufsize);
+int voc_send_cvp_unmap_vocpcm_memory(uint32_t session_id);
+int voc_send_cvp_start_vocpcm(uint32_t session_id,
+			      struct vss_ivpcm_tap_point *vpcm_tp,
+			      uint32_t no_of_tp);
+int voc_send_cvp_vocpcm_push_buf_evt(uint32_t session_id,
+			struct vss_ivpcm_evt_push_buffer_v2_t *push_buff_evt);
+int voc_send_cvp_stop_vocpcm(uint32_t session_id);
+void voc_register_hpcm_evt_cb(hostpcm_cb_fn hostpcm_cb,
+			      void *private_data);
+void voc_deregister_hpcm_evt_cb(void);
 
 int voc_unmap_cal_blocks(void);
 int voc_map_rtac_block(struct rtac_cal_block_data *cal_block);
@@ -1469,6 +1668,12 @@ int voc_start_playback(uint32_t set, uint16_t port_id);
 int voc_start_record(uint32_t port_id, uint32_t set, uint32_t session_id);
 int voice_get_idx_for_session(u32 session_id);
 int voc_set_ext_ec_ref(uint16_t port_id, bool state);
+#ifdef CONFIG_SEC_SOLUTION
+int voc_get_loopback_enable(void);
+void voc_set_loopback_enable(int loopback_enable);
+#endif
 int voc_update_amr_vocoder_rate(uint32_t session_id);
+int voc_disable_device(uint32_t session_id);
+int voc_enable_device(uint32_t session_id);
 
 #endif

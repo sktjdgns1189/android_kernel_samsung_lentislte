@@ -49,6 +49,8 @@ struct ocmem_zone *get_zone(unsigned id)
 
 static struct ocmem_plat_data *ocmem_pdata;
 
+static bool probe_done;
+
 #define CLIENT_NAME_MAX 10
 
 /* Must be in sync with enum ocmem_client */
@@ -116,6 +118,11 @@ static inline int get_id(const char *name)
 			return i;
 	}
 	return -EINVAL;
+}
+
+bool is_probe_done(void)
+{
+	return probe_done;
 }
 
 int check_id(int id)
@@ -233,7 +240,7 @@ static struct ocmem_plat_data *parse_static_config(struct platform_device *pdev)
 	return pdata;
 }
 
-int __devinit of_ocmem_parse_regions(struct device *dev,
+int of_ocmem_parse_regions(struct device *dev,
 			struct ocmem_partition **part)
 {
 	const char *name;
@@ -381,7 +388,7 @@ void ocmem_disable_iface_clock(void)
 	pr_debug("ocmem: Disabled iface clock\n");
 }
 
-static struct ocmem_plat_data * __devinit parse_dt_config
+static struct ocmem_plat_data * parse_dt_config
 						(struct platform_device *pdev)
 {
 	struct device   *dev = &pdev->dev;
@@ -762,7 +769,7 @@ static int ocmem_init_gfx_mpu(struct platform_device *pdev)
 }
 #endif /* CONFIG_MSM_OCMEM_NONSECURE */
 
-static int __devinit ocmem_debugfs_init(struct platform_device *pdev)
+static int ocmem_debugfs_init(struct platform_device *pdev)
 {
 	struct dentry *debug_dir = NULL;
 	struct ocmem_plat_data *pdata = platform_get_drvdata(pdev);
@@ -777,35 +784,17 @@ static int __devinit ocmem_debugfs_init(struct platform_device *pdev)
 	return 0;
 }
 
-static void __devexit ocmem_debugfs_exit(struct platform_device *pdev)
+static void ocmem_debugfs_exit(struct platform_device *pdev)
 {
 	struct ocmem_plat_data *pdata = platform_get_drvdata(pdev);
 	debugfs_remove_recursive(pdata->debug_node);
 }
 
-static int __devinit msm_ocmem_probe(struct platform_device *pdev)
+static int msm_ocmem_probe(struct platform_device *pdev)
 {
 	struct device   *dev = &pdev->dev;
 	struct clk *ocmem_core_clk = NULL;
 	struct clk *ocmem_iface_clk = NULL;
-	int rc;
-
-	if (!pdev->dev.of_node) {
-		dev_info(dev, "Missing Configuration in Device Tree\n");
-		ocmem_pdata = parse_static_config(pdev);
-	} else {
-		ocmem_pdata = parse_dt_config(pdev);
-	}
-
-	/* Check if we have some configuration data to start */
-	if (!ocmem_pdata)
-		return -ENODEV;
-
-	/* Sanity Checks */
-	BUG_ON(!IS_ALIGNED(ocmem_pdata->size, PAGE_SIZE));
-	BUG_ON(!IS_ALIGNED(ocmem_pdata->base, PAGE_SIZE));
-
-	dev_info(dev, "OCMEM Virtual addr %p\n", ocmem_pdata->vbase);
 
 	ocmem_core_clk = devm_clk_get(dev, "core_clk");
 
@@ -825,27 +814,31 @@ static int __devinit msm_ocmem_probe(struct platform_device *pdev)
 	if (IS_ERR_OR_NULL(ocmem_iface_clk))
 		ocmem_iface_clk = NULL;
 
+	if (!pdev->dev.of_node) {
+		dev_info(dev, "Missing Configuration in Device Tree\n");
+		ocmem_pdata = parse_static_config(pdev);
+	} else {
+		ocmem_pdata = parse_dt_config(pdev);
+	}
+	/* Check if we have some configuration data to start */
+	if (!ocmem_pdata)
+		return -ENODEV;
 
 	ocmem_pdata->core_clk = ocmem_core_clk;
 	ocmem_pdata->iface_clk = ocmem_iface_clk;
 
+	/* Sanity Checks */
+	BUG_ON(!IS_ALIGNED(ocmem_pdata->size, PAGE_SIZE));
+	BUG_ON(!IS_ALIGNED(ocmem_pdata->base, PAGE_SIZE));
+
+	dev_info(dev, "OCMEM Virtual addr %p\n", ocmem_pdata->vbase);
+
 	platform_set_drvdata(pdev, ocmem_pdata);
-
-	rc = ocmem_enable_core_clock();
-	if (rc < 0)
-		goto core_clk_fail;
-
-	rc = ocmem_enable_iface_clock();
-	if (rc < 0)
-		goto iface_clk_fail;
 
 	/* Parameter to be updated based on TZ */
 	/* Allow the OCMEM CSR to be programmed */
-	if (ocmem_restore_sec_program(OCMEM_SECURE_DEV_ID))
+	if (ocmem_enable_sec_program(OCMEM_SECURE_DEV_ID))
 		return -EBUSY;
-
-	ocmem_disable_iface_clock();
-	ocmem_disable_core_clock();
 
 	if (ocmem_debugfs_init(pdev))
 		dev_err(dev, "ocmem: No debugfs node available\n");
@@ -870,17 +863,12 @@ static int __devinit msm_ocmem_probe(struct platform_device *pdev)
 		return -EBUSY;
 	}
 
+	probe_done = true;
 	dev_dbg(dev, "initialized successfully\n");
 	return 0;
-
-iface_clk_fail:
-	ocmem_disable_core_clock();
-core_clk_fail:
-	pr_err("ocmem: Failed to turn on core clk\n");
-	return rc;
 }
 
-static int __devexit msm_ocmem_remove(struct platform_device *pdev)
+static int msm_ocmem_remove(struct platform_device *pdev)
 {
 	ocmem_debugfs_exit(pdev);
 	return 0;
@@ -894,7 +882,7 @@ static struct of_device_id msm_ocmem_dt_match[] = {
 
 static struct platform_driver msm_ocmem_driver = {
 	.probe = msm_ocmem_probe,
-	.remove = __devexit_p(msm_ocmem_remove),
+	.remove = msm_ocmem_remove,
 	.driver = {
 		.name = "msm_ocmem",
 		.owner = THIS_MODULE,

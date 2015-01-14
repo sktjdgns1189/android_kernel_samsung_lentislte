@@ -216,7 +216,7 @@ static const struct bmp18x_bus_ops bmp18x_i2c_bus_ops = {
 	.write_byte	= bmp18x_i2c_write_byte
 };
 
-static int __devinit bmp18x_i2c_probe(struct i2c_client *client,
+static int bmp18x_i2c_probe(struct i2c_client *client,
 				      const struct i2c_device_id *id)
 {
 	struct bmp18x_data_bus data_bus = {
@@ -308,7 +308,7 @@ static struct i2c_driver bmp18x_i2c_driver = {
 	.id_table	= bmp18x_id,
 	.probe		= bmp18x_i2c_probe,
 	.shutdown	= bmp18x_i2c_shutdown,
-	.remove		= __devexit_p(bmp18x_i2c_remove)
+	.remove		= bmp18x_i2c_remove
 };
 
 static int __init bmp18x_i2c_init(void)

@@ -138,7 +138,7 @@ struct msm_cpp_tasklet_queue_cmd {
 
 struct msm_cpp_buffer_map_info_t {
 	unsigned long len;
-	unsigned long phy_addr;
+	dma_addr_t phy_addr;
 	struct ion_handle *ion_handle;
 	struct msm_cpp_buffer_info_t buff_info;
 };
@@ -157,8 +157,8 @@ struct msm_cpp_buff_queue_info_t {
 };
 
 struct msm_cpp_work_t {
-	struct work_struct my_work;
-	struct cpp_device *cpp_dev;
+  struct work_struct my_work;
+  struct cpp_device *cpp_dev;
 };
 
 struct cpp_device {
@@ -182,12 +182,16 @@ struct cpp_device {
 	char *fw_name_bin;
 	struct workqueue_struct *timer_wq;
 	struct msm_cpp_work_t *work;
+	uint32_t fw_version;
+	uint8_t stream_cnt;
+	uint8_t timeout_trial_cnt;
 
 	int domain_num;
 	struct iommu_domain *domain;
 	struct device *iommu_ctx;
 	struct ion_client *client;
 	struct kref refcount;
+	uint32_t num_clk;
 
 	/* Reusing proven tasklet from msm isp */
 	atomic_t irq_cnt;

@@ -59,9 +59,7 @@
 
 #include <net/x25.h>
 #include <net/compat.h>
-#ifdef KW_TAINT_ANALYSIS
-   extern void * get_tainted_stuff();
-#endif
+
 int sysctl_x25_restart_request_timeout = X25_DEFAULT_T20;
 int sysctl_x25_call_request_timeout    = X25_DEFAULT_T21;
 int sysctl_x25_reset_request_timeout   = X25_DEFAULT_T22;
@@ -210,11 +208,10 @@ static void x25_remove_socket(struct sock *sk)
 static void x25_kill_by_device(struct net_device *dev)
 {
 	struct sock *s;
-	struct hlist_node *node;
 
 	write_lock_bh(&x25_list_lock);
 
-	sk_for_each(s, node, &x25_list)
+	sk_for_each(s, &x25_list)
 		if (x25_sk(s)->neighbour && x25_sk(s)->neighbour->dev == dev)
 			x25_disconnect(s, ENETUNREACH, 0, 0);
 
@@ -282,12 +279,11 @@ static struct sock *x25_find_listener(struct x25_address *addr,
 {
 	struct sock *s;
 	struct sock *next_best;
-	struct hlist_node *node;
 
 	read_lock_bh(&x25_list_lock);
 	next_best = NULL;
 
-	sk_for_each(s, node, &x25_list)
+	sk_for_each(s, &x25_list)
 		if ((!strcmp(addr->x25_addr,
 			x25_sk(s)->source_addr.x25_addr) ||
 				!strcmp(addr->x25_addr,
@@ -325,9 +321,8 @@ found:
 static struct sock *__x25_find_socket(unsigned int lci, struct x25_neigh *nb)
 {
 	struct sock *s;
-	struct hlist_node *node;
 
-	sk_for_each(s, node, &x25_list)
+	sk_for_each(s, &x25_list)
 		if (x25_sk(s)->lci == lci && x25_sk(s)->neighbour == nb) {
 			sock_hold(s);
 			goto found;
@@ -1067,7 +1062,7 @@ int x25_rx_call_request(struct sk_buff *skb, struct x25_neigh *nb,
 	x25_start_heartbeat(make);
 
 	if (!sock_flag(sk, SOCK_DEAD))
-		sk->sk_data_ready(sk, skb->len);
+		sk->sk_data_ready(sk);
 	rc = 1;
 	sock_put(sk);
 out:
@@ -1627,7 +1622,7 @@ static const struct net_proto_family x25_family_ops = {
 
 #ifdef CONFIG_COMPAT
 static int compat_x25_subscr_ioctl(unsigned int cmd,
-		struct compat_x25_subscrip_struct __user *x25_subscr32_actual)
+		struct compat_x25_subscrip_struct __user *x25_subscr32)
 {
 	struct compat_x25_subscrip_struct x25_subscr;
 	struct x25_neigh *nb;
@@ -1635,11 +1630,6 @@ static int compat_x25_subscr_ioctl(unsigned int cmd,
 	int rc = -EINVAL;
 
 	rc = -EFAULT;
-	#ifdef KW_TAINT_ANALYSIS
-	struct compat_x25_subscrip_struct __user *x25_subscr32 = (struct compat_x25_subscrip_struct __user *)get_tainted_stuff();
-	#else
-	struct compat_x25_subscrip_struct __user *x25_subscr32 = x25_subscr32_actual;
-	#endif
 	if (copy_from_user(&x25_subscr, x25_subscr32, sizeof(*x25_subscr32)))
 		goto out;
 
@@ -1682,11 +1672,7 @@ out_dev_put:
 static int compat_x25_ioctl(struct socket *sock, unsigned int cmd,
 				unsigned long arg)
 {
-	#ifdef KW_TAINT_ANALYSIS
-	void __user *argp = (void __user *)get_tainted_stuff();
-	#else
 	void __user *argp = compat_ptr(arg);
-	#endif	
 	struct sock *sk = sock->sk;
 
 	int rc = -ENOIOCTLCMD;
@@ -1793,11 +1779,10 @@ static struct notifier_block x25_dev_notifier = {
 void x25_kill_by_neigh(struct x25_neigh *nb)
 {
 	struct sock *s;
-	struct hlist_node *node;
 
 	write_lock_bh(&x25_list_lock);
 
-	sk_for_each(s, node, &x25_list)
+	sk_for_each(s, &x25_list)
 		if (x25_sk(s)->neighbour == nb)
 			x25_disconnect(s, ENETUNREACH, 0, 0);
 

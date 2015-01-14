@@ -136,8 +136,8 @@ enum wcd9xxx_mbhc_clk_freq {
 enum wcd9xxx_mbhc_event_state {
 	MBHC_EVENT_PA_HPHL,
 	MBHC_EVENT_PA_HPHR,
-	MBHC_EVENT_PRE_TX_1_3_ON,
-	MBHC_EVENT_POST_TX_1_3_OFF,
+	MBHC_EVENT_PRE_TX_3_ON,
+	MBHC_EVENT_POST_TX_3_OFF,
 };
 
 struct wcd9xxx_mbhc_general_cfg {
@@ -285,6 +285,9 @@ struct wcd9xxx_mbhc_cb {
 	int (*enable_mb_source) (struct snd_soc_codec *, bool, bool);
 	void (*setup_int_rbias) (struct snd_soc_codec *, bool);
 	void (*pull_mb_to_vddio) (struct snd_soc_codec *, bool);
+	bool (*insert_rem_status) (struct snd_soc_codec *);
+	void (*micbias_pulldown_ctrl) (struct wcd9xxx_mbhc *, bool);
+	int (*codec_rco_ctrl) (struct snd_soc_codec *, bool);
 };
 
 struct wcd9xxx_mbhc {

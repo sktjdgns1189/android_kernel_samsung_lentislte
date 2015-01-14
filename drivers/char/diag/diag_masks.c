@@ -288,8 +288,8 @@ static void diag_update_log_mask(int equip_id, uint8_t *buf, int num_items)
 	driver->log_status = DIAG_CTRL_MASK_INVALID;
 	if (!buf || (equip_id < 0 || equip_id >= MAX_EQUIP_ID) ||
 							num_items < 1) {
-		pr_err("diag: Invalid params in %s, buf: %x equip_id: %d, num_items: %d\n",
-		       __func__, (unsigned int)buf, equip_id, num_items);
+		pr_err("diag: Invalid params in %s, buf: %p equip_id: %d, num_items: %d\n",
+		       __func__, buf, equip_id, num_items);
 		mutex_unlock(&driver->log_mask_mutex);
 		return;
 	}
@@ -334,7 +334,7 @@ void diag_mask_update_fn(struct work_struct *work)
 
 	if (smd_info->notify_context == SMD_EVENT_OPEN)
 		diag_send_diag_mode_update_by_smd(smd_info,
-						driver->real_time_mode);
+				driver->real_time_mode[DIAG_LOCAL_PROC]);
 
 	smd_info->notify_context = 0;
 }
@@ -905,7 +905,7 @@ static void diag_log_mask_init(void)
 	}
 }
 
-void diag_masks_init(void)
+int diag_masks_init(void)
 {
 	driver->event_status = DIAG_CTRL_MASK_INVALID;
 	driver->msg_status = DIAG_CTRL_MASK_INVALID;
@@ -990,7 +990,7 @@ void diag_masks_init(void)
 			goto err;
 		kmemleak_not_leak(driver->event_masks);
 	}
-	return;
+	return 0;
 err:
 	pr_err("diag: Could not initialize diag mask buffers");
 	kfree(driver->event_mask);
@@ -1001,6 +1001,7 @@ err:
 	kfree(driver->event_masks);
 	kfree(driver->feature_mask);
 	kfree(driver->buf_feature_mask_update);
+	return -ENOMEM;
 }
 
 void diag_masks_exit(void)

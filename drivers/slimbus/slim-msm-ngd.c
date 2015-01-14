@@ -25,13 +25,13 @@
 #include <linux/of.h>
 #include <linux/of_slimbus.h>
 #include <linux/timer.h>
-#include <mach/sps.h>
+#include <linux/msm-sps.h>
 #include "slim-msm.h"
 
 #define NGD_SLIM_NAME	"ngd_msm_ctrl"
 #define SLIM_LA_MGR	0xFF
 #define SLIM_ROOT_FREQ	24576000
-#define LADDR_RETRY	5
+#define LADDR_RETRY	10
 
 #define NGD_BASE_V1(r)	(((r) % 2) ? 0x800 : 0xA00)
 #define NGD_BASE_V2(r)	(((r) % 2) ? 0x1000 : 0x2000)
@@ -301,7 +301,6 @@ static int ngd_xfer_msg(struct slim_controller *ctrl, struct slim_msg_txn *txn)
 		 */
 		ngd_slim_runtime_resume(dev->dev);
 	}
-
 	else if (txn->mc & SLIM_MSG_CLK_PAUSE_SEQ_FLG)
 		return -EPROTONOSUPPORT;
 
@@ -375,7 +374,7 @@ static int ngd_xfer_msg(struct slim_controller *ctrl, struct slim_msg_txn *txn)
 	mutex_lock(&dev->tx_lock);
 
 	if (report_sat == false && dev->state != MSM_CTRL_AWAKE) {
-		dev_err(dev->dev, "controller not ready");
+		SLIM_ERR(dev, "controller not ready\n");
 		mutex_unlock(&dev->tx_lock);
 		pm_runtime_set_suspended(dev->dev);
 		msm_slim_put_ctrl(dev);
@@ -1068,6 +1067,7 @@ static int ngd_slim_enable(struct msm_slim_ctrl *dev, bool enable)
 		/* controller state should be in sync with framework state */
 		if (!ret) {
 			complete(&dev->qmi.qmi_comp);
+
 			if (!pm_runtime_enabled(dev->dev) ||
 					!pm_runtime_suspended(dev->dev))
 				ngd_slim_runtime_resume(dev->dev);
@@ -1093,7 +1093,7 @@ static int ngd_slim_power_down(struct msm_slim_ctrl *dev)
 	/* Pending response for a message */
 	for (i = 0; i < ctrl->last_tid; i++) {
 		if (ctrl->txnt[i]) {
-			SLIM_INFO(dev, "NGD down:txn-rsp for %d pending", i);
+			pr_info("slim_clk_pause: txn-rsp for %d pending", i);
 			mutex_unlock(&ctrl->m_ctrl);
 			return -EBUSY;
 		}
@@ -1158,7 +1158,6 @@ static int ngd_notify_slaves(void *data)
 		set_current_state(TASK_INTERRUPTIBLE);
 		wait_for_completion(&dev->qmi.slave_notify);
 		/* Probe devices for first notification */
-
 		if (!i) {
 			i++;
 			dev->err = 0;
@@ -1184,8 +1183,10 @@ static int ngd_notify_slaves(void *data)
 						6, &sbdev->laddr);
 				if (!ret)
 					break;
-				else /* time for ADSP to assign LA */
+				else /* time for ADSP to assign LA */ {					
+					pr_info("ngd_notify_slaves slim_get_logical_addr \n");
 					msleep(20);
+				}
 			}
 			mutex_lock(&ctrl->m_ctrl);
 		}
@@ -1247,7 +1248,7 @@ static ssize_t set_mask(struct device *device, struct device_attribute *attr,
 
 static DEVICE_ATTR(debug_mask, S_IRUGO | S_IWUSR, show_mask, set_mask);
 
-static int __devinit ngd_slim_probe(struct platform_device *pdev)
+static int ngd_slim_probe(struct platform_device *pdev)
 {
 	struct msm_slim_ctrl *dev;
 	int ret;
@@ -1478,7 +1479,7 @@ err_ioremap_failed:
 	return ret;
 }
 
-static int __devexit ngd_slim_remove(struct platform_device *pdev)
+static int ngd_slim_remove(struct platform_device *pdev)
 {
 	struct msm_slim_ctrl *dev = platform_get_drvdata(pdev);
 	ngd_slim_enable(dev, false);
@@ -1526,7 +1527,7 @@ static int ngd_slim_runtime_resume(struct device *device)
 	if (dev->state >= MSM_CTRL_ASLEEP)
 		ret = ngd_slim_power_up(dev, false);
 	if (ret) {
-		/* Did SSR cause this power up failure */
+		/* Did SSR cause this clock pause failure */
 		if (dev->state != MSM_CTRL_DOWN)
 			dev->state = MSM_CTRL_ASLEEP;
 		else
@@ -1547,7 +1548,7 @@ static int ngd_slim_runtime_suspend(struct device *device)
 	ret = ngd_slim_power_down(dev);
 	if (ret) {
 		if (ret != -EBUSY)
-			SLIM_INFO(dev, "slim resource not idle:%d\n", ret);
+			SLIM_INFO(dev, "clk pause not entered:%d\n", ret);
 		dev->state = MSM_CTRL_AWAKE;
 	} else {
 		dev->state = MSM_CTRL_ASLEEP;

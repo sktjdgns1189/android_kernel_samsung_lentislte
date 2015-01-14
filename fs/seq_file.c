@@ -9,10 +9,14 @@
 #include <linux/export.h>
 #include <linux/seq_file.h>
 #include <linux/slab.h>
+#include <linux/cred.h>
 
 #include <asm/uaccess.h>
 #include <asm/page.h>
-
+#ifdef CONFIG_LOW_ORDER_SEQ_MALLOC
+#include <linux/mm.h>
+#include <linux/vmalloc.h>
+#endif
 
 /*
  * seq_files have a buffer which can may overflow. When this happens a larger
@@ -56,6 +60,9 @@ int seq_open(struct file *file, const struct seq_operations *op)
 	memset(p, 0, sizeof(*p));
 	mutex_init(&p->lock);
 	p->op = op;
+#ifdef CONFIG_USER_NS
+	p->user_ns = file->f_cred->user_ns;
+#endif
 
 	/*
 	 * Wrappers around seq_open(e.g. swaps_open) need to be
@@ -131,8 +138,19 @@ static int traverse(struct seq_file *m, loff_t offset)
 
 Eoverflow:
 	m->op->stop(m, p);
+#ifdef CONFIG_LOW_ORDER_SEQ_MALLOC
+	is_vmalloc_addr(m->buf) ? vfree(m->buf) : kfree(m->buf);
+	m->count = 0;
+	m->size <<= 1;
+	if (m->size <= (2* PAGE_SIZE))
+		m->buf = kmalloc(m->size, GFP_KERNEL);
+	else
+		m->buf = vmalloc(m->size);
+#else
 	kfree(m->buf);
+	m->count = 0;
 	m->buf = kmalloc(m->size <<= 1, GFP_KERNEL);
+#endif
 	return !m->buf ? -ENOMEM : -EAGAIN;
 }
 
@@ -227,11 +245,21 @@ ssize_t seq_read(struct file *file, char __user *buf, size_t size, loff_t *ppos)
 		if (m->count < m->size)
 			goto Fill;
 		m->op->stop(m, p);
+#ifdef CONFIG_LOW_ORDER_SEQ_MALLOC
+		is_vmalloc_addr(m->buf) ? vfree(m->buf) : kfree(m->buf);
+		m->count = 0;
+		m->size <<= 1;
+		if (m->size <= (2* PAGE_SIZE))
+			m->buf = kmalloc(m->size, GFP_KERNEL);
+		else
+			m->buf = vmalloc(m->size);
+#else
 		kfree(m->buf);
+		m->count = 0;
 		m->buf = kmalloc(m->size <<= 1, GFP_KERNEL);
+#endif
 		if (!m->buf)
 			goto Enomem;
-		m->count = 0;
 		m->version = 0;
 		pos = m->index;
 		p = m->op->start(m, &pos);
@@ -292,39 +320,41 @@ EXPORT_SYMBOL(seq_read);
  *	seq_lseek -	->llseek() method for sequential files.
  *	@file: the file in question
  *	@offset: new position
- *	@origin: 0 for absolute, 1 for relative position
+ *	@whence: 0 for absolute, 1 for relative position
  *
  *	Ready-made ->f_op->llseek()
  */
-loff_t seq_lseek(struct file *file, loff_t offset, int origin)
+loff_t seq_lseek(struct file *file, loff_t offset, int whence)
 {
 	struct seq_file *m = file->private_data;
 	loff_t retval = -EINVAL;
 
 	mutex_lock(&m->lock);
 	m->version = file->f_version;
-	switch (origin) {
-		case 1:
-			offset += file->f_pos;
-		case 0:
-			if (offset < 0)
-				break;
-			retval = offset;
-			if (offset != m->read_pos) {
-				while ((retval=traverse(m, offset)) == -EAGAIN)
-					;
-				if (retval) {
-					/* with extreme prejudice... */
-					file->f_pos = 0;
-					m->read_pos = 0;
-					m->version = 0;
-					m->index = 0;
-					m->count = 0;
-				} else {
-					m->read_pos = offset;
-					retval = file->f_pos = offset;
-				}
+	switch (whence) {
+	case SEEK_CUR:
+		offset += file->f_pos;
+	case SEEK_SET:
+		if (offset < 0)
+			break;
+		retval = offset;
+		if (offset != m->read_pos) {
+			while ((retval = traverse(m, offset)) == -EAGAIN)
+				;
+			if (retval) {
+				/* with extreme prejudice... */
+				file->f_pos = 0;
+				m->read_pos = 0;
+				m->version = 0;
+				m->index = 0;
+				m->count = 0;
+			} else {
+				m->read_pos = offset;
+				retval = file->f_pos = offset;
 			}
+		} else {
+			file->f_pos = offset;
+		}
 	}
 	file->f_version = m->version;
 	mutex_unlock(&m->lock);
@@ -335,7 +365,7 @@ EXPORT_SYMBOL(seq_lseek);
 /**
  *	seq_release -	free the structures associated with sequential file.
  *	@file: file in question
- *	@inode: file->f_path.dentry->d_inode
+ *	@inode: its inode
  *
  *	Frees the structures associated with sequential file; can be used
  *	as ->f_op->release() if you don't have private data to destroy.
@@ -343,7 +373,11 @@ EXPORT_SYMBOL(seq_lseek);
 int seq_release(struct inode *inode, struct file *file)
 {
 	struct seq_file *m = file->private_data;
+#ifdef CONFIG_LOW_ORDER_SEQ_MALLOC
+	is_vmalloc_addr(m->buf) ? vfree(m->buf) : kfree(m->buf);
+#else
 	kfree(m->buf);
+#endif
 	kfree(m);
 	return 0;
 }
@@ -385,15 +419,12 @@ int seq_escape(struct seq_file *m, const char *s, const char *esc)
 }
 EXPORT_SYMBOL(seq_escape);
 
-int seq_printf(struct seq_file *m, const char *f, ...)
+int seq_vprintf(struct seq_file *m, const char *f, va_list args)
 {
-	va_list args;
 	int len;
 
 	if (m->count < m->size) {
-		va_start(args, f);
 		len = vsnprintf(m->buf + m->count, m->size - m->count, f, args);
-		va_end(args);
 		if (m->count + len < m->size) {
 			m->count += len;
 			return 0;
@@ -401,6 +432,19 @@ int seq_printf(struct seq_file *m, const char *f, ...)
 	}
 	seq_set_overflow(m);
 	return -1;
+}
+EXPORT_SYMBOL(seq_vprintf);
+
+int seq_printf(struct seq_file *m, const char *f, ...)
+{
+	int ret;
+	va_list args;
+
+	va_start(args, f);
+	ret = seq_vprintf(m, f, args);
+	va_end(args);
+
+	return ret;
 }
 EXPORT_SYMBOL(seq_printf);
 
@@ -585,6 +629,24 @@ int single_open(struct file *file, int (*show)(struct seq_file *, void *),
 }
 EXPORT_SYMBOL(single_open);
 
+int single_open_size(struct file *file, int (*show)(struct seq_file *, void *),
+		void *data, size_t size)
+{
+	char *buf = kmalloc(size, GFP_KERNEL);
+	int ret;
+	if (!buf)
+		return -ENOMEM;
+	ret = single_open(file, show, data);
+	if (ret) {
+		kfree(buf);
+		return ret;
+	}
+	((struct seq_file *)file->private_data)->buf = buf;
+	((struct seq_file *)file->private_data)->size = size;
+	return 0;
+}
+EXPORT_SYMBOL(single_open_size);
+
 int single_release(struct inode *inode, struct file *file)
 {
 	const struct seq_operations *op = ((struct seq_file *)file->private_data)->op;
@@ -731,21 +793,6 @@ int seq_write(struct seq_file *seq, const void *data, size_t len)
 	return -1;
 }
 EXPORT_SYMBOL(seq_write);
-
-/**
- * seq_pad - write padding spaces to buffer
- * @m: seq_file identifying the buffer to which data should be written
- * @c: the byte to append after padding if non-zero
- */
-void seq_pad(struct seq_file *m, char c)
-{
-	int size = m->pad_until - m->count;
-	if (size > 0)
-		seq_printf(m, "%*s", size, "");
-	if (c)
-		seq_putc(m, c);
-}
-EXPORT_SYMBOL(seq_pad);
 
 struct list_head *seq_list_start(struct list_head *head, loff_t pos)
 {

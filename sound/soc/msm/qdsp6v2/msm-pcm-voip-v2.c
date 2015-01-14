@@ -33,6 +33,7 @@
 #include "audio_ocmem.h"
 
 #define SHARED_MEM_BUF 2
+#define VOIP_MIN_Q_LEN 2
 #define VOIP_MAX_Q_LEN 10
 #define VOIP_MAX_VOC_PKT_SIZE 4096
 #define VOIP_MIN_VOC_PKT_SIZE 320
@@ -87,8 +88,8 @@ struct voip_frame_hdr {
 	uint32_t timestamp;
 	union {
 		/*
-		 * Bits 0-15: Frame type
-		 * Bits 16-31: Frame rate
+		 * Bits 0-3: Frame type
+		 * [optional] Bits 16-19: Frame rate
 		 */
 		uint32_t frame_type;
 		uint32_t packet_rate;
@@ -185,10 +186,10 @@ static struct snd_pcm_hardware msm_pcm_hardware = {
 	.rate_max =             16000,
 	.channels_min =         1,
 	.channels_max =         1,
-	.buffer_bytes_max =	sizeof(struct voip_buf_node) * VOIP_MAX_Q_LEN,
+	.buffer_bytes_max =	sizeof(struct voip_buf_node) * VOIP_MIN_Q_LEN,
 	.period_bytes_min =	VOIP_MIN_VOC_PKT_SIZE,
 	.period_bytes_max =	VOIP_MAX_VOC_PKT_SIZE,
-	.periods_min =		VOIP_MAX_Q_LEN,
+	.periods_min =		VOIP_MIN_Q_LEN,
 	.periods_max =		VOIP_MAX_Q_LEN,
 	.fifo_size =            0,
 };
@@ -281,7 +282,8 @@ static struct snd_kcontrol_new msm_voip_controls[] = {
 	SOC_SINGLE_EXT("Voip Rate Config", SND_SOC_NOPM, 0, VOIP_RATE_MAX, 0,
 		       NULL, msm_voip_rate_config_put),
 	SOC_SINGLE_MULTI_EXT("Voip Evrc Min Max Rate Config", SND_SOC_NOPM,
-			     0, VOC_1_RATE, 0, 2, msm_voip_evrc_min_max_rate_config_get,
+			     0, VOC_1_RATE, 0, 2,
+			     msm_voip_evrc_min_max_rate_config_get,
 			     msm_voip_evrc_min_max_rate_config_put),
 	SOC_SINGLE_EXT("Voip Dtx Mode", SND_SOC_NOPM, 0, 1, 0,
 		       msm_voip_dtx_mode_get, msm_voip_dtx_mode_put),
@@ -418,7 +420,7 @@ static void voip_process_dl_pkt(uint8_t *voc_pkt, void *private_data)
 			if (frame_rate) {
 				if (voip_get_rate_type(prtd->mode, frame_rate,
 						       &rate_type)) {
-					pr_err("%s(): fail at getting rate_type \n",
+					pr_err("%s(): fail at getting rate_type\n",
 						__func__);
 				} else
 					prtd->rate_type = rate_type;
@@ -463,7 +465,8 @@ static void voip_process_dl_pkt(uint8_t *voc_pkt, void *private_data)
 			list_add_tail(&buf_node->list, &prtd->free_in_queue);
 		}
 		}
-		pr_debug("%s: frame.pktlen=%d\n", __func__, buf_node->frame.pktlen);
+		pr_debug("%s: frame.pktlen=%d\n", __func__,
+			 buf_node->frame.pktlen);
 
 		prtd->pcm_playback_irq_pos += prtd->pcm_count;
 		spin_unlock_irqrestore(&prtd->dsp_lock, dsp_flags);
@@ -826,8 +829,9 @@ static int voip_config_vocoder(struct snd_pcm_substream *substream)
 	uint32_t evrc_min_rate_type = 0;
 	uint32_t evrc_max_rate_type = 0;
 
-        pr_debug("%s(): mode=%d, playback sample rate=%d, capture sample rate=%d\n",
-                  __func__, prtd->mode, prtd->play_samp_rate, prtd->cap_samp_rate);
+	pr_debug("%s(): mode=%d, playback rate=%d, capture rate=%d\n",
+		 __func__, prtd->mode, prtd->play_samp_rate,
+		 prtd->cap_samp_rate);
 
 	if ((runtime->format != FORMAT_S16_LE) && ((prtd->mode == MODE_PCM) ||
 	    (prtd->mode == MODE_AMR) || (prtd->mode == MODE_AMR_WB) ||
@@ -1032,11 +1036,14 @@ static int msm_pcm_hw_params(struct snd_pcm_substream *substream,
 	struct snd_dma_buffer *dma_buf = &substream->dma_buffer;
 	struct voip_buf_node *buf_node = NULL;
 	int i = 0, offset = 0;
-
+	int periods = VOIP_MIN_Q_LEN;
 	pr_debug("%s: voip\n", __func__);
 
 	mutex_lock(&voip_info.lock);
 
+	periods = params_periods(params);
+	pr_info("%s: periods = %d\n", __func__, periods);
+	runtime->hw.buffer_bytes_max = sizeof(struct voip_buf_node) * periods;
 	dma_buf->dev.type = SNDRV_DMA_TYPE_DEV;
 	dma_buf->dev.dev = substream->pcm->card->dev;
 	dma_buf->private_data = NULL;
@@ -1054,7 +1061,7 @@ static int msm_pcm_hw_params(struct snd_pcm_substream *substream,
 	memset(dma_buf->area, 0, runtime->hw.buffer_bytes_max);
 
 	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
-		for (i = 0; i < VOIP_MAX_Q_LEN; i++) {
+		for (i = 0; i < periods; i++) {
 			buf_node = (void *)dma_buf->area + offset;
 
 			list_add_tail(&buf_node->list,
@@ -1062,7 +1069,7 @@ static int msm_pcm_hw_params(struct snd_pcm_substream *substream,
 			offset = offset + sizeof(struct voip_buf_node);
 		}
 	} else {
-		for (i = 0; i < VOIP_MAX_Q_LEN; i++) {
+		for (i = 0; i < periods; i++) {
 			buf_node = (void *) dma_buf->area + offset;
 			list_add_tail(&buf_node->list,
 					&voip_info.free_out_queue);
@@ -1366,7 +1373,7 @@ static struct snd_soc_platform_driver msm_soc_platform = {
 	.probe		= msm_pcm_voip_probe,
 };
 
-static __devinit int msm_pcm_probe(struct platform_device *pdev)
+static int msm_pcm_probe(struct platform_device *pdev)
 {
 	int rc;
 
@@ -1425,7 +1432,7 @@ static struct platform_driver msm_pcm_driver = {
 		.of_match_table = msm_voip_dt_match,
 	},
 	.probe = msm_pcm_probe,
-	.remove = __devexit_p(msm_pcm_remove),
+	.remove = msm_pcm_remove,
 };
 
 static int __init msm_soc_platform_init(void)

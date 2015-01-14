@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2010-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -31,13 +31,16 @@
 #include <linux/idr.h>
 #include <linux/interrupt.h>
 #include <linux/of_gpio.h>
+#include <linux/of_address.h>
+#include <linux/io.h>
+#include <soc/qcom/ramdump.h>
+#include <soc/qcom/subsystem_restart.h>
 
 #include <asm/uaccess.h>
 #include <asm/setup.h>
 #include <asm-generic/io-64-nonatomic-lo-hi.h>
 
 #include <mach/msm_iomap.h>
-#include <mach/ramdump.h>
 
 #include "peripheral-loader.h"
 
@@ -46,7 +49,8 @@
 #define pil_info(desc, fmt, ...)					\
 	dev_info(desc->dev, "%s: " fmt, desc->name, ##__VA_ARGS__)
 
-#define PIL_IMAGE_INFO_BASE	(MSM_IMEM_BASE + 0x94c)
+#define PIL_NUM_DESC		10
+static void __iomem *pil_info_base;
 
 /**
  * proxy_timeout - Override for proxy vote timeouts
@@ -192,6 +196,7 @@ static void __pil_proxy_unvote(struct pil_priv *priv)
 	struct pil_desc *desc = priv->desc;
 
 	desc->ops->proxy_unvote(desc);
+	notify_proxy_unvote(desc->dev);
 	wake_unlock(&priv->wlock);
 	module_put(desc->owner);
 
@@ -218,6 +223,7 @@ static int pil_proxy_vote(struct pil_desc *desc)
 
 	if (desc->proxy_unvote_irq)
 		enable_irq(desc->proxy_unvote_irq);
+	notify_proxy_vote(desc->dev);
 
 	return ret;
 }
@@ -456,19 +462,27 @@ static int pil_setup_region(struct pil_priv *priv, const struct pil_mdt *mdt)
 		priv->base_addr = min_addr_n;
 	}
 
-	writeq(priv->region_start, &priv->info->start);
-	writel_relaxed(priv->region_end - priv->region_start,
-			&priv->info->size);
+	if (priv->info) {
+		writeq(priv->region_start, &priv->info->start);
+		writel_relaxed(priv->region_end - priv->region_start,
+				&priv->info->size);
+	}
 
 	return ret;
 }
 
 static int pil_cmp_seg(void *priv, struct list_head *a, struct list_head *b)
 {
+	int ret = 0;
 	struct pil_seg *seg_a = list_entry(a, struct pil_seg, list);
 	struct pil_seg *seg_b = list_entry(b, struct pil_seg, list);
 
-	return seg_a->paddr - seg_b->paddr;
+	if (seg_a->paddr < seg_b->paddr)
+		ret = -1;
+	else if (seg_a->paddr > seg_b->paddr)
+		ret = 1;
+
+	return ret;
 }
 
 static int pil_init_mmap(struct pil_desc *desc, const struct pil_mdt *mdt)
@@ -506,8 +520,10 @@ static void pil_release_mmap(struct pil_desc *desc)
 	struct pil_priv *priv = desc->priv;
 	struct pil_seg *p, *tmp;
 
-	writeq(0, &priv->info->start);
-	writel_relaxed(0, &priv->info->size);
+	if (priv->info) {
+		writeq(0, &priv->info->start);
+		writel_relaxed(0, &priv->info->size);
+	}
 
 	list_for_each_entry_safe(p, tmp, &priv->segs, list) {
 		list_del(&p->list);
@@ -515,7 +531,17 @@ static void pil_release_mmap(struct pil_desc *desc)
 	}
 }
 
-#define IOMAP_SIZE SZ_1M
+#define IOMAP_SIZE SZ_4M
+
+static void *map_fw_mem(phys_addr_t paddr, size_t size)
+{
+	return ioremap(paddr, size);
+}
+
+static void unmap_fw_mem(void *vaddr)
+{
+	iounmap(vaddr);
+}
 
 static int pil_load_seg(struct pil_desc *desc, struct pil_seg *seg)
 {
@@ -528,7 +554,8 @@ static int pil_load_seg(struct pil_desc *desc, struct pil_seg *seg)
 		snprintf(fw_name, ARRAY_SIZE(fw_name), "%s.b%02d",
 				desc->name, num);
 		ret = request_firmware_direct(fw_name, desc->dev, seg->paddr,
-					      seg->filesz);
+					      seg->filesz, desc->map_fw_mem,
+					      desc->unmap_fw_mem);
 		if (ret < 0) {
 			pil_err(desc, "Failed to locate blob %s or blob is too big.\n",
 				fw_name);
@@ -572,7 +599,7 @@ static int pil_load_seg(struct pil_desc *desc, struct pil_seg *seg)
 	return ret;
 }
 
-static void pil_parse_devicetree(struct pil_desc *desc)
+static int pil_parse_devicetree(struct pil_desc *desc)
 {
 	int clk_ready = 0;
 
@@ -587,7 +614,7 @@ static void pil_parse_devicetree(struct pil_desc *desc)
 			dev_err(desc->dev,
 				"[%s]: Error getting proxy unvoting gpio\n",
 				desc->name);
-			return;
+			return clk_ready;
 		}
 
 		clk_ready = gpio_to_irq(clk_ready);
@@ -595,10 +622,11 @@ static void pil_parse_devicetree(struct pil_desc *desc)
 			dev_err(desc->dev,
 				"[%s]: Error getting proxy unvote IRQ\n",
 				desc->name);
-			return;
+			return clk_ready;
 		}
 	}
 	desc->proxy_unvote_irq = clk_ready;
+	return 0;
 }
 
 /* Synchronize request_firmware() with suspend */
@@ -662,11 +690,18 @@ int pil_boot(struct pil_desc *desc)
 	if (ret)
 		goto release_fw;
 
+	desc->priv->unvoted_flag = 0;
+	ret = pil_proxy_vote(desc);
+	if (ret) {
+		pil_err(desc, "Failed to proxy vote\n");
+		goto release_fw;
+	}
+
 	if (desc->ops->init_image)
 		ret = desc->ops->init_image(desc, fw->data, fw->size);
 	if (ret) {
 		pil_err(desc, "Invalid firmware metadata\n");
-		goto release_fw;
+		goto err_boot;
 	}
 
 	if (desc->ops->mem_setup)
@@ -674,20 +709,13 @@ int pil_boot(struct pil_desc *desc)
 				priv->region_end - priv->region_start);
 	if (ret) {
 		pil_err(desc, "Memory setup error\n");
-		goto release_fw;
+		goto err_boot;
 	}
 
 	list_for_each_entry(seg, &desc->priv->segs, list) {
 		ret = pil_load_seg(desc, seg);
 		if (ret)
-			goto release_fw;
-	}
-
-	desc->priv->unvoted_flag = 0;
-	ret = pil_proxy_vote(desc);
-	if (ret) {
-		pil_err(desc, "Failed to proxy vote\n");
-		goto release_fw;
+			goto err_boot;
 	}
 
 	ret = desc->ops->auth_and_reset(desc);
@@ -766,17 +794,21 @@ int pil_desc_init(struct pil_desc *desc)
 	desc->priv = priv;
 	priv->desc = desc;
 
-	priv->id = ret = ida_simple_get(&pil_ida, 0, 10, GFP_KERNEL);
+	priv->id = ret = ida_simple_get(&pil_ida, 0, PIL_NUM_DESC, GFP_KERNEL);
 	if (priv->id < 0)
 		goto err;
 
-	addr = PIL_IMAGE_INFO_BASE + sizeof(struct pil_image_info) * priv->id;
-	priv->info = (struct pil_image_info __iomem *)addr;
+	if (pil_info_base) {
+		addr = pil_info_base + sizeof(struct pil_image_info) * priv->id;
+		priv->info = (struct pil_image_info __iomem *)addr;
 
-	strncpy(buf, desc->name, sizeof(buf));
-	__iowrite32_copy(priv->info->name, buf, sizeof(buf) / 4);
+		strncpy(buf, desc->name, sizeof(buf));
+		__iowrite32_copy(priv->info->name, buf, sizeof(buf) / 4);
+	}
 
-	pil_parse_devicetree(desc);
+	ret = pil_parse_devicetree(desc);
+	if (ret)
+		goto err_parse_dt;
 
 	/* Ignore users who don't make any sense */
 	WARN(desc->ops->proxy_unvote && desc->proxy_unvote_irq == 0
@@ -788,7 +820,7 @@ int pil_desc_init(struct pil_desc *desc)
 		ret = request_threaded_irq(desc->proxy_unvote_irq,
 				  NULL,
 				  proxy_unvote_intr_handler,
-				  IRQF_TRIGGER_RISING,
+				  IRQF_ONESHOT | IRQF_TRIGGER_RISING,
 				  desc->name, desc);
 		if (ret < 0) {
 			dev_err(desc->dev,
@@ -804,7 +836,16 @@ int pil_desc_init(struct pil_desc *desc)
 	INIT_DELAYED_WORK(&priv->proxy, pil_proxy_unvote_work);
 	INIT_LIST_HEAD(&priv->segs);
 
+	/* Make sure mapping functions are set. */
+	if (!desc->map_fw_mem)
+		desc->map_fw_mem = map_fw_mem;
+
+	if (!desc->unmap_fw_mem)
+		desc->unmap_fw_mem = unmap_fw_mem;
+
 	return 0;
+err_parse_dt:
+	ida_simple_remove(&pil_ida, priv->id);
 err:
 	kfree(priv);
 	return ret;
@@ -848,6 +889,17 @@ static struct notifier_block pil_pm_notifier = {
 
 static int __init msm_pil_init(void)
 {
+	struct device_node *np;
+
+	np = of_find_compatible_node(NULL, NULL, "qcom,msm-imem-pil");
+	if (np) {
+		pil_info_base = of_iomap(np, 0);
+		if (!pil_info_base)
+			pr_warn("pil: could not map imem region\n");
+	} else {
+		pr_warn("pil: failed to find qcom,msm-imem-pil node\n");
+	}
+
 	ion = msm_ion_client_create(UINT_MAX, "pil");
 	if (IS_ERR(ion)) /* Can't support relocatable images */
 		ion = NULL;
@@ -860,6 +912,8 @@ static void __exit msm_pil_exit(void)
 	unregister_pm_notifier(&pil_pm_notifier);
 	if (ion)
 		ion_client_destroy(ion);
+	if (pil_info_base)
+		iounmap(pil_info_base);
 }
 module_exit(msm_pil_exit);
 

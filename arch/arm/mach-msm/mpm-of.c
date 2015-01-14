@@ -31,14 +31,13 @@
 #include <linux/err.h>
 #include <linux/power_supply.h>
 #include <linux/regulator/consumer.h>
+#include <linux/regulator/rpm-smd-regulator.h>
 #include <linux/workqueue.h>
-#include <linux/mutex.h>
-#include <asm/hardware/gic.h>
+#include <linux/irqchip/arm-gic.h>
+#include <linux/clk/msm-clk.h>
+#include <linux/irqchip/msm-gpio-irq.h>
+#include <linux/irqchip/msm-mpm-irq.h>
 #include <asm/arch_timer.h>
-#include <mach/gpio.h>
-#include <mach/mpm.h>
-#include <mach/clk.h>
-#include <mach/rpm-regulator-smd.h>
 
 enum {
 	MSM_MPM_GIC_IRQ_DOMAIN,
@@ -81,10 +80,23 @@ static unsigned int msm_mpm_irqs_m2a[MSM_MPM_NR_MPM_IRQS];
 #define hashfn(val) (val % MSM_MPM_NR_MPM_IRQS)
 #define SCLK_HZ (32768)
 #define ARCH_TIMER_HZ (19200000)
+
+struct msm_mpm_device_data {
+	uint16_t *irqs_m2a;
+	unsigned int irqs_m2a_size;
+	uint16_t *bypassed_apps_irqs;
+	unsigned int bypassed_apps_irqs_size;
+	void __iomem *mpm_request_reg_base;
+	void __iomem *mpm_status_reg_base;
+	void __iomem *mpm_apps_ipc_reg;
+	unsigned int mpm_apps_ipc_val;
+	unsigned int mpm_ipc_irq;
+};
 static struct msm_mpm_device_data msm_mpm_dev_data;
 
 static struct clk *xo_clk;
 static bool xo_enabled;
+static bool msm_mpm_in_suspend;
 static struct workqueue_struct *msm_mpm_wq;
 static struct work_struct msm_mpm_work;
 static struct completion wake_wq;
@@ -214,10 +226,9 @@ static inline unsigned int msm_mpm_get_irq_m2a(unsigned int pin)
 
 static inline uint16_t msm_mpm_get_irq_a2m(struct irq_data *d)
 {
-	struct hlist_node *elem;
 	struct mpm_irqs_a2m *node = NULL;
 
-	hlist_for_each_entry(node, elem, &irq_hash[hashfn(d->hwirq)], node) {
+	hlist_for_each_entry(node, &irq_hash[hashfn(d->hwirq)], node) {
 		if ((node->hwirq == d->hwirq)
 				&& (d->domain == node->domain)) {
 			/*
@@ -229,7 +240,7 @@ static inline uint16_t msm_mpm_get_irq_a2m(struct irq_data *d)
 			break;
 		}
 	}
-	return elem ? node->pin : 0;
+	return node ? node->pin : 0;
 }
 
 static int msm_mpm_enable_irq_exclusive(
@@ -275,7 +286,8 @@ static int msm_mpm_enable_irq_exclusive(
 		else
 			__clear_bit(d->hwirq, irq_apps);
 
-		if (!wakeset && (msm_mpm_initialized & MSM_MPM_DEVICE_PROBED))
+		if ((msm_mpm_initialized & MSM_MPM_DEVICE_PROBED)
+				&& !wakeset && !msm_mpm_in_suspend)
 			complete(&wake_wq);
 	}
 
@@ -525,13 +537,13 @@ void msm_mpm_enter_sleep(uint32_t sclk_count, bool from_idle,
 	}
 
 	msm_mpm_set(wakeup, !from_idle);
-	irq_set_affinity(msm_mpm_dev_data.mpm_ipc_irq, cpumask);
+	if (cpumask)
+		irq_set_affinity(msm_mpm_dev_data.mpm_ipc_irq, cpumask);
 }
 
 void msm_mpm_exit_sleep(bool from_idle)
 {
 	unsigned long pending;
-	uint32_t *enabled_intr;
 	int i;
 	int k;
 
@@ -540,16 +552,12 @@ void msm_mpm_exit_sleep(bool from_idle)
 		return;
 	}
 
-	enabled_intr = from_idle ? msm_mpm_enabled_irq :
-						msm_mpm_wake_irq;
-
 	for (i = 0; i < MSM_MPM_REG_WIDTH; i++) {
 		pending = msm_mpm_read(MSM_MPM_REG_STATUS, i);
-		pending &= enabled_intr[i];
 
 		if (MSM_MPM_DEBUG_PENDING_IRQ & msm_mpm_debug_mask)
-			pr_info("%s: enabled_intr pending.%d: 0x%08x 0x%08lx\n",
-				__func__, i, enabled_intr[i], pending);
+			pr_info("%s: pending.%d: 0x%08lx", __func__,
+					i, pending);
 
 		k = find_first_bit(&pending, 32);
 		while (k < 32) {
@@ -573,9 +581,6 @@ void msm_mpm_exit_sleep(bool from_idle)
 }
 static void msm_mpm_sys_low_power_modes(bool allow)
 {
-	static DEFINE_MUTEX(enable_xo_mutex);
-
-	mutex_lock(&enable_xo_mutex);
 	if (allow) {
 		if (xo_enabled) {
 			clk_disable_unprepare(xo_clk);
@@ -591,22 +596,37 @@ static void msm_mpm_sys_low_power_modes(bool allow)
 			xo_enabled = true;
 		}
 	}
-	mutex_unlock(&enable_xo_mutex);
 }
 
 void msm_mpm_suspend_prepare(void)
 {
-	bool allow = msm_mpm_irqs_detectable(false) &&
+	bool allow;
+	unsigned long flags;
+
+	spin_lock_irqsave(&msm_mpm_lock, flags);
+
+	allow = msm_mpm_irqs_detectable(false) &&
 		msm_mpm_gpio_irqs_detectable(false);
+	msm_mpm_in_suspend = true;
+
+	spin_unlock_irqrestore(&msm_mpm_lock, flags);
 	msm_mpm_sys_low_power_modes(allow);
 }
 EXPORT_SYMBOL(msm_mpm_suspend_prepare);
 
 void msm_mpm_suspend_wake(void)
 {
-	bool allow = msm_mpm_irqs_detectable(true) &&
+	bool allow;
+	unsigned long flags;
+
+	spin_lock_irqsave(&msm_mpm_lock, flags);
+
+	allow = msm_mpm_irqs_detectable(true) &&
 		msm_mpm_gpio_irqs_detectable(true);
+
+	spin_unlock_irqrestore(&msm_mpm_lock, flags);
 	msm_mpm_sys_low_power_modes(allow);
+	msm_mpm_in_suspend = false;
 }
 EXPORT_SYMBOL(msm_mpm_suspend_wake);
 
@@ -619,12 +639,17 @@ static void msm_mpm_work_fn(struct work_struct *work)
 		spin_lock_irqsave(&msm_mpm_lock, flags);
 		allow = msm_mpm_irqs_detectable(true) &&
 				msm_mpm_gpio_irqs_detectable(true);
+		if (msm_mpm_in_suspend) {
+			spin_unlock_irqrestore(&msm_mpm_lock, flags);
+			continue;
+		}
+
 		spin_unlock_irqrestore(&msm_mpm_lock, flags);
 		msm_mpm_sys_low_power_modes(allow);
 	}
 }
 
-static int __devinit msm_mpm_dev_probe(struct platform_device *pdev)
+static int msm_mpm_dev_probe(struct platform_device *pdev)
 {
 	struct resource *res = NULL;
 	int offset, ret;
@@ -683,8 +708,7 @@ static int __devinit msm_mpm_dev_probe(struct platform_device *pdev)
 		return -ENXIO;
 	}
 	ret = devm_request_irq(&pdev->dev, dev->mpm_ipc_irq, msm_mpm_irq,
-			IRQF_TRIGGER_RISING | IRQF_NO_SUSPEND, pdev->name,
-			msm_mpm_irq);
+			IRQF_TRIGGER_RISING, pdev->name, msm_mpm_irq);
 
 	if (ret) {
 		pr_info("%s(): request_irq failed errno: %d\n", __func__, ret);
@@ -731,7 +755,7 @@ static inline int __init mpm_irq_domain_legacy_size(struct irq_domain *d)
 	return d->revmap_data.legacy.size;
 }
 
-void __init of_mpm_init(struct device_node *node)
+static void __init __of_mpm_init(struct device_node *node)
 {
 	const __be32 *list;
 
@@ -756,7 +780,11 @@ void __init of_mpm_init(struct device_node *node)
 			"qcom,gpio-parent",
 			"qcom,gpio-map",
 			"gpio",
+	#ifdef CONFIG_USE_PINCTRL_IRQ
+			&mpm_tlmm_irq_extn,
+	#else
 			&msm_gpio_irq_extn,
+	#endif
 			mpm_irq_domain_legacy_size,
 		},
 	};
@@ -896,3 +924,13 @@ int __init msm_mpm_device_init(void)
 	return platform_driver_register(&msm_mpm_dev_driver);
 }
 arch_initcall(msm_mpm_device_init);
+
+void __init of_mpm_init(void)
+{
+	struct device_node *node;
+
+	node = of_find_matching_node(NULL, msm_mpm_match_table);
+	WARN_ON(!node);
+	if (node)
+		__of_mpm_init(node);
+}

@@ -20,16 +20,16 @@
 #include <linux/clk.h>
 #include <linux/iopoll.h>
 #include <linux/regulator/consumer.h>
+#include <linux/regulator/rpm-smd-regulator.h>
+#include <linux/clk/msm-clock-generic.h>
+#include <soc/qcom/clock-local2.h>
+#include <soc/qcom/clock-pll.h>
+#include <soc/qcom/clock-rpm.h>
+#include <soc/qcom/clock-voter.h>
 
-#include <mach/rpm-regulator-smd.h>
-#include <mach/socinfo.h>
-#include <mach/rpm-smd.h>
-#include <mach/clock-generic.h>
+#include <soc/qcom/socinfo.h>
+#include <soc/qcom/rpm-smd.h>
 
-#include "clock-local2.h"
-#include "clock-pll.h"
-#include "clock-rpm.h"
-#include "clock-voter.h"
 #include "clock.h"
 #include "clock-dsi-8610.h"
 
@@ -2787,6 +2787,7 @@ static struct clk_lookup msm_clocks_8610[] = {
 	CLK_LOOKUP("mem_clk",	bimc_acpu_a_clk.c,	""),
 	CLK_LOOKUP("bus_clk",	mmss_s0_axi_clk.c,	"msm_mmss_noc"),
 	CLK_LOOKUP("bus_a_clk",	mmss_s0_axi_clk.c,	"msm_mmss_noc"),
+	CLK_LOOKUP("bus_clk",   mmssnoc_ahb_clk.c,      ""),
 
 	/* CoreSight clocks */
 	CLK_LOOKUP("core_clk", qdss_clk.c, "fc326000.tmc"),

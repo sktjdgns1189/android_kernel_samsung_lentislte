@@ -60,16 +60,17 @@ EXPORT_SYMBOL_GPL(pingv6_ops);
 
 static u16 ping_port_rover;
 
-static inline int ping_hashfn(struct net *net, unsigned num, unsigned mask)
+static inline int ping_hashfn(struct net *net, unsigned int num, unsigned int mask)
 {
 	int res = (num + net_hash_mix(net)) & mask;
+
 	pr_debug("hash(%d) = %d\n", num, res);
 	return res;
 }
 EXPORT_SYMBOL_GPL(ping_hash);
 
 static inline struct hlist_nulls_head *ping_hashslot(struct ping_table *table,
-					     struct net *net, unsigned num)
+					     struct net *net, unsigned int num)
 {
 	return &table->hash[ping_hashfn(net, num, PING_HTABLE_MASK)];
 }
@@ -229,11 +230,12 @@ exit:
 	return sk;
 }
 
-static void inet_get_ping_group_range_net(struct net *net, gid_t *low,
-					  gid_t *high)
+static void inet_get_ping_group_range_net(struct net *net, kgid_t *low,
+					  kgid_t *high)
 {
-	gid_t *data = net->ipv4.sysctl_ping_group_range;
-	unsigned seq;
+	kgid_t *data = net->ipv4.sysctl_ping_group_range;
+	unsigned int seq;
+
 	do {
 		seq = read_seqbegin(&sysctl_local_ports.lock);
 
@@ -246,24 +248,23 @@ static void inet_get_ping_group_range_net(struct net *net, gid_t *low,
 int ping_init_sock(struct sock *sk)
 {
 	struct net *net = sock_net(sk);
-	gid_t group = current_egid();
-	gid_t range[2];
+	kgid_t group = current_egid();
 	struct group_info *group_info;
-	int i, j, count  ;
-        int ret = 0;
+	int i, j, count;
+	kgid_t low, high;
+	int ret = 0;
 
-	inet_get_ping_group_range_net(net, range, range+1);
-	if (range[0] <= group && group <= range[1])
+	inet_get_ping_group_range_net(net, &low, &high);
+	if (gid_lte(low, group) && gid_lte(group, high))
 		return 0;
 
 	group_info = get_current_groups();
 	count = group_info->ngroups;
 	for (i = 0; i < group_info->nblocks; i++) {
 		int cp_count = min_t(int, NGROUPS_PER_BLOCK, count);
-
 		for (j = 0; j < cp_count; j++) {
-			group = group_info->blocks[i][j];
-			if (range[0] <= group && group <= range[1])
+			kgid_t gid = group_info->blocks[i][j];
+			if (gid_lte(low, gid) && gid_lte(gid, high))
 				goto out_release_group;
 		}
 
@@ -474,8 +475,6 @@ void ping_err(struct sk_buff *skb, int offset, u32 info)
 	int err;
 
 	if (skb->protocol == htons(ETH_P_IP)) {
-		struct iphdr *iph = (struct iphdr *)skb->data;
-		offset = iph->ihl << 2;
 		family = AF_INET;
 		type = icmp_hdr(skb)->type;
 		code = icmp_hdr(skb)->code;
@@ -517,7 +516,8 @@ void ping_err(struct sk_buff *skb, int offset, u32 info)
 			break;
 		case ICMP_SOURCE_QUENCH:
 			/* This is not a real error but ping wants to see it.
-			 * Report it with some fake errno. */
+			 * Report it with some fake errno.
+			 */
 			err = EREMOTEIO;
 			break;
 		case ICMP_PARAMETERPROB:
@@ -526,6 +526,7 @@ void ping_err(struct sk_buff *skb, int offset, u32 info)
 			break;
 		case ICMP_DEST_UNREACH:
 			if (code == ICMP_FRAG_NEEDED) { /* Path MTU discovery */
+				ipv4_sk_update_pmtu(skb, sk, info);
 				if (inet_sock->pmtudisc != IP_PMTUDISC_DONT) {
 					err = EMSGSIZE;
 					harderr = 1;
@@ -541,6 +542,7 @@ void ping_err(struct sk_buff *skb, int offset, u32 info)
 			break;
 		case ICMP_REDIRECT:
 			/* See ICMP_SOURCE_QUENCH */
+			ipv4_sk_redirect(skb, sk);
 			err = EREMOTEIO;
 			break;
 		}
@@ -575,11 +577,6 @@ out:
 	sock_put(sk);
 }
 EXPORT_SYMBOL_GPL(ping_err);
-
-void ping_v4_err(struct sk_buff *skb, u32 info)
-{
-	ping_err(skb, 0, info);
-}
 
 /*
  *	Copy and checksum an ICMP Echo packet from user space into a buffer
@@ -723,9 +720,8 @@ int ping_v4_sendmsg(struct kiocb *iocb, struct sock *sk, struct msghdr *msg,
 	ipc.opt = NULL;
 	ipc.oif = sk->sk_bound_dev_if;
 	ipc.tx_flags = 0;
-	err = sock_tx_timestamp(sk, &ipc.tx_flags);
-	if (err)
-		return err;
+
+	sock_tx_timestamp(sk, &ipc.tx_flags);
 
 	if (msg->msg_controllen) {
 		err = ip_cmsg_send(sock_net(sk), msg, &ipc);
@@ -908,15 +904,14 @@ int ping_recvmsg(struct kiocb *iocb, struct sock *sk, struct msghdr *msg,
 
 			sin6->sin6_flowinfo = 0;
 			if (np->sndflow)
-				sin6->sin6_flowinfo =
-					*(__be32 *)ip6 & IPV6_FLOWINFO_MASK;
+				sin6->sin6_flowinfo = ip6_flowinfo(ip6);
 
 			sin6->sin6_scope_id = ipv6_iface_scope_id(&sin6->sin6_addr,
 								  IP6CB(skb)->iif);
 		}
 
 		if (inet6_sk(sk)->rxopt.all)
-			pingv6_ops.datagram_recv_ctl(sk, msg, skb);
+			pingv6_ops.ip6_datagram_recv_ctl(sk, msg, skb);
 #endif
 	} else {
 		BUG();
@@ -990,6 +985,7 @@ struct proto ping_prot = {
 	.recvmsg =	ping_recvmsg,
 	.bind =		ping_bind,
 	.backlog_rcv =	ping_queue_rcv_skb,
+	.release_cb =	ip4_datagram_release_cb,
 	.hash =		ping_hash,
 	.unhash =	ping_unhash,
 	.get_port =	ping_get_port,
@@ -1016,7 +1012,8 @@ static struct sock *ping_get_first(struct seq_file *seq, int start)
 			continue;
 
 		sk_nulls_for_each(sk, node, hslot) {
-			if (net_eq(sock_net(sk), net))
+			if (net_eq(sock_net(sk), net) &&
+			    sk->sk_family == state->family)
 				goto found;
 		}
 	}
@@ -1049,17 +1046,24 @@ static struct sock *ping_get_idx(struct seq_file *seq, loff_t pos)
 	return pos ? NULL : sk;
 }
 
-static void *ping_seq_start(struct seq_file *seq, loff_t *pos)
+void *ping_seq_start(struct seq_file *seq, loff_t *pos, sa_family_t family)
 {
 	struct ping_iter_state *state = seq->private;
 	state->bucket = 0;
+	state->family = family;
 
 	read_lock_bh(&ping_table.lock);
 
 	return *pos ? ping_get_idx(seq, *pos-1) : SEQ_START_TOKEN;
 }
+EXPORT_SYMBOL_GPL(ping_seq_start);
 
-static void *ping_seq_next(struct seq_file *seq, void *v, loff_t *pos)
+static void *ping_v4_seq_start(struct seq_file *seq, loff_t *pos)
+{
+	return ping_seq_start(seq, pos, AF_INET);
+}
+
+void *ping_seq_next(struct seq_file *seq, void *v, loff_t *pos)
 {
 	struct sock *sk;
 
@@ -1071,14 +1075,16 @@ static void *ping_seq_next(struct seq_file *seq, void *v, loff_t *pos)
 	++*pos;
 	return sk;
 }
+EXPORT_SYMBOL_GPL(ping_seq_next);
 
-static void ping_seq_stop(struct seq_file *seq, void *v)
+void ping_seq_stop(struct seq_file *seq, void *v)
 {
 	read_unlock_bh(&ping_table.lock);
 }
+EXPORT_SYMBOL_GPL(ping_seq_stop);
 
-static void ping_format_sock(struct sock *sp, struct seq_file *f,
-		int bucket)
+static void ping_v4_format_sock(struct sock *sp, struct seq_file *f,
+		int bucket, int *len)
 {
 	struct inet_sock *inet = inet_sk(sp);
 	__be32 dest = inet->inet_daddr;
@@ -1087,91 +1093,108 @@ static void ping_format_sock(struct sock *sp, struct seq_file *f,
 	__u16 srcp = ntohs(inet->inet_sport);
 
 	seq_printf(f, "%5d: %08X:%04X %08X:%04X"
-		" %02X %08X:%08X %02X:%08lX %08X %5d %8d %lu %d %pK %d",
+		" %02X %08X:%08X %02X:%08lX %08X %5d %8d %lu %d %pK %d%n",
 		bucket, src, srcp, dest, destp, sp->sk_state,
 		sk_wmem_alloc_get(sp),
 		sk_rmem_alloc_get(sp),
-		0, 0L, 0, sock_i_uid(sp), 0, sock_i_ino(sp),
+		0, 0L, 0,
+		from_kuid_munged(seq_user_ns(f), sock_i_uid(sp)),
+		0, sock_i_ino(sp),
 		atomic_read(&sp->sk_refcnt), sp,
-		atomic_read(&sp->sk_drops));
+		atomic_read(&sp->sk_drops), len);
 }
 
-static int ping_seq_show(struct seq_file *seq, void *v)
+static int ping_v4_seq_show(struct seq_file *seq, void *v)
 {
-	seq_setwidth(seq, 127);
 	if (v == SEQ_START_TOKEN)
-		seq_puts(seq, "  sl  local_address rem_address   st tx_queue "
+		seq_printf(seq, "%-127s\n",
+			   "  sl  local_address rem_address   st tx_queue "
 			   "rx_queue tr tm->when retrnsmt   uid  timeout "
 			   "inode ref pointer drops");
 	else {
 		struct ping_iter_state *state = seq->private;
+		int len;
 
-		ping_format_sock(v, seq, state->bucket);
+		ping_v4_format_sock(v, seq, state->bucket, &len);
+		seq_printf(seq, "%*s\n", 127 - len, "");
 	}
-	seq_pad(seq, '\n');
 	return 0;
 }
 
-static const struct seq_operations ping_seq_ops = {
-	.show		= ping_seq_show,
-	.start		= ping_seq_start,
+static const struct seq_operations ping_v4_seq_ops = {
+	.show		= ping_v4_seq_show,
+	.start		= ping_v4_seq_start,
 	.next		= ping_seq_next,
 	.stop		= ping_seq_stop,
 };
 
 static int ping_seq_open(struct inode *inode, struct file *file)
 {
-	return seq_open_net(inode, file, &ping_seq_ops,
+	struct ping_seq_afinfo *afinfo = PDE_DATA(inode);
+	return seq_open_net(inode, file, &afinfo->seq_ops,
 			   sizeof(struct ping_iter_state));
 }
 
-static const struct file_operations ping_seq_fops = {
+const struct file_operations ping_seq_fops = {
 	.open		= ping_seq_open,
 	.read		= seq_read,
 	.llseek		= seq_lseek,
 	.release	= seq_release_net,
 };
+EXPORT_SYMBOL_GPL(ping_seq_fops);
 
-static int ping_proc_register(struct net *net)
+static struct ping_seq_afinfo ping_v4_seq_afinfo = {
+	.name		= "icmp",
+	.family		= AF_INET,
+	.seq_fops	= &ping_seq_fops,
+	.seq_ops	= {
+		.start		= ping_v4_seq_start,
+		.show		= ping_v4_seq_show,
+		.next		= ping_seq_next,
+		.stop		= ping_seq_stop,
+	},
+};
+
+int ping_proc_register(struct net *net, struct ping_seq_afinfo *afinfo)
 {
 	struct proc_dir_entry *p;
-	int rc = 0;
-
-	p = proc_net_fops_create(net, "icmp", S_IRUGO, &ping_seq_fops);
+	p = proc_create_data(afinfo->name, S_IRUGO, net->proc_net,
+			     afinfo->seq_fops, afinfo);
 	if (!p)
-		rc = -ENOMEM;
-	return rc;
+		return -ENOMEM;
+	return 0;
 }
+EXPORT_SYMBOL_GPL(ping_proc_register);
 
-static void ping_proc_unregister(struct net *net)
+void ping_proc_unregister(struct net *net, struct ping_seq_afinfo *afinfo)
 {
-	proc_net_remove(net, "icmp");
+	remove_proc_entry(afinfo->name, net->proc_net);
 }
+EXPORT_SYMBOL_GPL(ping_proc_unregister);
 
-
-static int __net_init ping_proc_init_net(struct net *net)
+static int __net_init ping_v4_proc_init_net(struct net *net)
 {
-	return ping_proc_register(net);
+	return ping_proc_register(net, &ping_v4_seq_afinfo);
 }
 
-static void __net_exit ping_proc_exit_net(struct net *net)
+static void __net_exit ping_v4_proc_exit_net(struct net *net)
 {
-	ping_proc_unregister(net);
+	ping_proc_unregister(net, &ping_v4_seq_afinfo);
 }
 
-static struct pernet_operations ping_net_ops = {
-	.init = ping_proc_init_net,
-	.exit = ping_proc_exit_net,
+static struct pernet_operations ping_v4_net_ops = {
+	.init = ping_v4_proc_init_net,
+	.exit = ping_v4_proc_exit_net,
 };
 
 int __init ping_proc_init(void)
 {
-	return register_pernet_subsys(&ping_net_ops);
+	return register_pernet_subsys(&ping_v4_net_ops);
 }
 
 void ping_proc_exit(void)
 {
-	unregister_pernet_subsys(&ping_net_ops);
+	unregister_pernet_subsys(&ping_v4_net_ops);
 }
 
 #endif

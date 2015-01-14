@@ -3,7 +3,7 @@
  *
  *  Copyright (C) 2007 Google Inc,
  *  Copyright (C) 2003 Deep Blue Solutions, Ltd, All Rights Reserved.
- *  Copyright (c) 2009-2013, The Linux Foundation. All rights reserved.
+ *  Copyright (c) 2009-2014, The Linux Foundation. All rights reserved.
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -47,6 +47,8 @@
 #include <linux/slab.h>
 #include <linux/pm_qos.h>
 #include <linux/iopoll.h>
+#include <linux/clk/msm-clk.h>
+#include <linux/irqchip/msm-mpm-irq.h>
 
 #include <asm/cacheflush.h>
 #include <asm/div64.h>
@@ -54,10 +56,8 @@
 
 #include <asm/mach/mmc.h>
 #include <mach/msm_iomap.h>
-#include <mach/clk.h>
 #include <mach/dma.h>
 #include <mach/sdio_al.h>
-#include <mach/mpm.h>
 #include <mach/msm_bus.h>
 
 #include "msm_sdcc.h"
@@ -2579,6 +2579,20 @@ out:
 	return rc;
 }
 
+/* This function returns the max. current supported by VDD rail in mA */
+static unsigned int msmsdcc_get_vreg_vdd_max_current(struct msmsdcc_host *host)
+{
+	struct msm_mmc_slot_reg_data *curr_slot = host->plat->vreg_data;
+
+	if (!curr_slot)
+		return 0;
+
+	if (curr_slot->vdd_data)
+		return curr_slot->vdd_data->hpm_uA / 1000;
+	else
+		return 0;
+}
+
 /*
  * Reset vreg by ensuring it is off during probe. A call
  * to enable vreg is needed to balance disable vreg
@@ -3747,108 +3761,52 @@ static int msmsdcc_switch_io_voltage(struct mmc_host *mmc,
 				     struct mmc_ios *ios)
 {
 	struct msmsdcc_host *host = mmc_priv(mmc);
-	unsigned long flags;
-	bool prev_pwrsave, curr_pwrsave;
 	int rc = 0;
+	enum vdd_io_level io_level;
+	unsigned int vreg_level = 0;
 
 	switch (ios->signal_voltage) {
 	case MMC_SIGNAL_VOLTAGE_330:
-		/* Set VDD IO to high voltage range (2.7v - 3.6v) */
-		rc = msmsdcc_set_vdd_io_vol(host, VDD_IO_HIGH, 0);
-		if (!rc)
-			msmsdcc_update_io_pad_pwr_switch(host);
-		goto out;
+		io_level = VDD_IO_HIGH;
+		break;
 	case MMC_SIGNAL_VOLTAGE_180:
+		io_level = VDD_IO_LOW;
 		break;
 	case MMC_SIGNAL_VOLTAGE_120:
-		/*
-		 * For eMMC cards, VDD_IO voltage range must be changed
-		 * only if it operates in HS200 SDR 1.2V mode or in
-		 * DDR 1.2V mode.
-		 */
-		rc = msmsdcc_set_vdd_io_vol(host, VDD_IO_SET_LEVEL, 1200000);
-		if (!rc)
-			msmsdcc_update_io_pad_pwr_switch(host);
-		goto out;
+		io_level = VDD_IO_SET_LEVEL;
+		vreg_level = 1200000;
+		break;
 	default:
 		/* invalid selection. don't do anything */
 		rc = -EINVAL;
 		goto out;
 	}
-
-	/*
-	 * If we are here means voltage switch from high voltage to
-	 * low voltage is required
-	 */
-	spin_lock_irqsave(&host->lock, flags);
-	prev_pwrsave = !!(readl_relaxed(host->base + MMCICLOCK) &
-			MCI_CLK_PWRSAVE);
-	curr_pwrsave = prev_pwrsave;
-	/*
-	 * Poll on MCIDATIN_3_0 and MCICMDIN bits of MCI_TEST_INPUT
-	 * register until they become all zeros.
-	 */
-	if (readl_relaxed(host->base + MCI_TEST_INPUT) & (0xF << 1)) {
-		rc = -EAGAIN;
-		pr_err("%s: %s: MCIDATIN_3_0 is still not all zeros",
-			mmc_hostname(mmc), __func__);
-		goto out_unlock;
-	}
-
-	/* Stop SD CLK output. */
-	if (!prev_pwrsave) {
-		writel_relaxed((readl_relaxed(host->base + MMCICLOCK) |
-				MCI_CLK_PWRSAVE), host->base + MMCICLOCK);
-		msmsdcc_sync_reg_wr(host);
-		curr_pwrsave = true;
-	}
-	spin_unlock_irqrestore(&host->lock, flags);
-
-	/*
-	 * Switch VDD Io from high voltage range (2.7v - 3.6v) to
-	 * low voltage range (1.7v - 1.95v).
-	 */
-	rc = msmsdcc_set_vdd_io_vol(host, VDD_IO_LOW, 0);
-	if (rc)
-		goto out;
-
-	msmsdcc_update_io_pad_pwr_switch(host);
-
-	/* Wait 5 ms for the voltage regulater in the card to become stable. */
-	usleep_range(5000, 5500);
-
-	spin_lock_irqsave(&host->lock, flags);
-	/* Disable PWRSAVE would make sure that SD CLK is always running */
-	writel_relaxed((readl_relaxed(host->base + MMCICLOCK)
-			& ~MCI_CLK_PWRSAVE), host->base + MMCICLOCK);
-	msmsdcc_sync_reg_wr(host);
-	curr_pwrsave = false;
-	spin_unlock_irqrestore(&host->lock, flags);
-
-	/*
-	 * If MCIDATIN_3_0 and MCICMDIN bits of MCI_TEST_INPUT register
-	 * don't become all ones within 1 ms then a Voltage Switch
-	 * sequence has failed and a power cycle to the card is required.
-	 * Otherwise Voltage Switch sequence is completed successfully.
-	 */
-	usleep_range(1000, 1500);
-
-	spin_lock_irqsave(&host->lock, flags);
-	if ((readl_relaxed(host->base + MCI_TEST_INPUT) & (0xF << 1))
-				!= (0xF << 1)) {
-		pr_err("%s: %s: MCIDATIN_3_0 are still not all ones",
-			mmc_hostname(mmc), __func__);
-		rc = -EAGAIN;
-		goto out_unlock;
-	}
-
-out_unlock:
-	/* Restore the correct PWRSAVE state */
-	if (prev_pwrsave ^ curr_pwrsave)
-		msmsdcc_set_pwrsave(mmc, prev_pwrsave);
-	spin_unlock_irqrestore(&host->lock, flags);
+	rc = msmsdcc_set_vdd_io_vol(host, io_level, vreg_level);
+	if (!rc)
+		msmsdcc_update_io_pad_pwr_switch(host);
 out:
 	return rc;
+}
+
+/*
+ * Returns 1 if any of the data lines [0:3] state is low (card busy).
+ * Returns 0 if all of the data lines [0:3] state is high (card not busy).
+ */
+static int msmsdcc_is_card_busy(struct mmc_host *mmc)
+{
+	struct msmsdcc_host *host = mmc_priv(mmc);
+	u32 data_lines_mask = (0xF << 1);
+
+	if (atomic_read(&host->clks_on))
+		return !((readl_relaxed(host->base + MCI_TEST_INPUT) &
+			  data_lines_mask) == data_lines_mask);
+
+	/*
+	 * Clock should ideally be running when this function is called but
+	 * in case if its not running then return 0 to indicate that card is
+	 * not busy.
+	 */
+	return 0;
 }
 
 static inline void msmsdcc_cm_sdc4_dll_set_freq(struct msmsdcc_host *host)
@@ -4423,6 +4381,7 @@ static const struct mmc_host_ops msmsdcc_ops = {
 	.get_ro		= msmsdcc_get_ro,
 	.enable_sdio_irq = msmsdcc_enable_sdio_irq,
 	.start_signal_voltage_switch = msmsdcc_switch_io_voltage,
+	.card_busy = msmsdcc_is_card_busy,
 	.execute_tuning = msmsdcc_execute_tuning,
 	.stop_request = msmsdcc_stop_request,
 	.get_xfer_remain = msmsdcc_get_xfer_remain,
@@ -4992,7 +4951,7 @@ static int msmsdcc_sps_init(struct msmsdcc_host *host)
 			   mmc_hostname(host->mmc), rc);
 		goto reg_bam_err;
 	}
-	pr_info("%s: BAM device registered. bam_handle=0x%x",
+	pr_info("%s: BAM device registered. bam_handle=0x%lx",
 		mmc_hostname(host->mmc), host->sps.bam_handle);
 
 	host->sps.src_pipe_index = SPS_SDCC_PRODUCER_PIPE_INDEX;
@@ -5733,7 +5692,7 @@ static struct mmc_platform_data *msmsdcc_populate_pdata(struct device *dev)
 	int i, ret;
 	struct mmc_platform_data *pdata;
 	struct device_node *np = dev->of_node;
-	u32 bus_width = 0, current_limit = 0;
+	u32 bus_width = 0;
 	u32 *clk_table = NULL, *sup_voltages = NULL;
 	int clk_table_len, sup_volt_len, len;
 
@@ -5825,18 +5784,6 @@ static struct mmc_platform_data *msmsdcc_populate_pdata(struct device *dev)
 						| MMC_CAP_UHS_DDR50;
 	}
 
-	of_property_read_u32(np, "qcom,current-limit", &current_limit);
-	if (current_limit == 800)
-		pdata->uhs_caps |= MMC_CAP_MAX_CURRENT_800;
-	else if (current_limit == 600)
-		pdata->uhs_caps |= MMC_CAP_MAX_CURRENT_600;
-	else if (current_limit == 400)
-		pdata->uhs_caps |= MMC_CAP_MAX_CURRENT_400;
-	else if (current_limit == 200)
-		pdata->uhs_caps |= MMC_CAP_MAX_CURRENT_200;
-
-	if (of_get_property(np, "qcom,xpc", NULL))
-		pdata->xpc_cap = true;
 	if (of_get_property(np, "qcom,nonremovable", NULL))
 		pdata->nonremovable = true;
 	if (of_get_property(np, "qcom,disable-cmd23", NULL))
@@ -6124,14 +6071,10 @@ msmsdcc_probe(struct platform_device *pdev)
 
 	mmc->caps |= plat->uhs_caps;
 	mmc->caps2 |= plat->uhs_caps2;
-	/*
-	 * XPC controls the maximum current in the default speed mode of SDXC
-	 * card. XPC=0 means 100mA (max.) but speed class is not supported.
-	 * XPC=1 means 150mA (max.) and speed class is supported.
-	 */
-	if (plat->xpc_cap)
-		mmc->caps |= (MMC_CAP_SET_XPC_330 | MMC_CAP_SET_XPC_300 |
-				MMC_CAP_SET_XPC_180);
+
+	mmc->max_current_180 = msmsdcc_get_vreg_vdd_max_current(host);
+	mmc->max_current_300 = msmsdcc_get_vreg_vdd_max_current(host);
+	mmc->max_current_330 = msmsdcc_get_vreg_vdd_max_current(host);
 
 	mmc->caps2 |= MMC_CAP2_PACKED_WR;
 	mmc->caps2 |= MMC_CAP2_PACKED_WR_CONTROL;
@@ -6241,7 +6184,7 @@ msmsdcc_probe(struct platform_device *pdev)
 	if (plat->status_irq) {
 		ret = request_threaded_irq(plat->status_irq, NULL,
 				  msmsdcc_platform_status_irq,
-				  plat->irq_flags,
+				  plat->irq_flags | IRQF_ONESHOT,
 				  DRIVER_NAME " (slot)",
 				  host);
 		if (ret) {

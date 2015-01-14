@@ -12,16 +12,15 @@
  * GNU General Public License for more details.
  *
  */
-#ifdef CONFIG_OF
 #include <linux/platform_device.h>
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/of_irq.h>
 #include <linux/interrupt.h>
 #include <linux/io.h>
+#include <linux/ipc_logging.h>
 
-#include <mach/msm_ipc_logging.h>
-#include <smd_private.h>
+#include "smd_private.h"
 
 #define MODULE_NAME "msm_smd"
 #define IPC_LOG(level, x...) do { \
@@ -46,6 +45,9 @@
 #define SMSM_DBG(x...) do { } while (0)
 #endif
 
+static DEFINE_MUTEX(smd_probe_lock);
+static int first_probe_done;
+
 static int msm_smsm_probe(struct platform_device *pdev)
 {
 	uint32_t edge;
@@ -62,8 +64,6 @@ static int msm_smsm_probe(struct platform_device *pdev)
 	struct resource *r;
 	struct interrupt_config *private_intr_config;
 	uint32_t remote_pid;
-
-	disable_smsm_reset_handshake = 1;
 
 	node = pdev->dev.of_node;
 
@@ -127,7 +127,7 @@ static int msm_smsm_probe(struct platform_device *pdev)
 	ret = request_irq(irq_line,
 				private_irq->irq_handler,
 				IRQF_TRIGGER_RISING,
-				"smsm_dev",
+				node->name,
 				NULL);
 	if (ret < 0) {
 		pr_err("%s: request_irq() failed on %d\n", __func__, irq_line);
@@ -161,7 +161,7 @@ static int msm_smd_probe(struct platform_device *pdev)
 	uint32_t irq_bitmask;
 	uint32_t irq_line;
 	unsigned long irq_flags = IRQF_TRIGGER_RISING;
-	const char *pilstr;
+	const char *subsys_name;
 	struct interrupt_config_item *private_irq;
 	struct device_node *node;
 	void *irq_out_base;
@@ -170,6 +170,7 @@ static int msm_smd_probe(struct platform_device *pdev)
 	struct resource *r;
 	struct interrupt_config *private_intr_config;
 	uint32_t remote_pid;
+	bool skip_pil;
 
 	node = pdev->dev.of_node;
 
@@ -177,6 +178,13 @@ static int msm_smd_probe(struct platform_device *pdev)
 		pr_err("%s: missing link to parent device\n", __func__);
 		return -ENODEV;
 	}
+
+	mutex_lock(&smd_probe_lock);
+	if (!first_probe_done) {
+		smd_reset_all_edge_subsys_name();
+		first_probe_done = 1;
+	}
+	mutex_unlock(&smd_probe_lock);
 
 	parent_pdev = to_platform_device(pdev->dev.parent);
 
@@ -217,10 +225,27 @@ static int msm_smd_probe(struct platform_device *pdev)
 		goto missing_key;
 	SMD_DBG("%s: %s = %d", __func__, key, irq_line);
 
-	key = "qcom,pil-string";
-	pilstr = of_get_property(node, key, NULL);
-	if (pilstr)
-		SMD_DBG("%s: %s = %s", __func__, key, pilstr);
+	key = "label";
+	subsys_name = of_get_property(node, key, NULL);
+	SMD_DBG("%s: %s = %s", __func__, key, subsys_name);
+	/*
+	 * Backwards compatibility.  Although label is required, some DTs may
+	 * still list the legacy pil-string.  Sanely handle pil-string.
+	 */
+	if (!subsys_name) {
+		pr_warn("Missing required property - label.  Using legacy parsing\n");
+		key = "qcom,pil-string";
+		subsys_name = of_get_property(node, key, NULL);
+		SMD_DBG("%s: %s = %s", __func__, key, subsys_name);
+		if (subsys_name)
+			skip_pil = false;
+		else
+			skip_pil = true;
+	} else {
+		key = "qcom,not-loadable";
+		skip_pil = of_property_read_bool(node, key);
+		SMD_DBG("%s: %s = %d\n", __func__, key, skip_pil);
+	}
 
 	key = "qcom,irq-no-suspend";
 	ret = of_property_read_bool(node, key);
@@ -243,7 +268,7 @@ static int msm_smd_probe(struct platform_device *pdev)
 	ret = request_irq(irq_line,
 				private_irq->irq_handler,
 				irq_flags,
-				"smd_dev",
+				node->name,
 				NULL);
 	if (ret < 0) {
 		pr_err("%s: request_irq() failed on %d\n", __func__, irq_line);
@@ -255,11 +280,11 @@ static int msm_smd_probe(struct platform_device *pdev)
 					irq_line);
 	}
 
-	if (pilstr)
-		smd_set_edge_subsys_name(edge, pilstr);
+	smd_set_edge_subsys_name(edge, subsys_name);
+	smd_proc_set_skip_pil(smd_edge_to_remote_pid(edge), skip_pil);
 
 	smd_set_edge_initialized(edge);
-	smd_post_init(0, remote_pid);
+	smd_post_init(remote_pid);
 	return 0;
 
 missing_key:
@@ -319,4 +344,3 @@ EXPORT_SYMBOL(msm_smd_driver_register);
 
 MODULE_DESCRIPTION("MSM SMD Device Tree Init");
 MODULE_LICENSE("GPL v2");
-#endif

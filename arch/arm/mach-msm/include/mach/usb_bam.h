@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -12,8 +12,8 @@
 
 #ifndef _USB_BAM_H_
 #define _USB_BAM_H_
-#include "sps.h"
-#include <mach/ipa.h>
+#include <linux/msm-sps.h>
+#include <linux/ipa.h>
 #include <linux/usb/msm_hsusb.h>
 
 enum usb_bam {
@@ -21,6 +21,11 @@ enum usb_bam {
 	HSUSB_BAM,
 	HSIC_BAM,
 	MAX_BAMS,
+};
+
+enum usb_bam_mode {
+	USB_BAM_DEVICE = 0,
+	USB_BAM_HOST,
 };
 
 enum peer_bam {
@@ -48,23 +53,36 @@ enum usb_bam_event_type {
 	USB_BAM_EVENT_INACTIVITY,	/* Inactivity on all pipes */
 };
 
+enum usb_bam_pipe_type {
+	USB_BAM_PIPE_BAM2BAM = 0,	/* Connection is BAM2BAM (default) */
+	USB_BAM_PIPE_SYS2BAM,		/* Connection is SYS2BAM or BAM2SYS
+					 * depending on usb_bam_pipe_dir
+					 */
+	USB_BAM_MAX_PIPE_TYPES,
+};
+
 struct usb_bam_connect_ipa_params {
 	u8 src_idx;
 	u8 dst_idx;
 	u32 *src_pipe;
 	u32 *dst_pipe;
 	enum usb_bam_pipe_dir dir;
+	/* Parameters for Port Mapper */
+	u32 ipa_cons_ep_idx;
+	u32 ipa_prod_ep_idx;
 	/* client handle assigned by IPA to client */
 	u32 prod_clnt_hdl;
 	u32 cons_clnt_hdl;
 	/* params assigned by the CD */
-	enum ipa_client_type client;
+	enum ipa_client_type src_client;
+	enum ipa_client_type dst_client;
 	struct ipa_ep_cfg ipa_ep_cfg;
 	void *priv;
 	void (*notify)(void *priv, enum ipa_dp_evt_type evt,
 			unsigned long data);
 	int (*activity_notify)(void *priv);
 	int (*inactivity_notify)(void *priv);
+	bool skip_ep_cfg;
 };
 
 /**
@@ -101,11 +119,17 @@ struct usb_bam_event_info {
 * @desc_mem_buf: descriptor fifo buffer.
 * @event: event for wakeup.
 * @enabled: true if pipe is enabled.
+* @suspended: true if pipe is suspended.
+* @cons_stopped: true is pipe has consumer requests stopped.
+* @prod_stopped: true if pipe has producer requests stopped.
 * @ipa_clnt_hdl : pipe handle to ipa api.
 * @priv: private data to return upon activity_notify
 *	or inactivity_notify callbacks.
 * @activity_notify: callback to invoke on activity on one of the in pipes.
 * @inactivity_notify: callback to invoke on inactivity on all pipes.
+* @start: callback to invoke to enqueue transfers on a pipe.
+* @stop: callback to invoke on dequeue transfers on a pipe.
+* @start_stop_param: param for the start/stop callbacks.
 */
 struct usb_bam_pipe_connect {
 	const char *name;
@@ -113,7 +137,9 @@ struct usb_bam_pipe_connect {
 	enum usb_pipe_mem_type mem_type;
 	enum usb_bam_pipe_dir dir;
 	enum usb_bam bam_type;
+	enum usb_bam_mode bam_mode;
 	enum peer_bam peer_bam;
+	enum usb_bam_pipe_type pipe_type;
 	u32 src_phy_addr;
 	u32 src_pipe_index;
 	u32 dst_phy_addr;
@@ -127,10 +153,15 @@ struct usb_bam_pipe_connect {
 	struct usb_bam_event_info event;
 	bool enabled;
 	bool suspended;
+	bool cons_stopped;
+	bool prod_stopped;
 	int ipa_clnt_hdl;
 	void *priv;
 	int (*activity_notify)(void *priv);
 	int (*inactivity_notify)(void *priv);
+	void (*start)(void *, enum usb_bam_pipe_dir);
+	void (*stop)(void *, enum usb_bam_pipe_dir);
+	void *start_stop_param;
 };
 
 /**
@@ -145,6 +176,8 @@ struct usb_bam_pipe_connect {
  *                         private memory.
  * @ignore_core_reset_ack: BAM can ignore ACK from USB core during PIPE RESET
  * @disable_clk_gating: Disable clock gating
+ * @override_threshold: Override the default threshold value for Read/Write
+ *                         event generation by the BAM towards another BAM.
  */
 struct msm_usb_bam_platform_data {
 	struct usb_bam_pipe_connect *connections;
@@ -154,6 +187,7 @@ struct msm_usb_bam_platform_data {
 	bool ignore_core_reset_ack;
 	bool reset_on_connect[MAX_BAMS];
 	bool disable_clk_gating;
+	u32 override_threshold;
 };
 
 #ifdef CONFIG_USB_BAM
@@ -169,7 +203,7 @@ struct msm_usb_bam_platform_data {
  * @return 0 on success, negative value on error
  *
  */
-int usb_bam_connect(u8 idx, u32 *bam_pipe_idx);
+int usb_bam_connect(int idx, u32 *bam_pipe_idx);
 
 /**
  * Connect USB-to-IPA SPS connection.
@@ -226,6 +260,8 @@ int usb_bam_register_peer_reset_cb(int (*callback)(void *), void *param);
 /**
  * Register callbacks for start/stop of transfers.
  *
+ * @idx - Connection index
+ *
  * @start - the callback function that will be called in USB
  *				driver to start transfers
  * @stop - the callback function that will be called in USB
@@ -237,6 +273,7 @@ int usb_bam_register_peer_reset_cb(int (*callback)(void *), void *param);
  *
  */
 int usb_bam_register_start_stop_cbs(
+	u8 idx,
 	void (*start)(void *, enum usb_bam_pipe_dir),
 	void (*stop)(void *, enum usb_bam_pipe_dir),
 	void *param);
@@ -339,8 +376,18 @@ void usb_bam_set_qdss_core(const char *qdss_core);
 * @return 0 on success, negative value on error
 */
 int usb_bam_get_connection_idx(const char *name, enum peer_bam client,
-	enum usb_bam_pipe_dir dir, u32 num);
+	enum usb_bam_pipe_dir dir, enum usb_bam_mode bam_mode, u32 num);
 
+/**
+* Indicates the type of connection the USB side of the connection is.
+*
+* @idx - Pipe number.
+*
+* @type - Type of connection
+*
+* @return 0 on success, negative value on error
+*/
+int usb_bam_get_pipe_type(u8 idx, enum usb_bam_pipe_type *type);
 #else
 static inline int usb_bam_connect(u8 idx, u32 *bam_pipe_idx)
 {
@@ -378,6 +425,7 @@ static inline int usb_bam_register_peer_reset_cb(
 }
 
 static inline int usb_bam_register_start_stop_cbs(
+	u8 idx,
 	void (*start)(void *, enum usb_bam_pipe_dir),
 	void (*stop)(void *, enum usb_bam_pipe_dir),
 	void *param)
@@ -429,7 +477,13 @@ static inline void usb_bam_set_qdss_core(const char *qdss_core)
 }
 
 static inline int usb_bam_get_connection_idx(const char *name,
-		enum peer_bam client, enum usb_bam_pipe_dir dir, u32 num)
+		enum peer_bam client, enum usb_bam_pipe_dir dir,
+		enum usb_bam_mode bam_mode, u32 num)
+{
+	return -ENODEV;
+}
+
+static inline int usb_bam_get_pipe_type(u8 idx, enum usb_bam_pipe_type *type)
 {
 	return -ENODEV;
 }

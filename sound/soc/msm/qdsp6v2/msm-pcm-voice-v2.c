@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -75,14 +75,6 @@ static bool is_qchat(struct msm_voice *pqchat)
 		return false;
 }
 
-static bool is_vowlan(struct msm_voice *pvowlan)
-{
-	if (pvowlan == &voice_info[VOWLAN_SESSION_INDEX])
-		return true;
-	else
-		return false;
-}
-
 static uint32_t get_session_id(struct msm_voice *pvoc)
 {
 	uint32_t session_id = 0;
@@ -93,8 +85,6 @@ static uint32_t get_session_id(struct msm_voice *pvoc)
 		session_id = voc_get_session_id(VOICE2_SESSION_NAME);
 	else if (is_qchat(pvoc))
 		session_id = voc_get_session_id(QCHAT_SESSION_NAME);
-	else if (is_vowlan(pvoc))
-		session_id = voc_get_session_id(VOWLAN_SESSION_NAME);
 	else
 		session_id = voc_get_session_id(VOICE_SESSION_NAME);
 
@@ -143,10 +133,6 @@ static int msm_pcm_open(struct snd_pcm_substream *substream)
 	} else if (!strncmp("QCHAT", substream->pcm->id, 5)) {
 		voice = &voice_info[QCHAT_SESSION_INDEX];
 		pr_debug("%s: Open QCHAT Substream Id=%s\n",
-			 __func__, substream->pcm->id);
-	} else if (!strncmp("VoWLAN", substream->pcm->id, 6)) {
-		voice = &voice_info[VOWLAN_SESSION_INDEX];
-		pr_debug("%s: Open VoWLAN Substream Id=%s\n",
 			 __func__, substream->pcm->id);
 	} else {
 		voice = &voice_info[VOICE_SESSION_INDEX];
@@ -322,8 +308,8 @@ static int msm_pcm_ioctl(struct snd_pcm_substream *substream,
 	case SNDRV_VOICE_IOCTL_LCH:
 		if (copy_from_user(&lch_mode, (void *)arg,
 				   sizeof(enum voice_lch_mode))) {
-			pr_err("%s: Copy from user failed, size %d\n", __func__,
-			       sizeof(enum voice_lch_mode));
+			pr_err("%s: Copy from user failed, size %zd\n",
+				__func__, sizeof(enum voice_lch_mode));
 
 			ret = -EFAULT;
 			break;
@@ -361,6 +347,10 @@ static int msm_pcm_ioctl(struct snd_pcm_substream *substream,
 	return ret;
 }
 
+#ifdef CONFIG_SND_SOC_ES705
+int es705_put_veq_block(int volume);
+#endif
+
 static int msm_voice_gain_put(struct snd_kcontrol *kcontrol,
 			      struct snd_ctl_elem_value *ucontrol)
 {
@@ -381,6 +371,11 @@ static int msm_voice_gain_put(struct snd_kcontrol *kcontrol,
 		volume, session_id, ramp_duration);
 
 	voc_set_rx_vol_step(session_id, RX_PATH, volume, ramp_duration);
+
+#ifdef CONFIG_SND_SOC_ES705
+	es705_put_veq_block(volume);
+#endif
+
 
 done:
 	return ret;
@@ -405,12 +400,37 @@ static int msm_voice_mute_put(struct snd_kcontrol *kcontrol,
 	pr_debug("%s: mute=%d session_id=%#x ramp_duration=%d\n", __func__,
 		mute, session_id, ramp_duration);
 
-	voc_set_tx_mute(session_id, TX_PATH, mute, ramp_duration);
+	ret = voc_set_tx_mute(session_id, TX_PATH, mute, ramp_duration);
 
 done:
 	return ret;
 }
 
+static int msm_voice_tx_device_mute_put(struct snd_kcontrol *kcontrol,
+					struct snd_ctl_elem_value *ucontrol)
+{
+	int ret = 0;
+	int mute = ucontrol->value.integer.value[0];
+	uint32_t session_id = ucontrol->value.integer.value[1];
+	int ramp_duration = ucontrol->value.integer.value[2];
+
+	if ((mute < 0) || (mute > 1) || (ramp_duration < 0) ||
+	    (ramp_duration > MAX_RAMP_DURATION)) {
+		pr_err(" %s Invalid arguments", __func__);
+
+		ret = -EINVAL;
+		goto done;
+	}
+
+	pr_debug("%s: mute=%d session_id=%#x ramp_duration=%d\n", __func__,
+		 mute, session_id, ramp_duration);
+
+	ret = voc_set_device_mute(session_id, VSS_IVOLUME_DIRECTION_TX,
+				  mute, ramp_duration);
+
+done:
+	return ret;
+}
 
 static int msm_voice_rx_device_mute_put(struct snd_kcontrol *kcontrol,
 					struct snd_ctl_elem_value *ucontrol)
@@ -420,8 +440,8 @@ static int msm_voice_rx_device_mute_put(struct snd_kcontrol *kcontrol,
 	uint32_t session_id = ucontrol->value.integer.value[1];
 	int ramp_duration = ucontrol->value.integer.value[2];
 
-	if ((mute < 0) || (mute > 1) || (ramp_duration < 0)
-		|| (ramp_duration > MAX_RAMP_DURATION)) {
+	if ((mute < 0) || (mute > 1) || (ramp_duration < 0) ||
+	    (ramp_duration > MAX_RAMP_DURATION)) {
 		pr_err(" %s Invalid arguments", __func__);
 
 		ret = -EINVAL;
@@ -429,9 +449,10 @@ static int msm_voice_rx_device_mute_put(struct snd_kcontrol *kcontrol,
 	}
 
 	pr_debug("%s: mute=%d session_id=%#x ramp_duration=%d\n", __func__,
-		mute, session_id, ramp_duration);
+		 mute, session_id, ramp_duration);
 
-	voc_set_rx_device_mute(session_id, mute, ramp_duration);
+	voc_set_device_mute(session_id, VSS_IVOLUME_DIRECTION_RX,
+			    mute, ramp_duration);
 
 done:
 	return ret;
@@ -462,7 +483,6 @@ static int msm_voice_tty_mode_put(struct snd_kcontrol *kcontrol,
 	voc_set_tty_mode(voc_get_session_id(VOICE_SESSION_NAME), tty_mode);
 	voc_set_tty_mode(voc_get_session_id(VOICE2_SESSION_NAME), tty_mode);
 	voc_set_tty_mode(voc_get_session_id(VOLTE_SESSION_NAME), tty_mode);
-	voc_set_tty_mode(voc_get_session_id(VOWLAN_SESSION_NAME), tty_mode);
 
 	return 0;
 }
@@ -482,9 +502,56 @@ static int msm_voice_slowtalk_put(struct snd_kcontrol *kcontrol,
 	return 0;
 }
 
+#ifdef CONFIG_SEC_SOLUTION
+static int msm_sec_dha_get(struct snd_kcontrol *kcontrol,
+			struct snd_ctl_elem_value *ucontrol)
+{
+	return 0;
+}
+
+static int msm_sec_dha_put(struct snd_kcontrol *kcontrol,
+			struct snd_ctl_elem_value *ucontrol)
+{
+	int i = 0;
+
+	int dha_mode = ucontrol->value.integer.value[0];
+	int dha_select = ucontrol->value.integer.value[1];
+	short dha_param[12] = {0,};
+	for (i = 0; i < 12; i++) {
+		dha_param[i] = (short)ucontrol->value.integer.value[2+i];
+		pr_debug("msm_dha_put : param - %d\n", dha_param[i]);
+	}
+
+	return voice_sec_set_dha_data(voc_get_session_id(VOICE_SESSION_NAME),
+		dha_mode, dha_select, dha_param);
+}
+
+static int msm_loopback_put(struct snd_kcontrol *kcontrol,
+				 struct snd_ctl_elem_value *ucontrol)
+{
+	int loopback_enable = ucontrol->value.integer.value[0];
+
+	pr_debug("%s: loopback enable=%d\n", __func__, loopback_enable);
+
+	voc_set_loopback_enable(loopback_enable);
+	return 0;
+}
+
+static int msm_loopback_get(struct snd_kcontrol *kcontrol,
+				struct snd_ctl_elem_value *ucontrol)
+{
+	ucontrol->value.integer.value[0] = voc_get_loopback_enable();
+	 return 0;
+}
+
+#endif /*CONFIG_SEC_SOLUTION*/
+
+
 static struct snd_kcontrol_new msm_voice_controls[] = {
 	SOC_SINGLE_MULTI_EXT("Voice Rx Device Mute", SND_SOC_NOPM, 0, VSID_MAX,
 				0, 3, NULL, msm_voice_rx_device_mute_put),
+	SOC_SINGLE_MULTI_EXT("Voice Tx Device Mute", SND_SOC_NOPM, 0, VSID_MAX,
+				0, 3, NULL, msm_voice_tx_device_mute_put),
 	SOC_SINGLE_MULTI_EXT("Voice Tx Mute", SND_SOC_NOPM, 0, VSID_MAX,
 				0, 3, NULL, msm_voice_mute_put),
 	SOC_SINGLE_MULTI_EXT("Voice Rx Gain", SND_SOC_NOPM, 0, VSID_MAX, 0, 3,
@@ -493,6 +560,12 @@ static struct snd_kcontrol_new msm_voice_controls[] = {
 				msm_voice_tty_mode_put),
 	SOC_SINGLE_MULTI_EXT("Slowtalk Enable", SND_SOC_NOPM, 0, VSID_MAX, 0, 2,
 				NULL, msm_voice_slowtalk_put),
+#ifdef CONFIG_SEC_SOLUTION
+	SOC_SINGLE_MULTI_EXT("Sec Set DHA data", SND_SOC_NOPM, 0, 65535, 0, 14,
+				msm_sec_dha_get, msm_sec_dha_put),
+	SOC_SINGLE_EXT("Loopback Enable", SND_SOC_NOPM, 0, 1, 0,
+				msm_loopback_get, msm_loopback_put),
+#endif
 };
 
 static struct snd_pcm_ops msm_pcm_ops = {
@@ -529,7 +602,7 @@ static struct snd_soc_platform_driver msm_soc_platform = {
 	.probe		= msm_pcm_voice_probe,
 };
 
-static __devinit int msm_pcm_probe(struct platform_device *pdev)
+static int msm_pcm_probe(struct platform_device *pdev)
 {
 	int rc;
 
@@ -582,7 +655,7 @@ static struct platform_driver msm_pcm_driver = {
 		.of_match_table = msm_voice_dt_match,
 	},
 	.probe = msm_pcm_probe,
-	.remove = __devexit_p(msm_pcm_remove),
+	.remove = msm_pcm_remove,
 };
 
 static int __init msm_soc_platform_init(void)

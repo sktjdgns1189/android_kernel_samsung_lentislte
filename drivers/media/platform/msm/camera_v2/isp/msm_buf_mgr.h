@@ -14,7 +14,7 @@
 #define _MSM_ISP_BUF_H_
 
 #include <media/msmb_isp.h>
-#include <mach/iommu_domains.h>
+#include <linux/msm_iommu_domains.h>
 #include "msm_sd.h"
 
 /*Buffer source can be from userspace / HAL*/
@@ -40,13 +40,9 @@ enum msm_isp_buffer_flush_t {
 
 struct msm_isp_buffer_mapped_info {
 	unsigned long len;
-	unsigned long paddr;
+	dma_addr_t paddr;
 	struct ion_handle *handle;
-};
-
-struct buffer_cmd {
-	struct list_head list;
-	struct msm_isp_buffer_mapped_info *mapped_info;
+	unsigned long offset;
 };
 
 struct msm_isp_buffer {
@@ -71,6 +67,8 @@ struct msm_isp_buffer {
 	uint8_t buf_get_count;
 	uint8_t buf_put_count;
 	uint8_t buf_reuse_flag;
+
+	spinlock_t lock;
 };
 
 struct msm_isp_bufq {
@@ -122,6 +120,8 @@ struct msm_isp_buf_ops {
 	int (*buf_mgr_init) (struct msm_isp_buf_mgr *buf_mgr,
 		const char *ctx_name, uint16_t num_buf_q);
 	int (*buf_mgr_deinit) (struct msm_isp_buf_mgr *buf_mgr);
+	struct msm_isp_bufq * (*get_bufq)(struct msm_isp_buf_mgr *buf_mgr,
+		uint32_t bufq_handle);
 };
 
 struct msm_isp_buf_mgr {
@@ -143,7 +143,6 @@ struct msm_isp_buf_mgr {
 
 	int num_iommu_ctx;
 	struct device *iommu_ctx[2];
-	struct list_head buffer_q;
 };
 
 int msm_isp_create_isp_buf_mgr(struct msm_isp_buf_mgr *buf_mgr,

@@ -111,7 +111,7 @@ static const struct v4l2_subdev_ops msm_i2c_mux_subdev_ops = {
 	.core = &msm_i2c_mux_subdev_core_ops,
 };
 
-static int __devinit i2c_mux_probe(struct platform_device *pdev)
+static int i2c_mux_probe(struct platform_device *pdev)
 {
 	struct i2c_mux_device *mux_device;
 	int rc = 0;
@@ -161,7 +161,7 @@ static int __devinit i2c_mux_probe(struct platform_device *pdev)
 i2c_mux_no_resource:
 	mutex_destroy(&mux_device->mutex);
 	kfree(mux_device);
-	return 0;
+	return rc;
 }
 
 static struct platform_driver i2c_mux_driver = {

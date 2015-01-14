@@ -76,7 +76,7 @@ int rxrpc_queue_rcv_skb(struct rxrpc_call *call, struct sk_buff *skb,
 		 * --ANK */
 //		ret = -ENOBUFS;
 //		if (atomic_read(&sk->sk_rmem_alloc) + skb->truesize >=
-//		    (unsigned) sk->sk_rcvbuf)
+//		    (unsigned int) sk->sk_rcvbuf)
 //			goto out;
 
 		ret = sk_filter(sk, skb);
@@ -115,7 +115,7 @@ int rxrpc_queue_rcv_skb(struct rxrpc_call *call, struct sk_buff *skb,
 			spin_unlock_bh(&sk->sk_receive_queue.lock);
 
 			if (!sock_flag(sk, SOCK_DEAD))
-				sk->sk_data_ready(sk, skb_len);
+				sk->sk_data_ready(sk);
 		}
 		skb = NULL;
 	} else {

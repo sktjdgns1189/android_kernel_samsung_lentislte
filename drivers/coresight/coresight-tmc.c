@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -35,9 +35,9 @@
 #include <linux/cdev.h>
 #include <linux/usb/usb_qdss.h>
 #include <linux/dma-mapping.h>
-#include <mach/sps.h>
+#include <linux/msm-sps.h>
 #include <mach/usb_bam.h>
-#include <mach/msm_memory_dump.h>
+#include <soc/qcom/memory_dump.h>
 
 #include "coresight-priv.h"
 
@@ -124,7 +124,7 @@ enum tmc_mem_intf_width {
 
 struct tmc_etr_bam_data {
 	struct sps_bam_props	props;
-	uint32_t		handle;
+	unsigned long		handle;
 	struct sps_pipe		*pipe;
 	struct sps_connect	connect;
 	uint32_t		src_pipe_idx;
@@ -177,6 +177,8 @@ struct tmc_drvdata {
 	bool			byte_cntr_read_active;
 	wait_queue_head_t	wq;
 	char			*byte_cntr_node;
+	uint32_t		mem_size;
+	bool			sticky_enable;
 };
 
 static void tmc_wait_for_flush(struct tmc_drvdata *drvdata)
@@ -435,6 +437,41 @@ static void tmc_etr_byte_cntr_stop(struct tmc_drvdata *drvdata)
 	wake_up(&drvdata->wq);
 }
 
+static int tmc_etr_alloc_mem(struct tmc_drvdata *drvdata)
+{
+	int ret;
+
+	if (!drvdata->vaddr) {
+		drvdata->vaddr = dma_zalloc_coherent(drvdata->dev,
+						     drvdata->size,
+						     &drvdata->paddr,
+						     GFP_KERNEL);
+		if (!drvdata->vaddr) {
+			ret = -ENOMEM;
+			goto err;
+		}
+	}
+	/*
+	 * Need to reinitialize buf for each tmc enable session since it is
+	 * getting modified during tmc etr dump.
+	 */
+	drvdata->buf = drvdata->vaddr;
+	return 0;
+err:
+	dev_err(drvdata->dev, "etr ddr memory allocation failed\n");
+	return ret;
+}
+
+static void tmc_etr_free_mem(struct tmc_drvdata *drvdata)
+{
+	if (drvdata->vaddr) {
+		dma_free_coherent(drvdata->dev, drvdata->size,
+				  drvdata->vaddr, drvdata->paddr);
+		drvdata->vaddr = 0;
+		drvdata->paddr = 0;
+	}
+}
+
 static void __tmc_etb_enable(struct tmc_drvdata *drvdata)
 {
 	/* Zero out the memory to help with debug */
@@ -507,6 +544,22 @@ static int tmc_enable(struct tmc_drvdata *drvdata, enum tmc_mode mode)
 		coresight_cti_map_trigin(drvdata->cti_reset, 0, 0);
 	} else if (drvdata->config_type == TMC_CONFIG_TYPE_ETR) {
 		if (drvdata->out_mode == TMC_ETR_OUT_MODE_MEM) {
+
+			/*
+			 * ETR DDR memory is not allocated until user enables
+			 * tmc at least once. If user specifies different ETR
+			 * DDR size than the default size after enabling tmc;
+			 * the newly specified size will be honored from next
+			 * tmc enable session.
+			 */
+			if (drvdata->size != drvdata->mem_size) {
+				tmc_etr_free_mem(drvdata);
+				drvdata->size = drvdata->mem_size;
+			}
+			ret = tmc_etr_alloc_mem(drvdata);
+			if (ret)
+				goto err0;
+
 			tmc_etr_byte_cntr_start(drvdata);
 			if (!drvdata->reset_flush_race) {
 				coresight_cti_map_trigout(drvdata->cti_flush,
@@ -548,6 +601,12 @@ static int tmc_enable(struct tmc_drvdata *drvdata, enum tmc_mode mode)
 			__tmc_etf_enable(drvdata);
 	}
 	drvdata->enable = true;
+
+	/*
+	 * sticky_enable prevents users from reading tmc dev node before
+	 * enabling tmc at least once.
+	 */
+	drvdata->sticky_enable = true;
 	spin_unlock_irqrestore(&drvdata->spinlock, flags);
 	mutex_unlock(&drvdata->usb_lock);
 
@@ -639,7 +698,6 @@ static void __tmc_etb_dump(struct tmc_drvdata *drvdata)
 	char *hdr;
 	char *bufp;
 	uint32_t read_data;
-	int i;
 
 	memwidth = BMVAL(tmc_readl(drvdata, CORESIGHT_DEVID), 8, 10);
 	if (memwidth == TMC_MEM_INTF_WIDTH_32BITS)
@@ -653,16 +711,22 @@ static void __tmc_etb_dump(struct tmc_drvdata *drvdata)
 
 	bufp = drvdata->buf;
 	while (1) {
-		for (i = 0; i < memwords; i++) {
-			read_data = tmc_readl_no_log(drvdata, TMC_RRD);
-			if (read_data == 0xFFFFFFFF)
-				goto out;
-			memcpy(bufp, &read_data, BYTES_PER_WORD);
-			bufp += BYTES_PER_WORD;
+		read_data = tmc_readl_no_log(drvdata, TMC_RRD);
+		if (read_data == 0xFFFFFFFF)
+			goto out;
+		if ((bufp - drvdata->buf) >= drvdata->size) {
+			dev_err(drvdata->dev, "ETF-ETB end marker missing\n");
+			goto out;
 		}
+		memcpy(bufp, &read_data, BYTES_PER_WORD);
+		bufp += BYTES_PER_WORD;
 	}
 
 out:
+	if ((bufp - drvdata->buf) % (memwords * BYTES_PER_WORD))
+		dev_dbg(drvdata->dev, "ETF-ETB data is not %lx bytes aligned\n",
+			(unsigned long) memwords * BYTES_PER_WORD);
+
 	if (drvdata->aborting) {
 		hdr = drvdata->buf - PAGE_SIZE;
 		*(uint32_t *)(hdr + TMC_ETFETB_DUMP_MAGIC_OFF) =
@@ -862,6 +926,11 @@ static int tmc_read_prepare(struct tmc_drvdata *drvdata)
 	enum tmc_mode mode;
 
 	spin_lock_irqsave(&drvdata->spinlock, flags);
+	if (!drvdata->sticky_enable) {
+		dev_err(drvdata->dev, "enable tmc once before reading\n");
+		ret = -EPERM;
+		goto err;
+	}
 	if (!drvdata->enable)
 		goto out;
 
@@ -971,7 +1040,7 @@ static ssize_t tmc_read(struct file *file, char __user *data, size_t len,
 
 	*ppos += len;
 
-	dev_dbg(drvdata->dev, "%s: %d bytes copied, %d bytes left\n",
+	dev_dbg(drvdata->dev, "%s: %zu bytes copied, %d bytes left\n",
 		__func__, len, (int) (drvdata->size - *ppos));
 	return len;
 }
@@ -1130,7 +1199,7 @@ static ssize_t tmc_etr_byte_cntr_read(struct file *file, char __user *data,
 	else
 		*ppos += len;
 
-	dev_dbg(drvdata->dev, "%s: %d bytes copied, %d bytes left\n",
+	dev_dbg(drvdata->dev, "%s: %zu bytes copied, %d bytes left\n",
 		__func__, len, (int) (drvdata->size - *ppos));
 	return len;
 
@@ -1295,20 +1364,60 @@ static ssize_t tmc_etr_store_byte_cntr_value(struct device *dev,
 	struct tmc_drvdata *drvdata = dev_get_drvdata(dev->parent);
 	unsigned long val;
 
-	if (!drvdata->byte_cntr_present || drvdata->byte_cntr_enable)
+	mutex_lock(&drvdata->byte_cntr_lock);
+	if (!drvdata->byte_cntr_present || drvdata->byte_cntr_enable) {
+		mutex_unlock(&drvdata->byte_cntr_lock);
 		return -EPERM;
-	if (sscanf(buf, "%lx", &val) != 1)
+	}
+	if (sscanf(buf, "%lx", &val) != 1) {
+		mutex_unlock(&drvdata->byte_cntr_lock);
 		return -EINVAL;
-	if ((drvdata->size / 8) < val)
+	}
+	if ((drvdata->size / 8) < val) {
+		mutex_unlock(&drvdata->byte_cntr_lock);
 		return -EINVAL;
-	if (val && drvdata->size % (val * 8) != 0)
+	}
+	if (val && drvdata->size % (val * 8) != 0) {
+		mutex_unlock(&drvdata->byte_cntr_lock);
 		return -EINVAL;
+	}
 
 	drvdata->byte_cntr_value = val;
+	mutex_unlock(&drvdata->byte_cntr_lock);
 	return size;
 }
 static DEVICE_ATTR(byte_cntr_value, S_IRUGO | S_IWUSR,
 		   tmc_etr_show_byte_cntr_value, tmc_etr_store_byte_cntr_value);
+
+static ssize_t tmc_etr_show_mem_size(struct device *dev,
+				     struct device_attribute *attr,
+				     char *buf)
+{
+	struct tmc_drvdata *drvdata = dev_get_drvdata(dev->parent);
+	unsigned long val = drvdata->mem_size;
+
+	return scnprintf(buf, PAGE_SIZE, "%#lx\n", val);
+}
+
+static ssize_t tmc_etr_store_mem_size(struct device *dev,
+				      struct device_attribute *attr,
+				      const char *buf, size_t size)
+{
+	struct tmc_drvdata *drvdata = dev_get_drvdata(dev->parent);
+	unsigned long val;
+
+	mutex_lock(&drvdata->usb_lock);
+	if (sscanf(buf, "%lx", &val) != 1) {
+		mutex_unlock(&drvdata->usb_lock);
+		return -EINVAL;
+	}
+
+	drvdata->mem_size = val;
+	mutex_unlock(&drvdata->usb_lock);
+	return size;
+}
+static DEVICE_ATTR(mem_size, S_IRUGO | S_IWUSR,
+		   tmc_etr_show_mem_size, tmc_etr_store_mem_size);
 
 static struct attribute *tmc_attrs[] = {
 	&dev_attr_trigger_cntr.attr,
@@ -1322,6 +1431,7 @@ static struct attribute_group tmc_attr_grp = {
 static struct attribute *tmc_etr_attrs[] = {
 	&dev_attr_out_mode.attr,
 	&dev_attr_byte_cntr_value.attr,
+	&dev_attr_mem_size.attr,
 	NULL,
 };
 
@@ -1345,7 +1455,7 @@ static const struct attribute_group *tmc_etf_attr_grps[] = {
 	NULL,
 };
 
-static int __devinit tmc_etr_bam_init(struct platform_device *pdev,
+static int tmc_etr_bam_init(struct platform_device *pdev,
 				      struct tmc_drvdata *drvdata)
 {
 	struct device *dev = &pdev->dev;
@@ -1464,6 +1574,8 @@ static int tmc_etr_byte_cntr_init(struct platform_device *pdev,
 		goto out;
 	}
 
+	init_waitqueue_head(&drvdata->wq);
+
 	drvdata->byte_cntr_irq = platform_get_irq_byname(pdev,
 							"byte-cntr-irq");
 	if (drvdata->byte_cntr_irq < 0) {
@@ -1483,7 +1595,6 @@ static int tmc_etr_byte_cntr_init(struct platform_device *pdev,
 		goto err;
 	}
 
-	init_waitqueue_head(&drvdata->wq);
 	node_size += strlen(node_name);
 
 	drvdata->byte_cntr_node = devm_kzalloc(&pdev->dev,
@@ -1517,7 +1628,7 @@ static void tmc_etr_byte_cntr_exit(struct tmc_drvdata *drvdata)
 		tmc_etr_byte_cntr_dev_deregister(drvdata);
 }
 
-static int __devinit tmc_probe(struct platform_device *pdev)
+static int tmc_probe(struct platform_device *pdev)
 {
 	int ret;
 	uint32_t devid;
@@ -1589,6 +1700,7 @@ static int __devinit tmc_probe(struct platform_device *pdev)
 				clk_disable_unprepare(drvdata->clk);
 				return ret;
 			}
+			drvdata->mem_size = drvdata->size;
 		}
 	} else {
 		drvdata->size = tmc_readl(drvdata, TMC_RSZ) * BYTES_PER_WORD;
@@ -1597,12 +1709,6 @@ static int __devinit tmc_probe(struct platform_device *pdev)
 	clk_disable_unprepare(drvdata->clk);
 
 	if (drvdata->config_type == TMC_CONFIG_TYPE_ETR) {
-		drvdata->vaddr = dma_zalloc_coherent(&pdev->dev, drvdata->size,
-						     &drvdata->paddr,
-						     GFP_KERNEL);
-		if (!drvdata->vaddr)
-			return -ENOMEM;
-		drvdata->buf = drvdata->vaddr;
 		drvdata->out_mode = TMC_ETR_OUT_MODE_MEM;
 		if (pdev->dev.of_node)
 			drvdata->byte_cntr_present = !of_property_read_bool
@@ -1741,14 +1847,10 @@ err2:
 err1:
 	tmc_etr_byte_cntr_exit(drvdata);
 err0:
-	if (drvdata->vaddr)
-		dma_free_coherent(&pdev->dev, drvdata->size,
-				  drvdata->vaddr,
-				  drvdata->paddr);
 	return ret;
 }
 
-static int __devexit tmc_remove(struct platform_device *pdev)
+static int tmc_remove(struct platform_device *pdev)
 {
 	struct tmc_drvdata *drvdata = platform_get_drvdata(pdev);
 
@@ -1756,9 +1858,8 @@ static int __devexit tmc_remove(struct platform_device *pdev)
 	misc_deregister(&drvdata->miscdev);
 	coresight_unregister(drvdata->csdev);
 	tmc_etr_bam_exit(drvdata);
-	if (drvdata->vaddr)
-		dma_free_coherent(&pdev->dev, drvdata->size, drvdata->vaddr,
-				  drvdata->paddr);
+	tmc_etr_free_mem(drvdata);
+
 	return 0;
 }
 
@@ -1766,11 +1867,10 @@ static struct of_device_id tmc_match[] = {
 	{.compatible = "arm,coresight-tmc"},
 	{}
 };
-EXPORT_COMPAT("arm,coresight-tmc");
 
 static struct platform_driver tmc_driver = {
 	.probe          = tmc_probe,
-	.remove         = __devexit_p(tmc_remove),
+	.remove         = tmc_remove,
 	.driver         = {
 		.name   = "coresight-tmc",
 		.owner	= THIS_MODULE,

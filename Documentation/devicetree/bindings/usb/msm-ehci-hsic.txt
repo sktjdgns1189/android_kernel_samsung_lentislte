@@ -44,7 +44,9 @@ Optional properties :
   suspend, reset and resume.
 - qcom,phy-susp-sof-workaround : If present then HSIC PHY has h/w BUG related to
   SOFs while entering SUSPEND. Relevant software workaround is required for the same
-  during SUSPEND only.
+  during SUSPEND.
+- qcom,phy-reset-sof-workaround : If present then HSIC PHY has h/w BUG related to
+  SOFs during RESET.
 - qcom,pool-64-bit-align: If present then the pool's memory will be aligned
   to 64 bits
 - qcom,enable_hbm: if present host bus manager is enabled.
@@ -85,12 +87,13 @@ Optional properties :
 - hsic,vdd-voltage-level: This property must be a list of three integer
   values (no, min, max) where each value represents either a voltage in
   microvolts or a value corresponding to voltage corner
+- qcom,disable-internal-clk-gating: If present then internal clock gating in
+  controller is disabled. Internal clock gating is enabled by default in hw.
 
 - Refer to "Documentation/devicetree/bindings/arm/msm/msm_bus.txt" for
   below optional properties:
     - qcom,msm_bus,name
     - qcom,msm_bus,num_cases
-    - qcom,msm_bus,active_only
     - qcom,msm_bus,num_paths
     - qcom,msm_bus,vectors
 

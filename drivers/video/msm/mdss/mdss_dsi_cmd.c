@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -21,7 +21,7 @@
 #include <linux/iopoll.h>
 #include <linux/kthread.h>
 
-#include <mach/iommu_domains.h>
+#include <linux/msm_iommu_domains.h>
 
 #include "mdss_dsi_cmd.h"
 #include "mdss_dsi.h"
@@ -59,7 +59,7 @@ char *mdss_dsi_buf_init(struct dsi_buf *dp)
 	int off;
 
 	dp->data = dp->start;
-	off = (int)dp->data;
+	off = (int) (unsigned long) dp->data;
 	/* 8 byte align */
 	off &= 0x07;
 	if (off)
@@ -71,17 +71,34 @@ char *mdss_dsi_buf_init(struct dsi_buf *dp)
 
 int mdss_dsi_buf_alloc(struct dsi_buf *dp, int size)
 {
+	int off;
 
-	dp->start = dma_alloc_writecombine(NULL, size, &dp->dmap, GFP_KERNEL);
+	dp->start = kmalloc(size, GFP_KERNEL);
 	if (dp->start == NULL) {
 		pr_err("%s:%u\n", __func__, __LINE__);
 		return -ENOMEM;
 	}
 
+	/* PAGE_SIZE align */
+	if ((u32)dp->start & (SZ_4K - 1)) {
+		kfree(dp->start);
+	dp->start = kmalloc(size * 2, GFP_KERNEL);
+	if (dp->start == NULL) {
+		pr_err("%s:%u\n", __func__, __LINE__);
+		return -ENOMEM;
+	}
+
+	off = (int)dp->start;
+	off &= (SZ_4K - 1);
+	if (off)
+		off = SZ_4K - off;
+		dp->start += off;
+	}
+
 	dp->end = dp->start + size;
 	dp->size = size;
 
-	if ((int)dp->start & 0x07)
+	if ((int) (unsigned long) dp->start & 0x07)
 		pr_err("%s: buf NOT 8 bytes aligned\n", __func__);
 
 	dp->data = dp->start;

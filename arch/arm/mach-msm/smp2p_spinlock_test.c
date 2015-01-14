@@ -1,6 +1,6 @@
 /* arch/arm/mach-msm/smp2p_spinlock_test.c
  *
- * Copyright (c) 2013, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -17,8 +17,8 @@
 #include <linux/delay.h>
 #include <linux/completion.h>
 #include <linux/remote_spinlock.h>
-#include <mach/msm_smem.h>
-#include "smem_private.h"
+#include <soc/qcom/smem.h>
+#include "../../../drivers/soc/qcom/smem_private.h"
 #include "smp2p_private.h"
 #include "smp2p_test_common.h"
 
@@ -43,6 +43,8 @@ struct rpm_spinlock_test {
 	uint32_t rpm_lock_count;
 };
 
+static uint32_t ut_remote_spinlock_run_time = 1;
+
 /**
  * smp2p_ut_remote_spinlock_core - Verify remote spinlock.
  *
@@ -64,12 +66,12 @@ static void smp2p_ut_remote_spinlock_core(struct seq_file *s, int remote_pid,
 	struct mock_cb_data cb_in;
 	unsigned long flags;
 	unsigned n;
-	unsigned test_num;
 	bool have_lock;
 	bool timeout;
 	int failed_tmp;
 	int spinlock_owner;
 	remote_spinlock_t *smem_spinlock;
+	unsigned long end;
 
 	seq_printf(s, "Running %s for '%s' remote pid %d\n",
 		   __func__, smp2p_pid_to_name(remote_pid), remote_pid);
@@ -139,9 +141,9 @@ static void smp2p_ut_remote_spinlock_core(struct seq_file *s, int remote_pid,
 
 		/* Run spinlock test */
 		if (use_trylock)
-			seq_printf(s, "\tUsing remote_spin_trylock\n");
+			seq_puts(s, "\tUsing remote_spin_trylock\n");
 		else
-			seq_printf(s, "\tUsing remote_spin_lock\n");
+			seq_puts(s, "\tUsing remote_spin_lock\n");
 
 		flags = 0;
 		have_lock = false;
@@ -149,7 +151,14 @@ static void smp2p_ut_remote_spinlock_core(struct seq_file *s, int remote_pid,
 		spinlock_owner = 0;
 		test_request = 0x0;
 		SMP2P_SET_RMT_CMD_TYPE_REQ(test_request);
-		for (test_num = 0; !failed && test_num < 10000; ++test_num) {
+		end = jiffies + (ut_remote_spinlock_run_time * HZ);
+		if (ut_remote_spinlock_run_time < 300) {
+				seq_printf(s, "\tRunning test for %u seconds; ",
+					ut_remote_spinlock_run_time);
+				seq_puts(s,
+					"on physical hardware please run >= 300 seconds by doing 'echo 300 >  ut_remote_spinlock_time'\n");
+		}
+		while (time_is_after_jiffies(end)) {
 			/* try to acquire spinlock */
 			if (use_trylock) {
 				unsigned long j_start = jiffies;
@@ -157,7 +166,7 @@ static void smp2p_ut_remote_spinlock_core(struct seq_file *s, int remote_pid,
 						smem_spinlock, flags)) {
 					if (jiffies_to_msecs(jiffies - j_start)
 							> 1000) {
-						seq_printf(s,
+						seq_puts(s,
 							"\tFail: Timeout trying to get the lock\n");
 						timeout = true;
 						break;
@@ -184,8 +193,8 @@ static void smp2p_ut_remote_spinlock_core(struct seq_file *s, int remote_pid,
 					remote_spin_owner(smem_spinlock);
 				if (spinlock_owner != REMOTE_SPIN_PID) {
 					/* lock stolen by remote side */
-					seq_printf(s,
-						"\tFail: Remote side (%d) stole lock (pid %d)\n",
+					seq_puts(s, "\tFail: Remote side: ");
+					seq_printf(s, "%d stole lock pid: %d\n",
 						remote_pid, spinlock_owner);
 					failed = true;
 					break;
@@ -239,20 +248,20 @@ static void smp2p_ut_remote_spinlock_core(struct seq_file *s, int remote_pid,
 		failed = failed_tmp;
 
 		test_response = SMP2P_GET_RMT_DATA(test_response);
-		seq_printf(s,
-			"\tLocked spinlock local %u times; remote %u times",
+		seq_puts(s, "\tLocked spinlock ");
+		seq_printf(s, "local %u times; remote %u times",
 			lock_count,
 			test_response & ((1 << RS_END_THIEF_PID_BIT) - 1)
 			);
 		if (test_response & RS_END_THIEF_MASK) {
-			seq_printf(s,
-				"Remote side reporting lock stolen by pid %d.\n",
+			seq_puts(s, "Remote side reporting lock stolen by ");
+			seq_printf(s, "pid %d.\n",
 				SMP2P_GET_BITS(test_response,
 					RS_END_THIEF_MASK,
 					RS_END_THIEF_PID_BIT));
 			failed = 1;
 		}
-		seq_printf(s, "\n");
+		seq_puts(s, "\n");
 
 		/* Cleanup */
 		ret = msm_smp2p_out_close(&handle);
@@ -263,7 +272,7 @@ static void smp2p_ut_remote_spinlock_core(struct seq_file *s, int remote_pid,
 		UT_ASSERT_INT(ret, ==, 0);
 
 		if (!failed && !timeout)
-			seq_printf(s, "\tOK\n");
+			seq_puts(s, "\tOK\n");
 	} while (0);
 
 	if (failed) {
@@ -279,7 +288,7 @@ static void smp2p_ut_remote_spinlock_core(struct seq_file *s, int remote_pid,
 				SMP2P_RLPB_ENTRY_NAME, &cb_in.nb);
 
 		pr_err("%s: Failed\n", __func__);
-		seq_printf(s, "\tFailed\n");
+		seq_puts(s, "\tFailed\n");
 	}
 }
 
@@ -298,7 +307,7 @@ static void smp2p_ut_remote_spinlock_pid(struct seq_file *s, int pid,
 
 	int_cfg = smp2p_get_interrupt_config();
 	if (!int_cfg) {
-		seq_printf(s, "Remote processor config unavailable\n");
+		seq_puts(s, "Remote processor config unavailable\n");
 		return;
 	}
 
@@ -381,15 +390,16 @@ static void smp2p_ut_remote_spinlock_rpm(struct seq_file *s)
 		smem_spinlock = smem_get_remote_spinlock();
 		UT_ASSERT_PTR(smem_spinlock, !=, NULL);
 
-		data_ptr = smem_alloc2(SMEM_ID_VENDOR0,
-				sizeof(struct rpm_spinlock_test));
+		data_ptr = smem_alloc(SMEM_ID_VENDOR0,
+				sizeof(struct rpm_spinlock_test), 0,
+				SMEM_ANY_HOST_FLAG);
 		UT_ASSERT_PTR(0, !=, data_ptr);
 
 		/* Send start */
 		writel_relaxed(0, &data_ptr->apps_lock_count);
 		writel_relaxed(RPM_CMD_START, &data_ptr->apps_cmd);
 
-		seq_printf(s, "\tWaiting for RPM to start test\n");
+		seq_puts(s, "\tWaiting for RPM to start test\n");
 		for (n = 0; n < 1000; ++n) {
 			if (readl_relaxed(&data_ptr->rpm_cmd) !=
 					RPM_CMD_INVALID)
@@ -441,18 +451,17 @@ static void smp2p_ut_remote_spinlock_rpm(struct seq_file *s)
 
 		/* End test */
 		writel_relaxed(RPM_CMD_INVALID, &data_ptr->apps_cmd);
-		seq_printf(s,
-				"\tLocked spinlock local %u remote %u\n",
+		seq_printf(s, "\tLocked spinlock local %u remote %u\n",
 				readl_relaxed(&data_ptr->apps_lock_count),
 				readl_relaxed(&data_ptr->rpm_lock_count));
 
 		if (!failed)
-			seq_printf(s, "\tOK\n");
+			seq_puts(s, "\tOK\n");
 	} while (0);
 
 	if (failed) {
 		pr_err("%s: Failed\n", __func__);
-		seq_printf(s, "\tFailed\n");
+		seq_puts(s, "\tFailed\n");
 	}
 }
 
@@ -481,6 +490,8 @@ static int __init smp2p_debugfs_init(void)
 		smp2p_ut_remote_spinlock_wcnss);
 	smp2p_debug_create("ut_remote_spinlock_rpm",
 		smp2p_ut_remote_spinlock_rpm);
+	smp2p_debug_create_u32("ut_remote_spinlock_time",
+		&ut_remote_spinlock_run_time);
 
 	return 0;
 }

@@ -605,16 +605,9 @@ static int mdp3_dmap_update(struct mdp3_dma *dma, void *buf,
 			}
 		}
 	}
-	if (dma->update_src_cfg) {
-		if (dma->output_config.out_sel ==
-				 MDP3_DMA_OUTPUT_SEL_DSI_VIDEO && intf->active)
-			pr_err("configuring dma source while dma is active\n");
-		dma->dma_config_source(dma);
-		dma->update_src_cfg = false;
-	}
 	spin_lock_irqsave(&dma->dma_lock, flag);
 	MDP3_REG_WRITE(MDP3_REG_DMA_P_IBUF_ADDR, (u32)buf);
-	dma->source_config.buf = buf;
+	dma->source_config.buf = (int)buf;
 	if (dma->output_config.out_sel == MDP3_DMA_OUTPUT_SEL_DSI_CMD) {
 		mdp3_ccs_update(dma);
 		MDP3_REG_WRITE(MDP3_REG_DMA_P_START, 1);
@@ -657,7 +650,7 @@ static int mdp3_dmas_update(struct mdp3_dma *dma, void *buf,
 
 	spin_lock_irqsave(&dma->dma_lock, flag);
 	MDP3_REG_WRITE(MDP3_REG_DMA_S_IBUF_ADDR, (u32)buf);
-	dma->source_config.buf = buf;
+	dma->source_config.buf = (int)buf;
 	if (dma->output_config.out_sel == MDP3_DMA_OUTPUT_SEL_DSI_CMD)
 		MDP3_REG_WRITE(MDP3_REG_DMA_S_START, 1);
 
@@ -968,7 +961,6 @@ int mdp3_dma_init(struct mdp3_dma *dma)
 	dma->vsync_client.handler = NULL;
 	dma->vsync_client.arg = NULL;
 	dma->histo_state = MDP3_DMA_HISTO_STATE_IDLE;
-	dma->update_src_cfg = false;
 
 	memset(&dma->cursor, 0, sizeof(dma->cursor));
 	memset(&dma->ccs_config, 0, sizeof(dma->ccs_config));
@@ -1060,9 +1052,7 @@ int dsi_video_config(struct mdp3_intf *intf, struct mdp3_intf_cfg *cfg)
 		temp |= BIT(2);
 	MDP3_REG_WRITE(MDP3_REG_DSI_VIDEO_CTL_POLARITY, temp);
 
-	v->underflow_color |= 0x80000000;
-	MDP3_REG_WRITE(MDP3_REG_DSI_VIDEO_UNDERFLOW_CTL, v->underflow_color);
-
+	MDP3_REG_WRITE(MDP3_REG_DSI_VIDEO_UNDERFLOW_CTL, 0x800000ff);
 	return 0;
 }
 

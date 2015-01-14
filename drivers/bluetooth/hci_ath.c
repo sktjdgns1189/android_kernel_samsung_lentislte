@@ -46,7 +46,7 @@
 
 #include "hci_uart.h"
 #ifdef CONFIG_SERIAL_MSM_HS
-#include <mach/msm_serial_hs.h>
+#include <linux/platform_data/msm_serial_hs.h>
 #endif
 
 static int enableuartsleep = 1;
@@ -636,7 +636,7 @@ static int bluesleep_populate_pinfo(struct platform_device *pdev)
 	return 0;
 }
 
-static int __devinit bluesleep_probe(struct platform_device *pdev)
+static int bluesleep_probe(struct platform_device *pdev)
 {
 	int ret;
 

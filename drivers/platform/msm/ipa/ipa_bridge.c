@@ -12,7 +12,7 @@
 
 #include <linux/delay.h>
 #include <linux/ratelimit.h>
-#include <mach/msm_smem.h>
+#include <soc/qcom/smem.h>
 #include "ipa_i.h"
 
 /*
@@ -468,8 +468,10 @@ int ipa_bridge_init(void)
 {
 	int i;
 
-	ipa_ctx->smem_pipe_mem = smem_alloc2(SMEM_BAM_PIPE_MEMORY,
-			IPA_SMEM_PIPE_MEM_SZ);
+	ipa_ctx->smem_pipe_mem = smem_alloc(SMEM_BAM_PIPE_MEMORY,
+			IPA_SMEM_PIPE_MEM_SZ,
+			0,
+			SMEM_ANY_HOST_FLAG);
 	if (!ipa_ctx->smem_pipe_mem) {
 		IPAERR("smem alloc failed\n");
 		return -ENOMEM;
@@ -579,7 +581,8 @@ EXPORT_SYMBOL(ipa_bridge_teardown);
 bool ipa_emb_ul_pipes_empty(void)
 {
 	struct sps_pipe *emb_ipa_ul =
-		ipa_ctx->sys[IPA_A5_LAN_WAN_OUT].ep->ep_hdl;
+		ipa_ctx->ep[ipa_get_ep_mapping(
+			IPA_CLIENT_APPS_LAN_WAN_PROD)].ep_hdl;
 	struct sps_pipe *emb_ipa_to_dma =
 		bridge[IPA_BRIDGE_TYPE_EMBEDDED].pipe[IPA_UL_FROM_IPA].pipe;
 	struct sps_pipe *emb_dma_to_a2 =

@@ -17,6 +17,8 @@
  * GNU General Public License for more details.
  */
 
+#define pr_fmt(fmt) "logger: " fmt
+
 #include <linux/sched.h>
 #include <linux/module.h>
 #include <linux/fs.h>
@@ -25,50 +27,76 @@
 #include <linux/poll.h>
 #include <linux/slab.h>
 #include <linux/time.h>
+#include <linux/vmalloc.h>
+#include <linux/aio.h>
 #include "logger.h"
 
 #include <asm/ioctls.h>
+#ifdef CONFIG_SEC_DEBUG
+#include <mach/sec_debug.h>
+#include <linux/string.h>
+#define MAX_KLOG_BUF_SIZE (256)
+static char klog_buf[MAX_KLOG_BUF_SIZE];
+#endif
 
 #ifndef CONFIG_LOGCAT_SIZE
 #define CONFIG_LOGCAT_SIZE 256
 #endif
 
-/*
+/**
  * struct logger_log - represents a specific log, such as 'main' or 'radio'
+ * @buffer:	The actual ring buffer
+ * @misc:	The "misc" device representing the log
+ * @wq:		The wait queue for @readers
+ * @readers:	This log's readers
+ * @mutex:	The mutex that protects the @buffer
+ * @w_off:	The current write head offset
+ * @head:	The head, or location that readers start reading at.
+ * @size:	The size of the log
+ * @logs:	The list of log channels
  *
  * This structure lives from module insertion until module removal, so it does
  * not need additional reference counting. The structure is protected by the
  * mutex 'mutex'.
  */
 struct logger_log {
-	unsigned char		*buffer;/* the ring buffer itself */
-	struct miscdevice	misc;	/* misc device representing the log */
-	wait_queue_head_t	wq;	/* wait queue for readers */
-	struct list_head	readers; /* this log's readers */
-	struct mutex		mutex;	/* mutex protecting buffer */
-	size_t			w_off;	/* current write head offset */
-	size_t			head;	/* new readers start here */
-	size_t			size;	/* size of the log */
+	unsigned char		*buffer;
+	struct miscdevice	misc;
+	wait_queue_head_t	wq;
+	struct list_head	readers;
+	struct mutex		mutex;
+	size_t			w_off;
+	size_t			head;
+	size_t			size;
+	struct list_head	logs;
 };
 
-/*
+static LIST_HEAD(log_list);
+
+
+/**
  * struct logger_reader - a logging device open for reading
+ * @log:	The associated log
+ * @list:	The associated entry in @logger_log's list
+ * @r_off:	The current read head offset.
+ * @r_all:	Reader can read all entries
+ * @r_ver:	Reader ABI version
  *
  * This object lives from open to release, so we don't need additional
  * reference counting. The structure is protected by log->mutex.
  */
 struct logger_reader {
-	struct logger_log	*log;	/* associated log */
-	struct list_head	list;	/* entry in logger_log's list */
-	size_t			r_off;	/* current read head offset */
-	bool			r_all;	/* reader can read all entries */
-	int			r_ver;	/* reader ABI version */
+	struct logger_log	*log;
+	struct list_head	list;
+	size_t			r_off;
+	bool			r_all;
+	int			r_ver;
 };
 
 /* logger_offset - returns index 'n' into the log via (optimized) modulus */
-size_t logger_offset(struct logger_log *log, size_t n)
+static size_t logger_offset(struct logger_log *log, size_t n)
 {
-	return n & (log->size-1);
+	return n & (log->size - 1);
 }
 
 
@@ -224,7 +252,7 @@ static ssize_t do_read_log_to_user(struct logger_log *log,
  * 'log->buffer' which contains the first entry readable by 'euid'
  */
 static size_t get_next_entry_by_uid(struct logger_log *log,
-		size_t off, uid_t euid)
+		size_t off, kuid_t euid)
 {
 	while (off != log->w_off) {
 		struct logger_entry *entry;
@@ -233,7 +261,7 @@ static size_t get_next_entry_by_uid(struct logger_log *log,
 
 		entry = get_entry_header(log, off, &scratch);
 
-		if (entry->euid == euid)
+		if (uid_eq(entry->euid, euid))
 			return off;
 
 		next_len = sizeof(struct logger_entry) + entry->len;
@@ -436,6 +464,21 @@ static ssize_t do_write_log_from_user(struct logger_log *log,
 			 * message corruption from missing fragments.
 			 */
 			return -EFAULT;
+		
+#ifdef CONFIG_SEC_DEBUG
+	if (strncmp(log->buffer + log->w_off, "!@", 2) == 0) {		
+		if (count < MAX_KLOG_BUF_SIZE-1) {
+			memcpy(klog_buf, log->buffer + log->w_off, count);
+			klog_buf[count]=0;
+		} else {
+			memcpy(klog_buf, log->buffer + log->w_off, MAX_KLOG_BUF_SIZE-1);
+			klog_buf[MAX_KLOG_BUF_SIZE-1] = 0;
+		}
+	} else {
+		klog_buf[0]=0;
+		klog_buf[1]=0;
+	}
+#endif
 
 	log->w_off = logger_offset(log, log->w_off + count);
 
@@ -447,7 +490,7 @@ static ssize_t do_write_log_from_user(struct logger_log *log,
  * writev(), and aio_write(). Writes are our fast path, and we try to optimize
  * them above all else.
  */
-ssize_t logger_aio_write(struct kiocb *iocb, const struct iovec *iov,
+static ssize_t logger_aio_write(struct kiocb *iocb, const struct iovec *iov,
 			 unsigned long nr_segs, loff_t ppos)
 {
 	struct logger_log *log = file_get_log(iocb->ki_filp);
@@ -505,11 +548,24 @@ ssize_t logger_aio_write(struct kiocb *iocb, const struct iovec *iov,
 
 	/* wake up any blocked readers */
 	wake_up_interruptible(&log->wq);
+	
+#ifdef CONFIG_SEC_DEBUG
+	if (klog_buf[0]=='!' && klog_buf[1]=='@')
+		printk(KERN_INFO "%s\n", klog_buf);
+#endif
 
 	return ret;
 }
 
-static struct logger_log *get_log_from_minor(int);
+static struct logger_log *get_log_from_minor(int minor)
+{
+	struct logger_log *log;
+
+	list_for_each_entry(log, &log_list, logs)
+		if (log->misc.minor == minor)
+			return log;
+	return NULL;
+}
 
 /*
  * logger_open - the log's open() file operation
@@ -670,6 +726,11 @@ static long logger_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 			ret = -EBADF;
 			break;
 		}
+		if (!(in_egroup_p(file->f_dentry->d_inode->i_gid) ||
+				capable(CAP_SYSLOG))) {
+			ret = -EPERM;
+			break;
+		}
 		list_for_each_entry(reader, &log->readers, list)
 			reader->r_off = log->w_off;
 		log->head = log->w_off;
@@ -709,6 +770,10 @@ static const struct file_operations logger_fops = {
 	.release = logger_release,
 };
 
+#ifdef CONFIG_SEC_DEBUG 
+/* Use the old way because the new logger gets log buffers by means of vmalloc().
+    getlog tool considers that log buffers lie on physically contiguous memory area. */
+    
 /*
  * Defines a log structure with name 'NAME' and a size of 'SIZE' bytes, which
  * must be a power of two, and greater than
@@ -730,64 +795,214 @@ static struct logger_log VAR = { \
 	.w_off = 0, \
 	.head = 0, \
 	.size = SIZE, \
+	.logs = LIST_HEAD_INIT(VAR .logs), \
 };
 
-DEFINE_LOGGER_DEVICE(log_main, LOGGER_LOG_MAIN, CONFIG_LOGCAT_SIZE*1024)
-DEFINE_LOGGER_DEVICE(log_events, LOGGER_LOG_EVENTS, CONFIG_LOGCAT_SIZE*1024)
-DEFINE_LOGGER_DEVICE(log_radio, LOGGER_LOG_RADIO, CONFIG_LOGCAT_SIZE*1024)
-DEFINE_LOGGER_DEVICE(log_system, LOGGER_LOG_SYSTEM, CONFIG_LOGCAT_SIZE*1024)
+#ifdef CONFIG_SEC_LOGGER_BUFFER_EXPANSION
+DEFINE_LOGGER_DEVICE(log_main, LOGGER_LOG_MAIN, CONFIG_LOGCAT_SIZE*1024*4)	// 1MB
+#else
+DEFINE_LOGGER_DEVICE(log_main, LOGGER_LOG_MAIN, CONFIG_LOGCAT_SIZE*1024*2)	// 512MB
+#endif
+DEFINE_LOGGER_DEVICE(log_events, LOGGER_LOG_EVENTS, CONFIG_LOGCAT_SIZE*1024)	// 256KB
+DEFINE_LOGGER_DEVICE(log_radio, LOGGER_LOG_RADIO, CONFIG_LOGCAT_SIZE*1024*4)	// 1MB
+DEFINE_LOGGER_DEVICE(log_system, LOGGER_LOG_SYSTEM, CONFIG_LOGCAT_SIZE*1024)	// 256KB
 
-static struct logger_log *get_log_from_minor(int minor)
+struct logger_log * log_buffers[]={
+	&log_main,
+	&log_events,
+	&log_radio,
+	&log_system,
+	NULL,
+};
+
+struct logger_log *sec_get_log_buffer(char *log_name, int size)
 {
-	if (log_main.misc.minor == minor)
-		return &log_main;
-	if (log_events.misc.minor == minor)
-		return &log_events;
-	if (log_radio.misc.minor == minor)
-		return &log_radio;
-	if (log_system.misc.minor == minor)
-		return &log_system;
+	struct logger_log **log_buf=&log_buffers[0];
+	
+	while (*log_buf) {
+		if (!strcmp(log_name,(*log_buf)->misc.name)) {
+			return *log_buf;
+		}
+
+		log_buf++;			
+	}
 	return NULL;
 }
+#endif
 
-static int __init init_log(struct logger_log *log)
+
+/*
+ * Log size must must be a power of two, and greater than
+ * (LOGGER_ENTRY_MAX_PAYLOAD + sizeof(struct logger_entry)).
+ */
+static int __init create_log(char *log_name, int size)
 {
-	int ret;
+	int ret = 0;
+	struct logger_log *log;
 
+#ifdef CONFIG_SEC_DEBUG 
+
+	log = sec_get_log_buffer(log_name,size);
+	if (!log) {
+		pr_info("No \"%s\" buffer registered\n",log_name);
+		return -1;
+	}
+
+	list_add_tail(&log->logs, &log_list);
+
+	/* finally, initialize the misc device for this log */
 	ret = misc_register(&log->misc);
 	if (unlikely(ret)) {
-		printk(KERN_ERR "logger: failed to register misc "
-		       "device for log '%s'!\n", log->misc.name);
+		pr_err("failed to register misc device for log '%s'!\n",
+				log->misc.name);
 		return ret;
 	}
 
-	printk(KERN_INFO "logger: created %luK log '%s'\n",
-	       (unsigned long) log->size >> 10, log->misc.name);
+	pr_info("created %luK log '%s'\n",
+		(unsigned long) log->size >> 10, log->misc.name);
+
+	return ret;
+#else
+
+	unsigned char *buffer;
+
+	buffer = vmalloc(size);
+	if (buffer == NULL)
+		return -ENOMEM;
+
+	log = kzalloc(sizeof(struct logger_log), GFP_KERNEL);
+	if (log == NULL) {
+		ret = -ENOMEM;
+		goto out_free_buffer;
+	}
+
+	log->buffer = buffer;
+
+	log->misc.minor = MISC_DYNAMIC_MINOR;
+	log->misc.name = kstrdup(log_name, GFP_KERNEL);
+	if (log->misc.name == NULL) {
+		ret = -ENOMEM;
+		goto out_free_log;
+	}
+
+	log->misc.fops = &logger_fops;
+	log->misc.parent = NULL;
+
+	init_waitqueue_head(&log->wq);
+	INIT_LIST_HEAD(&log->readers);
+	mutex_init(&log->mutex);
+	log->w_off = 0;
+	log->head = 0;
+	log->size = size;
+
+	INIT_LIST_HEAD(&log->logs);
+	list_add_tail(&log->logs, &log_list);
+
+	/* finally, initialize the misc device for this log */
+	ret = misc_register(&log->misc);
+	if (unlikely(ret)) {
+		pr_err("failed to register misc device for log '%s'!\n",
+				log->misc.name);
+		goto out_free_log;
+	}
+
+	pr_info("created %luK log '%s'\n",
+		(unsigned long) log->size >> 10, log->misc.name);
+
+	return 0;
+
+out_free_log:
+	kfree(log);
+
+out_free_buffer:
+	vfree(buffer);
+
+	return ret;
+#endif //CONFIG_SEC_DEBUG	
+}
+
+
+#if (defined CONFIG_SEC_DEBUG && defined CONFIG_SEC_DEBUG_SUBSYS)
+int sec_debug_subsys_set_logger_info(
+	struct sec_debug_subsys_logger_log_info *log_info)
+{
+	/*
+	struct secdbg_logger_log_info log_info = {
+		.stinfo = {
+			.buffer_offset = offsetof(struct logger_log, buffer),
+			.w_off_offset = offsetof(struct logger_log, w_off),
+			.head_offset = offsetof(struct logger_log, head),
+			.size_offset = offsetof(struct logger_log, size),
+			.size_t_typesize = sizeof(size_t),
+		},
+	};
+	*/
+	log_info->stinfo.buffer_offset = offsetof(struct logger_log, buffer);
+	log_info->stinfo.w_off_offset = offsetof(struct logger_log, w_off);
+	log_info->stinfo.head_offset = offsetof(struct logger_log, head);
+	log_info->stinfo.size_offset = offsetof(struct logger_log, size);
+	log_info->stinfo.size_t_typesize = sizeof(size_t);
+
+	log_info->main.log_paddr = __pa(&log_main);
+	log_info->main.buffer_paddr = __pa(_buf_log_main);
+	log_info->system.log_paddr = __pa(&log_system);
+	log_info->system.buffer_paddr = __pa(_buf_log_system);
+	log_info->events.log_paddr = __pa(&log_events);
+	log_info->events.buffer_paddr = __pa(_buf_log_events);
+	log_info->radio.log_paddr = __pa(&log_radio);
+	log_info->radio.buffer_paddr = __pa(_buf_log_radio);
 
 	return 0;
 }
+#endif
 
 static int __init logger_init(void)
 {
 	int ret;
 
-	ret = init_log(&log_main);
+	ret = create_log(LOGGER_LOG_MAIN, CONFIG_LOGCAT_SIZE*1024);
 	if (unlikely(ret))
 		goto out;
 
-	ret = init_log(&log_events);
+	ret = create_log(LOGGER_LOG_EVENTS, CONFIG_LOGCAT_SIZE*1024);
 	if (unlikely(ret))
 		goto out;
 
-	ret = init_log(&log_radio);
+	ret = create_log(LOGGER_LOG_RADIO, CONFIG_LOGCAT_SIZE*1024);
 	if (unlikely(ret))
 		goto out;
 
-	ret = init_log(&log_system);
+	ret = create_log(LOGGER_LOG_SYSTEM, CONFIG_LOGCAT_SIZE*1024);
 	if (unlikely(ret))
 		goto out;
+	
+#ifdef CONFIG_SEC_DEBUG
+	sec_getlog_supply_loggerinfo(_buf_log_main, _buf_log_radio,
+					 _buf_log_events, _buf_log_system);
+#endif
 
 out:
 	return ret;
 }
+
+static void __exit logger_exit(void)
+{
+	struct logger_log *current_log, *next_log;
+
+	list_for_each_entry_safe(current_log, next_log, &log_list, logs) {
+		/* we have to delete all the entry inside log_list */
+		misc_deregister(&current_log->misc);
+		vfree(current_log->buffer);
+		kfree(current_log->misc.name);
+		list_del(&current_log->logs);
+		kfree(current_log);
+	}
+}
+
+
 device_initcall(logger_init);
+module_exit(logger_exit);
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Robert Love, <rlove@google.com>");
+MODULE_DESCRIPTION("Android Logger");

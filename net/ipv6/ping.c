@@ -25,7 +25,6 @@
 #include <net/udp.h>
 #include <net/transp_v6.h>
 #include <net/ping.h>
-#include <linux/module.h>
 
 struct proto pingv6_prot = {
 	.name =		"PINGv6",
@@ -62,7 +61,7 @@ int dummy_ipv6_recv_error(struct sock *sk, struct msghdr *msg, int len)
 {
 	return -EAFNOSUPPORT;
 }
-int dummy_datagram_recv_ctl(struct sock *sk, struct msghdr *msg,
+int dummy_ip6_datagram_recv_ctl(struct sock *sk, struct msghdr *msg,
 				 struct sk_buff *skb)
 {
 	return -EAFNOSUPPORT;
@@ -74,7 +73,7 @@ int dummy_icmpv6_err_convert(u8 type, u8 code, int *err)
 void dummy_ipv6_icmp_error(struct sock *sk, struct sk_buff *skb, int err,
 			    __be16 port, u32 info, u8 *payload) {}
 int dummy_ipv6_chk_addr(struct net *net, const struct in6_addr *addr,
-			struct net_device *dev, int strict)
+			const struct net_device *dev, int strict)
 {
 	return 0;
 }
@@ -82,7 +81,7 @@ int dummy_ipv6_chk_addr(struct net *net, const struct in6_addr *addr,
 int __init pingv6_init(void)
 {
 	pingv6_ops.ipv6_recv_error = ipv6_recv_error;
-	pingv6_ops.datagram_recv_ctl = datagram_recv_ctl;
+	pingv6_ops.ip6_datagram_recv_ctl = ip6_datagram_recv_ctl;
 	pingv6_ops.icmpv6_err_convert = icmpv6_err_convert;
 	pingv6_ops.ipv6_icmp_error = ipv6_icmp_error;
 	pingv6_ops.ipv6_chk_addr = ipv6_chk_addr;
@@ -95,7 +94,7 @@ int __init pingv6_init(void)
 void pingv6_exit(void)
 {
 	pingv6_ops.ipv6_recv_error = dummy_ipv6_recv_error;
-	pingv6_ops.datagram_recv_ctl = dummy_datagram_recv_ctl;
+	pingv6_ops.ip6_datagram_recv_ctl = dummy_ip6_datagram_recv_ctl;
 	pingv6_ops.icmpv6_err_convert = dummy_icmpv6_err_convert;
 	pingv6_ops.ipv6_icmp_error = dummy_ipv6_icmp_error;
 	pingv6_ops.ipv6_chk_addr = dummy_ipv6_chk_addr;

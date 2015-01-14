@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2013, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2011-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -23,7 +23,7 @@
 #include <linux/err.h>
 #include <linux/types.h>
 #include <mach/msm_iomap.h>
-#include <mach/socinfo.h>
+#include <soc/qcom/socinfo.h>
 #include <mach/msm_bus.h>
 #include <linux/qrng.h>
 #include <linux/fs.h>
@@ -135,7 +135,7 @@ static struct hwrng msm_rng = {
 	.read = msm_rng_read,
 };
 
-static int __devinit msm_rng_enable_hw(struct msm_rng_device *msm_rng_dev)
+static int msm_rng_enable_hw(struct msm_rng_device *msm_rng_dev)
 {
 	unsigned long val = 0;
 	unsigned long reg_val = 0;
@@ -187,7 +187,7 @@ static const struct file_operations msm_rng_fops = {
 static struct class *msm_rng_class;
 static struct cdev msm_rng_cdev;
 
-static int __devinit msm_rng_probe(struct platform_device *pdev)
+static int msm_rng_probe(struct platform_device *pdev)
 {
 	struct resource *res;
 	struct msm_rng_device *msm_rng_dev = NULL;
@@ -293,7 +293,7 @@ err_exit:
 	return error;
 }
 
-static int __devexit msm_rng_remove(struct platform_device *pdev)
+static int msm_rng_remove(struct platform_device *pdev)
 {
 	struct msm_rng_device *msm_rng_dev = platform_get_drvdata(pdev);
 	unregister_chrdev(QRNG_IOC_MAGIC, DRIVER_NAME);
@@ -315,7 +315,7 @@ static struct of_device_id qrng_match[] = {
 
 static struct platform_driver rng_driver = {
 	.probe      = msm_rng_probe,
-	.remove     = __devexit_p(msm_rng_remove),
+	.remove     = msm_rng_remove,
 	.driver     = {
 		.name   = DRIVER_NAME,
 		.owner  = THIS_MODULE,

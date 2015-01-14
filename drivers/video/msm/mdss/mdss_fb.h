@@ -23,6 +23,9 @@
 #include "mdss_panel.h"
 #include "mdss_mdp_splash_logo.h"
 
+#define MDSS_LPAE_CHECK(phys)	\
+	((sizeof(phys) > sizeof(unsigned long)) ? ((phys >> 32) & 0xFF) : (0))
+
 #define MSM_FB_DEFAULT_PAGE_SIZE 2
 #define MFD_KEY  0x11161126
 #define MSM_FB_MAX_DEV_LIST 32
@@ -80,6 +83,7 @@ struct disp_info_notify {
 	struct mutex lock;
 	int value;
 	int is_suspend;
+	int ref_count;
 };
 
 struct msm_sync_pt_data {
@@ -127,7 +131,6 @@ struct msm_mdp_interface {
 	int (*splash_init_fnc)(struct msm_fb_data_type *mfd);
 	struct msm_sync_pt_data *(*get_sync_fnc)(struct msm_fb_data_type *mfd,
 				const struct mdp_buf_sync *buf_sync);
-	void (*check_dsi_status)(struct work_struct *work, uint32_t interval);
 	void *private1;
 };
 
@@ -137,9 +140,15 @@ struct msm_mdp_interface {
 					/ (2 * max_bright);\
 					} while (0)
 
+struct mdss_fb_file_info {
+	struct file *file;
+	struct list_head list;
+};
+
 struct mdss_fb_proc_info {
 	int pid;
 	u32 ref_cnt;
+	struct list_head file_list;
 	struct list_head list;
 };
 
@@ -171,14 +180,15 @@ struct msm_fb_data_type {
 	int panel_reconfig;
 
 	u32 dst_format;
+	int resume_state;
 	int panel_power_on;
 	struct disp_info_type_suspend suspend;
 
 	struct ion_handle *ihdl;
-	unsigned long iova;
+	dma_addr_t iova;
 	void *cursor_buf;
-	unsigned long cursor_buf_phys;
-	unsigned long cursor_buf_iova;
+	phys_addr_t cursor_buf_phys;
+	dma_addr_t cursor_buf_iova;
 
 	int ext_ad_ctrl;
 	u32 ext_bl_ctrl;
@@ -190,7 +200,6 @@ struct msm_fb_data_type {
 	u32 bl_updated;
 	u32 bl_level_old;
 	struct mutex bl_lock;
-	struct mutex lock;
 
 	struct platform_device *pdev;
 
@@ -224,6 +233,11 @@ struct msm_fb_data_type {
 
 	u32 dcm_state;
 	struct list_head proc_list;
+	struct ion_client *fb_ion_client;
+	struct ion_handle *fb_ion_handle;
+
+	bool mdss_fb_split_stored;
+
 	u32 wait_for_kickoff;
 };
 
@@ -246,14 +260,28 @@ static inline void mdss_fb_update_notify_update(struct msm_fb_data_type *mfd)
 	}
 }
 
-int mdss_fb_get_phys_info(unsigned long *start, unsigned long *len, int fb_num);
+#ifdef CONFIG_SAMSUNG_LPM_MODE
+extern int poweroff_charging;
+#endif /* CONFIG_SAMSUNG_LPM_MODE */
+
+#ifdef CONFIG_FB_MSM_CAMERA_CSC
+extern u8 csc_update;
+extern u8 pre_csc_update;
+#endif
+
+int mdss_fb_get_phys_info(dma_addr_t *start, unsigned long *len, int fb_num);
 void mdss_fb_set_backlight(struct msm_fb_data_type *mfd, u32 bkl_lvl);
 void mdss_fb_update_backlight(struct msm_fb_data_type *mfd);
-void mdss_fb_wait_for_fence(struct msm_sync_pt_data *sync_pt_data);
+int mdss_fb_wait_for_fence(struct msm_sync_pt_data *sync_pt_data);
 void mdss_fb_signal_timeline(struct msm_sync_pt_data *sync_pt_data);
 struct sync_fence *mdss_fb_sync_get_fence(struct sw_sync_timeline *timeline,
 				const char *fence_name, int val);
 int mdss_fb_register_mdp_instance(struct msm_mdp_interface *mdp);
+int mdss_fb_alloc_fb_ion_memory(struct msm_fb_data_type *mfd);
 int mdss_fb_dcm(struct msm_fb_data_type *mfd, int req_state);
 int mdss_fb_suspres_panel(struct device *dev, void *data);
+int mdss_fb_do_ioctl(struct fb_info *info, unsigned int cmd,
+		     unsigned long arg);
+int mdss_fb_compat_ioctl(struct fb_info *info, unsigned int cmd,
+			 unsigned long arg);
 #endif /* MDSS_FB_H */

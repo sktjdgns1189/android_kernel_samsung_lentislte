@@ -1,4 +1,4 @@
-/* Copyright (c) 2009-2010, 2013 The Linux Foundation. All rights reserved.
+/* Copyright (c) 2009-2010, 2013-2014 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -26,14 +26,23 @@
 #include <linux/bluetooth-power.h>
 #include <linux/slab.h>
 #include <linux/regulator/consumer.h>
+#ifdef CONFIG_CNSS
+#include <net/cnss.h>
+#endif
 
 #define BT_PWR_DBG(fmt, arg...)  pr_debug("%s: " fmt "\n" , __func__ , ## arg)
 #define BT_PWR_INFO(fmt, arg...) pr_info("%s: " fmt "\n" , __func__ , ## arg)
 #define BT_PWR_ERR(fmt, arg...)  pr_err("%s: " fmt "\n" , __func__ , ## arg)
-#define BT_VDD_PA_CURRENT        60000
+
+#define EXT_LDO_1_18_V_MAX		1187500
+#define EXT_LDO_1_18_V_MIN		1187500
+#define EXT_LDO_1_20_V_MAX		1200000
+#define EXT_LDO_1_20_V_MIN		1200000
+
+extern unsigned int system_rev;
 
 static struct of_device_id bt_power_match_table[] = {
-	{	.compatible = "qca,ar3002" },
+	{	.compatible = "qca,qca6174" },
 	{}
 };
 
@@ -176,11 +185,6 @@ static int bt_configure_gpios(int on)
 		msleep(100);
 	} else {
 		gpio_set_value(bt_reset_gpio, 0);
-
-		rc = gpio_direction_input(bt_reset_gpio);
-		if (rc)
-			BT_PWR_ERR("Unable to set direction\n");
-
 		msleep(100);
 	}
 	return rc;
@@ -190,7 +194,7 @@ static int bluetooth_power(int on)
 {
 	int rc = 0;
 
-	BT_PWR_DBG("on: %d", on);
+	BT_PWR_INFO("on: %d", on);
 
 	if (on) {
 		if (bt_power_pdata->bt_vdd_io) {
@@ -200,22 +204,31 @@ static int bluetooth_power(int on)
 				goto out;
 			}
 		}
-		if (bt_power_pdata->bt_vdd_ldo) {
-			rc = bt_configure_vreg(bt_power_pdata->bt_vdd_ldo);
-			if (rc < 0) {
-				BT_PWR_ERR("bt_power vddldo config failed");
-				goto vdd_ldo_fail;
-			}
-		}
 		if (bt_power_pdata->bt_vdd_pa) {
 			rc = bt_configure_vreg(bt_power_pdata->bt_vdd_pa);
 			if (rc < 0) {
 				BT_PWR_ERR("bt_power vddpa config failed");
 				goto vdd_pa_fail;
 			}
-			regulator_set_optimum_mode(
-				bt_power_pdata->bt_vdd_pa->reg,
-				BT_VDD_PA_CURRENT);
+		}
+		if (bt_power_pdata->bt_vdd_ldo) {
+#ifdef CONFIG_SEC_LENTIS_PROJECT
+			pr_err("%s: system_rev=%d\n", __func__, system_rev);
+			if(system_rev == 7) {
+				bt_power_pdata->bt_vdd_ldo->low_vol_level = EXT_LDO_1_20_V_MIN;
+				bt_power_pdata->bt_vdd_ldo->high_vol_level = EXT_LDO_1_20_V_MAX;
+			} else if(system_rev > 7) {
+				bt_power_pdata->bt_vdd_ldo->low_vol_level = EXT_LDO_1_18_V_MIN;
+				bt_power_pdata->bt_vdd_ldo->high_vol_level = EXT_LDO_1_18_V_MAX;
+			} else {
+				BT_PWR_ERR("bt_power HW rev under 0x06");
+			}
+#endif
+			rc = bt_configure_vreg(bt_power_pdata->bt_vdd_ldo);
+			if (rc < 0) {
+				BT_PWR_ERR("bt_power vddldo config failed");
+				goto vdd_ldo_fail;
+			}
 		}
 		if (bt_power_pdata->bt_chip_pwd) {
 			rc = bt_configure_vreg(bt_power_pdata->bt_chip_pwd);
@@ -268,6 +281,33 @@ static const struct rfkill_ops bluetooth_power_rfkill_ops = {
 	.set_block = bluetooth_toggle_radio,
 };
 
+#ifdef CONFIG_CNSS
+static ssize_t enable_extldo(struct device *dev, struct device_attribute *attr,
+			char *buf)
+{
+	int ret;
+	bool enable = false;
+	struct cnss_platform_cap cap;
+
+	ret = cnss_get_platform_cap(&cap);
+	if (ret) {
+		BT_PWR_ERR("Platform capability info from CNSS not available!");
+		enable = false;
+	} else if (!ret && (cap.cap_flag & CNSS_HAS_EXTERNAL_SWREG)) {
+		enable = true;
+	}
+	return snprintf(buf, 6, "%s", (enable ? "true" : "false"));
+}
+#else
+static ssize_t enable_extldo(struct device *dev, struct device_attribute *attr,
+			char *buf)
+{
+	return snprintf(buf, 6, "%s", "false");
+}
+#endif
+
+static DEVICE_ATTR(extldo, S_IRUGO, enable_extldo, NULL);
+
 static int bluetooth_power_rfkill_probe(struct platform_device *pdev)
 {
 	struct rfkill *rfkill;
@@ -281,6 +321,11 @@ static int bluetooth_power_rfkill_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "rfkill allocate failed\n");
 		return -ENOMEM;
 	}
+
+	/* add file into rfkill0 to handle LDO27 */
+	ret = device_create_file(&pdev->dev, &dev_attr_extldo);
+	if (ret < 0)
+		BT_PWR_ERR("device create file error!");
 
 	/* force Bluetooth off during init to allow for user control */
 	rfkill_init_sw_state(rfkill, 1);
@@ -335,7 +380,7 @@ static int bt_dt_parse_vreg_info(struct device *dev,
 		vreg->name = vreg_name;
 
 		snprintf(prop_name, MAX_PROP_SIZE,
-				"qcom,%s-voltage-level", vreg_name);
+				"%s-voltage-level", vreg_name);
 		prop = of_get_property(np, prop_name, &len);
 		if (!prop || (len != (2 * sizeof(__be32)))) {
 			dev_warn(dev, "%s %s property\n",
@@ -366,9 +411,15 @@ static int bt_power_populate_dt_pinfo(struct platform_device *pdev)
 		return -ENOMEM;
 
 	if (pdev->dev.of_node) {
+#ifdef USE_GPIO_EXPANDER_BT_EN
+		rc = of_property_read_u32(pdev->dev.of_node,
+						"qca,bt-reset-gpio", &bt_power_pdata->bt_gpio_sys_rst);
+		BT_PWR_DBG("GPIO_EXPANDER rc : %d", rc);
+#else
 		bt_power_pdata->bt_gpio_sys_rst =
 			of_get_named_gpio(pdev->dev.of_node,
 						"qca,bt-reset-gpio", 0);
+#endif
 		if (bt_power_pdata->bt_gpio_sys_rst < 0) {
 			BT_PWR_ERR("bt-reset-gpio not provided in device tree");
 			return bt_power_pdata->bt_gpio_sys_rst;
@@ -405,7 +456,7 @@ static int bt_power_populate_dt_pinfo(struct platform_device *pdev)
 	return 0;
 }
 
-static int __devinit bt_power_probe(struct platform_device *pdev)
+static int bt_power_probe(struct platform_device *pdev)
 {
 	int ret = 0;
 
@@ -454,7 +505,7 @@ free_pdata:
 	return ret;
 }
 
-static int __devexit bt_power_remove(struct platform_device *pdev)
+static int bt_power_remove(struct platform_device *pdev)
 {
 	dev_dbg(&pdev->dev, "%s\n", __func__);
 
@@ -470,7 +521,7 @@ static int __devexit bt_power_remove(struct platform_device *pdev)
 
 static struct platform_driver bt_power_driver = {
 	.probe = bt_power_probe,
-	.remove = __devexit_p(bt_power_remove),
+	.remove = bt_power_remove,
 	.driver = {
 		.name = "bt_power",
 		.owner = THIS_MODULE,
@@ -481,7 +532,6 @@ static struct platform_driver bt_power_driver = {
 static int __init bluetooth_power_init(void)
 {
 	int ret;
-
 	ret = platform_driver_register(&bt_power_driver);
 	return ret;
 }

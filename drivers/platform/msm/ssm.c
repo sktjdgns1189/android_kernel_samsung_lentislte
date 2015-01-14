@@ -27,7 +27,7 @@
 #include <linux/platform_device.h>
 #include <linux/msm_ion.h>
 #include <linux/platform_data/qcom_ssm.h>
-#include <mach/scm.h>
+#include <soc/qcom/scm.h>
 #include <mach/msm_smd.h>
 
 #include "qseecom_kernel.h"
@@ -270,7 +270,7 @@ static struct ssm_platform_data *populate_ssm_pdata(struct device *dev)
 	return pdata;
 }
 
-static int __devinit ssm_probe(struct platform_device *pdev)
+static int ssm_probe(struct platform_device *pdev)
 {
 	int rc;
 	struct ssm_platform_data *pdata;
@@ -333,7 +333,7 @@ exit:
 
 }
 
-static int __devexit ssm_remove(struct platform_device *pdev)
+static int ssm_remove(struct platform_device *pdev)
 {
 
 	if (!ssm_drv)
@@ -364,7 +364,7 @@ static struct of_device_id ssm_match_table[] = {
 
 static struct platform_driver ssm_pdriver = {
 	.probe          = ssm_probe,
-	.remove         = __devexit_p(ssm_remove),
+	.remove         = ssm_remove,
 	.driver = {
 		.name   = SSM_DEV_NAME,
 		.owner  = THIS_MODULE,
@@ -407,7 +407,10 @@ int ssm_oem_driver_intf(int cmd, char *mode, int len)
 
 	/* Open modem SMD interface */
 	if (!ssm_drv->ready) {
-		rc = smd_open(ssm_drv->channel_name, &ssm_drv->ch, ssm_drv,
+		rc = smd_named_open_on_edge(ssm_drv->channel_name,
+							SMD_APPS_MODEM,
+							&ssm_drv->ch,
+							ssm_drv,
 							modem_request);
 		if (rc) {
 			rc = -EAGAIN;

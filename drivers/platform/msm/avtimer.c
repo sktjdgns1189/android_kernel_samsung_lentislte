@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
 
 * This program is free software; you can redistribute it and/or modify
 * it under the terms of the GNU General Public License version 2 and
@@ -24,7 +24,7 @@
 #include <linux/of.h>
 #include <linux/wait.h>
 #include <linux/sched.h>
-#include <mach/qdsp6v2/apr.h>
+#include <linux/qdsp6v2/apr.h>
 
 #define DEVICE_NAME "avtimer"
 #define TIMEOUT_MS 1000
@@ -411,7 +411,7 @@ unmap:
 
 }
 
-static int __devexit dev_avtimer_remove(struct platform_device *pdev)
+static int dev_avtimer_remove(struct platform_device *pdev)
 {
 	pr_debug("%s: dev_avtimer_remove\n", __func__);
 

@@ -15,18 +15,15 @@
 #define MDSS_H
 
 #include <linux/msm_ion.h>
-#include <linux/earlysuspend.h>
 #include <linux/msm_mdp.h>
 #include <linux/spinlock.h>
 #include <linux/types.h>
 #include <linux/workqueue.h>
+#include <linux/irqreturn.h>
 
-#include <mach/iommu_domains.h>
+#include <linux/msm_iommu_domains.h>
 
 #include "mdss_panel.h"
-
-#define MDSS_REG_WRITE(addr, val) writel_relaxed(val, mdss_res->mdp_base + addr)
-#define MDSS_REG_READ(addr) readl_relaxed(mdss_res->mdp_base + addr)
 
 #define MAX_DRV_SUP_MMB_BLKS	44
 
@@ -66,6 +63,16 @@ struct mdss_debug_inf {
 	void (*debug_enable_clock)(int on);
 };
 
+struct mdss_fudge_factor {
+	u32 numer;
+	u32 denom;
+};
+
+struct mdss_perf_tune {
+	unsigned long min_mdp_clk;
+	u64 min_bus_vote;
+};
+
 #define MDSS_IRQ_SUSPEND	-1
 #define MDSS_IRQ_RESUME		1
 #define MDSS_IRQ_REQ		0
@@ -77,11 +84,6 @@ struct mdss_intr {
 	u32 curr;
 	int state;
 	spinlock_t lock;
-};
-
-struct mdss_fudge_factor {
-	u32 numer;
-	u32 denom;
 };
 
 struct mdss_prefill_data {
@@ -104,9 +106,10 @@ struct mdss_data_type {
 	u32 max_mdp_clk_rate;
 
 	struct platform_device *pdev;
-	char __iomem *mdp_base;
+	char __iomem *mdss_base;
 	size_t mdp_reg_size;
 	char __iomem *vbif_base;
+	char __iomem *mdp_base;
 
 	struct mutex reg_lock;
 
@@ -116,9 +119,11 @@ struct mdss_data_type {
 	u32 irq_buzy;
 	u32 has_bwc;
 	u32 has_decimation;
-	u8 has_wfd_blk;
-	u32 has_no_lut_read;
+	u32 wfd_mode;
 	u8 has_wb_ad;
+	u8 has_non_scalar_rgb;
+	bool has_src_split;
+	bool idle_pc_enabled;
 
 	u32 rotator_ot_limit;
 	u32 mdp_irq_mask;
@@ -128,7 +133,6 @@ struct mdss_data_type {
 	u8 clk_ena;
 	u8 fs_ena;
 	u8 vsync_ena;
-	unsigned long min_mdp_clk;
 
 	u32 res_init;
 
@@ -139,13 +143,13 @@ struct mdss_data_type {
 
 	u32 rot_block_size;
 
-	u32 max_bw_low;
-	u32 max_bw_high;
-
 	u32 axi_port_cnt;
 	u32 curr_bw_uc_idx;
 	u32 bus_hdl;
 	struct msm_bus_scale_pdata *bus_scale_table;
+	u32 max_bw_low;
+	u32 max_bw_high;
+	u32 max_bw_per_pipe;
 
 	struct mdss_fudge_factor ab_factor;
 	struct mdss_fudge_factor ib_factor;
@@ -167,8 +171,10 @@ struct mdss_data_type {
 	struct mdss_mdp_mixer *mixer_wb;
 	u32 nmixers_intf;
 	u32 nmixers_wb;
+
 	struct mdss_mdp_ctl *ctl_off;
 	u32 nctl;
+
 	struct mdss_mdp_dp_intf *dp_off;
 	u32 ndp;
 	void *video_intf;
@@ -187,14 +193,14 @@ struct mdss_data_type {
 	int iommu_attached;
 	struct mdss_iommu_map_type *iommu_map;
 
-	struct early_suspend early_suspend;
 	struct mdss_debug_inf debug_inf;
 	bool mixer_switched;
 	struct mdss_panel_cfg pan_cfg;
+	struct mdss_prefill_data prefill_data;
 
 	int handoff_pending;
-	struct mdss_prefill_data prefill_data;
-	int iommu_ref_cnt;
+	bool idle_pc;
+	struct mdss_perf_tune perf_tune;
 };
 extern struct mdss_data_type *mdss_res;
 
@@ -217,8 +223,13 @@ int mdss_register_irq(struct mdss_hw *hw);
 void mdss_enable_irq(struct mdss_hw *hw);
 void mdss_disable_irq(struct mdss_hw *hw);
 void mdss_disable_irq_nosync(struct mdss_hw *hw);
-void mdss_bus_bandwidth_ctrl(int enable);
-int mdss_iommu_ctrl(int enable);
+int mdss_bus_bandwidth_ctrl(int enable);
+
+#if defined (CONFIG_FB_MSM_MDSS_DSI_DBG)
+int mdss_mdp_debug_bus(void);
+void xlog(const char *name, u32 data0, u32 data1, u32 data2, u32 data3, u32 data4, u32 data5);
+void xlog_dump(void);
+#endif
 
 static inline struct ion_client *mdss_get_ionclient(void)
 {

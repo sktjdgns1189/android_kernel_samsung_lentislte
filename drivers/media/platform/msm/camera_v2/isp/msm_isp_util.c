@@ -13,7 +13,6 @@
 #include <linux/io.h>
 #include <media/v4l2-subdev.h>
 #include <linux/ratelimit.h>
-#include <asm/div64.h>
 
 #include "msm.h"
 #include "msm_isp_util.h"
@@ -25,10 +24,14 @@
 static DEFINE_MUTEX(bandwidth_mgr_mutex);
 static struct msm_isp_bandwidth_mgr isp_bandwidth_mgr;
 
-#define MSM_ISP_MIN_AB 450000000
-#define MSM_ISP_MIN_IB 900000000
+#define MSM_ISP_MIN_AB 300000000ULL  * 1.5
+#define MSM_ISP_MIN_IB 450000000ULL  * 1.5
 
-#define VFE40_8974V2_VERSION 0x1001001A
+#define MSM_ISP_MIN_AB_RECORD 300000000ULL
+#define MSM_ISP_MIN_IB_RECORD 450000000ULL
+
+extern int32_t isp_recording_hint;
+
 static struct msm_bus_vectors msm_isp_init_vectors[] = {
 	{
 		.src = MSM_BUS_MASTER_VFE,
@@ -43,7 +46,7 @@ static struct msm_bus_vectors msm_isp_ping_vectors[] = {
 		.src = MSM_BUS_MASTER_VFE,
 		.dst = MSM_BUS_SLAVE_EBI_CH0,
 		.ab  = MSM_ISP_MIN_AB,
-		.ib  = MSM_ISP_MIN_IB,
+		.ib  = (uint64_t)MSM_ISP_MIN_IB,
 	},
 };
 
@@ -52,7 +55,7 @@ static struct msm_bus_vectors msm_isp_pong_vectors[] = {
 		.src = MSM_BUS_MASTER_VFE,
 		.dst = MSM_BUS_SLAVE_EBI_CH0,
 		.ab  = MSM_ISP_MIN_AB,
-		.ib  = MSM_ISP_MIN_IB,
+		.ib  = (uint64_t)MSM_ISP_MIN_IB,
 	},
 };
 
@@ -130,7 +133,10 @@ int msm_isp_update_bandwidth(enum msm_isp_hw_client client,
 	mutex_lock(&bandwidth_mgr_mutex);
 	if (!isp_bandwidth_mgr.use_count ||
 		!isp_bandwidth_mgr.bus_client) {
-		pr_err("%s: bandwidth manager inactive\n", __func__);
+		pr_err("%s:error bandwidth manager inactive use_cnt:%d bus_clnt:%d\n",
+			__func__, isp_bandwidth_mgr.use_count,
+			isp_bandwidth_mgr.bus_client);
+		mutex_unlock(&bandwidth_mgr_mutex);
 		return -EINVAL;
 	}
 
@@ -140,8 +146,15 @@ int msm_isp_update_bandwidth(enum msm_isp_hw_client client,
 	path =
 		&(msm_isp_bus_client_pdata.usecase[
 		  isp_bandwidth_mgr.bus_vector_active_idx]);
-	path->vectors[0].ab = MSM_ISP_MIN_AB;
-	path->vectors[0].ib = MSM_ISP_MIN_IB;
+	if (isp_recording_hint == 1) {
+		pr_err("%s: [syscamera] RECORD\n", __func__);
+		path->vectors[0].ab = MSM_ISP_MIN_AB_RECORD;
+		path->vectors[0].ib = MSM_ISP_MIN_IB_RECORD;
+	} else {
+		pr_err("%s: [syscamera] CAMERA\n", __func__);
+		path->vectors[0].ab = MSM_ISP_MIN_AB;
+		path->vectors[0].ib = MSM_ISP_MIN_IB;
+	}
 	for (i = 0; i < MAX_ISP_CLIENT; i++) {
 		if (isp_bandwidth_mgr.client_info[i].active) {
 			path->vectors[0].ab +=
@@ -166,8 +179,11 @@ void msm_isp_deinit_bandwidth_mgr(enum msm_isp_hw_client client)
 		return;
 	}
 
-	if (!isp_bandwidth_mgr.bus_client)
+	if (!isp_bandwidth_mgr.bus_client) {
+		pr_err("%s:%d error: bus client invalid\n", __func__, __LINE__);
+		mutex_unlock(&bandwidth_mgr_mutex);
 		return;
+	}
 
 	msm_bus_scale_client_update_request(
 	   isp_bandwidth_mgr.bus_client, 0);
@@ -188,6 +204,13 @@ uint32_t msm_isp_get_framedrop_period(
 	case EVERY_6FRAME:
 	case EVERY_7FRAME:
 	case EVERY_8FRAME:
+	case EVERY_9FRAME:
+	case EVERY_10FRAME:
+	case EVERY_11FRAME:
+	case EVERY_12FRAME:
+	case EVERY_13FRAME:
+	case EVERY_14FRAME:
+	case EVERY_15FRAME:
 		return frame_skip_pattern + 1;
 	case EVERY_16FRAME:
 		return 16;
@@ -217,8 +240,7 @@ static inline void msm_isp_get_vt_tstamp(struct vfe_device *vfe_dev,
 {
 	uint32_t avtimer_msw_1st = 0, avtimer_lsw = 0;
 	uint32_t avtimer_msw_2nd = 0;
-	uint64_t av_timer_tick = 0;
-
+	uint8_t iter = 0;
 	if (!vfe_dev->p_avtimer_msw || !vfe_dev->p_avtimer_lsw) {
 		pr_err("%s: ioremap failed\n", __func__);
 		return;
@@ -227,19 +249,23 @@ static inline void msm_isp_get_vt_tstamp(struct vfe_device *vfe_dev,
 		avtimer_msw_1st = msm_camera_io_r(vfe_dev->p_avtimer_msw);
 		avtimer_lsw = msm_camera_io_r(vfe_dev->p_avtimer_lsw);
 		avtimer_msw_2nd = msm_camera_io_r(vfe_dev->p_avtimer_msw);
-	} while (avtimer_msw_1st != avtimer_msw_2nd);
-	av_timer_tick = ((uint64_t)avtimer_msw_1st << 32) | avtimer_lsw;
-	avtimer_lsw = do_div(av_timer_tick, USEC_PER_SEC);
-	time_stamp->vt_time.tv_sec = (uint32_t)(av_timer_tick);
+	} while ((avtimer_msw_1st != avtimer_msw_2nd)
+		&& (iter++ < AVTIMER_ITERATION_CTR));
+	if (iter >= AVTIMER_ITERATION_CTR) {
+		pr_err("%s: AVTimer MSW TS did not converge !!!\n", __func__);
+		return;
+	}
+	time_stamp->vt_time.tv_sec = avtimer_msw_1st;
 	time_stamp->vt_time.tv_usec = avtimer_lsw;
 }
+
 
 int msm_isp_subscribe_event(struct v4l2_subdev *sd, struct v4l2_fh *fh,
 	struct v4l2_event_subscription *sub)
 {
 	struct vfe_device *vfe_dev = v4l2_get_subdevdata(sd);
 	int rc = 0;
-	rc = v4l2_event_subscribe(fh, sub, MAX_ISP_V4l2_EVENTS);
+	rc = v4l2_event_subscribe(fh, sub, MAX_ISP_V4l2_EVENTS, NULL);
 	if (rc == 0) {
 		if (sub->type == V4L2_EVENT_ALL) {
 			int i;
@@ -310,6 +336,7 @@ static int msm_isp_get_max_clk_rate(struct vfe_device *vfe_dev, long *rate)
 	return 0;
 }
 
+
 static int msm_isp_set_clk_rate(struct vfe_device *vfe_dev, long *rate)
 {
 	int rc = 0;
@@ -375,6 +402,13 @@ int msm_isp_cfg_rdi(struct vfe_device *vfe_dev,
 		input_cfg->input_pix_clk;
 	vfe_dev->hw_info->vfe_ops.core_ops.cfg_rdi_reg(
 		vfe_dev, &input_cfg->d.rdi_cfg, input_cfg->input_src);
+
+	rc = msm_isp_set_clk_rate(vfe_dev,
+		&vfe_dev->axi_data.src_info[input_cfg->input_src].pixel_clock);
+	if (rc < 0) {
+		pr_err("%s: clock set rate failed\n", __func__);
+		return rc;
+	}
 	return rc;
 }
 
@@ -419,6 +453,12 @@ long msm_isp_ioctl(struct v4l2_subdev *sd,
 		mutex_unlock(&vfe_dev->realtime_mutex);
 		break;
 	}
+	case VIDIOC_MSM_VFE_REG_LIST_CFG: {
+		mutex_lock(&vfe_dev->realtime_mutex);
+		rc = msm_isp_proc_cmd_list(vfe_dev, arg);
+		mutex_unlock(&vfe_dev->realtime_mutex);
+		break;
+	}
 	case VIDIOC_MSM_ISP_REQUEST_BUF:
 	case VIDIOC_MSM_ISP_ENQUEUE_BUF:
 	case VIDIOC_MSM_ISP_RELEASE_BUF: {
@@ -442,6 +482,21 @@ long msm_isp_ioctl(struct v4l2_subdev *sd,
 		rc = msm_isp_cfg_axi_stream(vfe_dev, arg);
 		mutex_unlock(&vfe_dev->core_mutex);
 		break;
+  case VIDIOC_MSM_ISP_AXI_HALT:
+    mutex_lock(&vfe_dev->core_mutex);
+    rc = msm_isp_axi_halt(vfe_dev, arg);
+    mutex_unlock(&vfe_dev->core_mutex);
+    break;
+  case VIDIOC_MSM_ISP_AXI_RESET:
+    mutex_lock(&vfe_dev->core_mutex);
+    rc = msm_isp_axi_reset(vfe_dev, arg);
+    mutex_unlock(&vfe_dev->core_mutex);
+    break;
+  case VIDIOC_MSM_ISP_AXI_RESTART:
+    mutex_lock(&vfe_dev->core_mutex);
+    rc = msm_isp_axi_restart(vfe_dev, arg);
+    mutex_unlock(&vfe_dev->core_mutex);
+    break;
 	case VIDIOC_MSM_ISP_INPUT_CFG:
 		mutex_lock(&vfe_dev->core_mutex);
 		rc = msm_isp_cfg_input(vfe_dev, arg);
@@ -474,7 +529,7 @@ long msm_isp_ioctl(struct v4l2_subdev *sd,
 		break;
 	case MSM_SD_SHUTDOWN:
 		while (vfe_dev->vfe_open_cnt != 0)
-			msm_isp_close_node(sd, NULL);
+			msm_isp_close_node(sd, NULL);		
 		break;
 
 	default:
@@ -488,6 +543,18 @@ static int msm_isp_send_hw_cmd(struct vfe_device *vfe_dev,
 	struct msm_vfe_reg_cfg_cmd *reg_cfg_cmd,
 	uint32_t *cfg_data, uint32_t cmd_len)
 {
+	if (!vfe_dev || !reg_cfg_cmd) {
+		pr_err("%s:%d failed: vfe_dev %p reg_cfg_cmd %p\n", __func__,
+			__LINE__, vfe_dev, reg_cfg_cmd);
+		return -EINVAL;
+	}
+	if ((reg_cfg_cmd->cmd_type != VFE_CFG_MASK) &&
+		(!cfg_data || !cmd_len)) {
+		pr_err("%s:%d failed: cmd type %d cfg_data %p cmd_len %d\n",
+			__func__, __LINE__, reg_cfg_cmd->cmd_type, cfg_data,
+			cmd_len);
+		return -EINVAL;
+	}
 	switch (reg_cfg_cmd->cmd_type) {
 	case VFE_WRITE: {
 		if (resource_size(vfe_dev->vfe_mem) <
@@ -505,8 +572,7 @@ static int msm_isp_send_hw_cmd(struct vfe_device *vfe_dev,
 	case VFE_WRITE_MB: {
 		uint32_t *data_ptr = cfg_data +
 			reg_cfg_cmd->u.rw_info.cmd_data_offset/4;
-
-		if ((UINT_MAX - sizeof(*data_ptr) <
+			if ((UINT_MAX - sizeof(*data_ptr) <
 					reg_cfg_cmd->u.rw_info.reg_offset) ||
 			(resource_size(vfe_dev->vfe_mem) <
 			reg_cfg_cmd->u.rw_info.reg_offset +
@@ -522,13 +588,13 @@ static int msm_isp_send_hw_cmd(struct vfe_device *vfe_dev,
 		uint32_t temp;
 		if (resource_size(vfe_dev->vfe_mem) <
 				reg_cfg_cmd->u.mask_info.reg_offset)
-			return -EINVAL;
+		return -EINVAL;
+
 		temp = msm_camera_io_r(vfe_dev->vfe_base +
 			reg_cfg_cmd->u.mask_info.reg_offset);
-
 		temp &= ~reg_cfg_cmd->u.mask_info.mask;
 		temp |= reg_cfg_cmd->u.mask_info.val;
-		if ((UINT_MAX - sizeof(temp) <
+	  if ((UINT_MAX - sizeof(temp) <
 					reg_cfg_cmd->u.mask_info.reg_offset) ||
 			(resource_size(vfe_dev->vfe_mem) <
 			reg_cfg_cmd->u.mask_info.reg_offset +
@@ -547,7 +613,7 @@ static int msm_isp_send_hw_cmd(struct vfe_device *vfe_dev,
 		uint32_t *hi_tbl_ptr = NULL, *lo_tbl_ptr = NULL;
 		uint32_t hi_val, lo_val, lo_val1;
 		if (reg_cfg_cmd->cmd_type == VFE_WRITE_DMI_64BIT) {
-			if ((UINT_MAX - reg_cfg_cmd->u.dmi_info.hi_tbl_offset <
+				if ((UINT_MAX - reg_cfg_cmd->u.dmi_info.hi_tbl_offset <
 						reg_cfg_cmd->u.dmi_info.len) ||
 				(reg_cfg_cmd->u.dmi_info.hi_tbl_offset +
 				reg_cfg_cmd->u.dmi_info.len > cmd_len)) {
@@ -565,9 +631,11 @@ static int msm_isp_send_hw_cmd(struct vfe_device *vfe_dev,
 		}
 		lo_tbl_ptr = cfg_data +
 			reg_cfg_cmd->u.dmi_info.lo_tbl_offset/4;
+
 		if (reg_cfg_cmd->cmd_type == VFE_WRITE_DMI_64BIT)
 			reg_cfg_cmd->u.dmi_info.len =
 				reg_cfg_cmd->u.dmi_info.len / 2;
+
 		for (i = 0; i < reg_cfg_cmd->u.dmi_info.len/4; i++) {
 			lo_val = *lo_tbl_ptr++;
 			if (reg_cfg_cmd->cmd_type == VFE_WRITE_DMI_16BIT) {
@@ -616,7 +684,8 @@ static int msm_isp_send_hw_cmd(struct vfe_device *vfe_dev,
 			if (reg_cfg_cmd->cmd_type == VFE_READ_DMI_64BIT) {
 				hi_val = msm_camera_io_r(vfe_dev->vfe_base +
 					vfe_dev->hw_info->dmi_reg_offset);
-				*hi_tbl_ptr++ = hi_val;
+					*hi_tbl_ptr = hi_val;
+					hi_tbl_ptr += 2;
 			}
 
 			lo_val = msm_camera_io_r(vfe_dev->vfe_base +
@@ -628,6 +697,9 @@ static int msm_isp_send_hw_cmd(struct vfe_device *vfe_dev,
 				lo_val |= lo_val1 << 16;
 			}
 			*lo_tbl_ptr++ = lo_val;
+
+				if (reg_cfg_cmd->cmd_type == VFE_READ_DMI_64BIT)
+						lo_tbl_ptr++;
 		}
 		break;
 	}
@@ -636,26 +708,25 @@ static int msm_isp_send_hw_cmd(struct vfe_device *vfe_dev,
 		uint32_t *data_ptr = cfg_data +
 			reg_cfg_cmd->u.rw_info.cmd_data_offset/4;
 		for (i = 0; i < reg_cfg_cmd->u.rw_info.len/4; i++) {
-			if ((data_ptr < cfg_data) ||
+				if ((data_ptr < cfg_data) ||
 				(UINT_MAX / sizeof(*data_ptr) <
 				 (data_ptr - cfg_data)) ||
 				(sizeof(*data_ptr) * (data_ptr - cfg_data) >
 				 cmd_len))
 				return -EINVAL;
+
 			*data_ptr++ = msm_camera_io_r(vfe_dev->vfe_base +
 				reg_cfg_cmd->u.rw_info.reg_offset);
 			reg_cfg_cmd->u.rw_info.reg_offset += 4;
 		}
 		break;
 	}
-	case GET_SOC_HW_VER:
-		*cfg_data = vfe_dev->soc_hw_version;
-		break;
+
 	case GET_MAX_CLK_RATE: {
 		int rc = 0;
 
 		if (cmd_len < sizeof(unsigned long)) {
-			pr_err("%s:%d failed: invalid cmd len %d exp %d\n",
+			pr_err("%s:%d failed: invalid cmd len %u exp %zu\n",
 				__func__, __LINE__, cmd_len,
 				sizeof(unsigned long));
 			return -EINVAL;
@@ -668,6 +739,18 @@ static int msm_isp_send_hw_cmd(struct vfe_device *vfe_dev,
 		}
 		break;
 	}
+	case GET_ISP_ID: {
+		uint32_t *isp_id = NULL;
+
+		if (cmd_len < sizeof(uint32_t)) {
+			pr_err("%s:%d failed: invalid cmd len %u exp %u\n",
+				__func__, __LINE__, cmd_len,
+				sizeof(uint32_t));
+			return -EINVAL;
+		}
+		isp_id = (uint32_t *)cfg_data;
+		*isp_id = vfe_dev->pdev->id;		
+	}
 	}
 	return 0;
 }
@@ -677,7 +760,7 @@ int msm_isp_proc_cmd(struct vfe_device *vfe_dev, void *arg)
 	int rc = 0, i;
 	struct msm_vfe_cfg_cmd2 *proc_cmd = arg;
 	struct msm_vfe_reg_cfg_cmd *reg_cfg_cmd;
-	uint32_t *cfg_data;
+	uint32_t *cfg_data = NULL;
 
 	if (!proc_cmd->num_cfg) {
 		pr_err("%s: Passed num_cfg as 0\n", __func__);
@@ -692,31 +775,26 @@ int msm_isp_proc_cmd(struct vfe_device *vfe_dev, void *arg)
 		goto reg_cfg_failed;
 	}
 
-	if (!proc_cmd->cmd_len) {
-		pr_err("%s: Passed cmd_len as 0\n", __func__);
-		rc = -EINVAL;
-		goto cfg_data_failed;
-	}
-
-	cfg_data = kzalloc(proc_cmd->cmd_len, GFP_KERNEL);
-	if (!cfg_data) {
-		pr_err("%s: cfg_data alloc failed\n", __func__);
-		rc = -ENOMEM;
-		goto cfg_data_failed;
-	}
-
 	if (copy_from_user(reg_cfg_cmd,
 		(void __user *)(proc_cmd->cfg_cmd),
 		sizeof(struct msm_vfe_reg_cfg_cmd) * proc_cmd->num_cfg)) {
 		rc = -EFAULT;
 		goto copy_cmd_failed;
 	}
+	if (proc_cmd->cmd_len > 0) {
+		cfg_data = kzalloc(proc_cmd->cmd_len, GFP_KERNEL);
+		if (!cfg_data) {
+			pr_err("%s: cfg_data alloc failed\n", __func__);
+			rc = -ENOMEM;
+			goto cfg_data_failed;
+		}
 
-	if (copy_from_user(cfg_data,
+		if (copy_from_user(cfg_data,
 			(void __user *)(proc_cmd->cfg_data),
 			proc_cmd->cmd_len)) {
-		rc = -EFAULT;
-		goto copy_cmd_failed;
+			rc = -EFAULT;
+			goto copy_cmd_failed;
+		}
 	}
 
 	for (i = 0; i < proc_cmd->num_cfg; i++)
@@ -736,6 +814,52 @@ cfg_data_failed:
 reg_cfg_failed:
 	return rc;
 }
+
+int msm_isp_proc_cmd_list(struct vfe_device *vfe_dev, void *arg)
+{
+	int rc = 0;
+	struct msm_vfe_cfg_cmd_list *proc_cmd =
+		(struct msm_vfe_cfg_cmd_list *)arg;
+	struct msm_vfe_cfg_cmd_list cmd, cmd_next;
+
+	if (!vfe_dev || !arg) {
+		pr_err("%s:%d failed: vfe_dev %p arg %p", __func__, __LINE__,
+			vfe_dev, arg);
+		return -EINVAL;
+	}
+
+	rc = msm_isp_proc_cmd(vfe_dev, &proc_cmd->cfg_cmd);
+	if (rc < 0)
+		pr_err("%s:%d failed: rc %d", __func__, __LINE__, rc);
+
+	cmd = *proc_cmd;
+
+	while (cmd.next) {
+		if (cmd.next_size != sizeof(struct msm_vfe_cfg_cmd_list)) {
+			pr_err("%s:%d failed: next size %u != expected %zu\n",
+				__func__, __LINE__, cmd.next_size,
+				sizeof(struct msm_vfe_cfg_cmd_list));
+			break;
+		}
+		if (cmd.next == NULL){
+		pr_err("%s: %d PANIC NULL ptr detected", __func__, __LINE__);
+		break;
+		}
+		if (copy_from_user(&cmd_next, (void __user *)cmd.next,
+			sizeof(struct msm_vfe_cfg_cmd_list))) {
+			rc = -EFAULT;
+			continue;
+		}
+
+		rc = msm_isp_proc_cmd(vfe_dev, &cmd_next.cfg_cmd);
+		if (rc < 0)
+			pr_err("%s:%d failed: rc %d", __func__, __LINE__, rc);
+
+		cmd = cmd_next;
+	}
+	return rc;
+}
+
 
 int msm_isp_send_event(struct vfe_device *vfe_dev,
 	uint32_t event_type,
@@ -766,7 +890,7 @@ int msm_isp_cal_word_per_line(uint32_t output_format,
 	case V4L2_PIX_FMT_QGBRG8:
 	case V4L2_PIX_FMT_QGRBG8:
 	case V4L2_PIX_FMT_QRGGB8:
-	case V4L2_PIX_FMT_JPEG:
+    case V4L2_PIX_FMT_JPEG:
 	case V4L2_PIX_FMT_META:
 		val = CAL_WORD(pixel_per_line, 1, 8);
 		break;
@@ -800,6 +924,8 @@ int msm_isp_cal_word_per_line(uint32_t output_format,
 	case V4L2_PIX_FMT_NV41:
 	case V4L2_PIX_FMT_NV16:
 	case V4L2_PIX_FMT_NV61:
+	case V4L2_PIX_FMT_NV46:
+	case V4L2_PIX_FMT_NV64:
 		val = CAL_WORD(pixel_per_line, 1, 8);
 		break;
 		/*TD: Add more image format*/
@@ -845,7 +971,6 @@ enum msm_isp_pack_fmt msm_isp_get_pack_format(uint32_t output_format)
 	}
 	return -EINVAL;
 }
-
 int msm_isp_get_bit_per_pixel(uint32_t output_format)
 {
 	switch (output_format) {
@@ -861,12 +986,14 @@ int msm_isp_get_bit_per_pixel(uint32_t output_format)
 	case V4L2_PIX_FMT_QGBRG8:
 	case V4L2_PIX_FMT_QGRBG8:
 	case V4L2_PIX_FMT_QRGGB8:
-	case V4L2_PIX_FMT_JPEG:
+    case V4L2_PIX_FMT_JPEG:
 	case V4L2_PIX_FMT_META:
 	case V4L2_PIX_FMT_NV12:
 	case V4L2_PIX_FMT_NV21:
 	case V4L2_PIX_FMT_NV14:
 	case V4L2_PIX_FMT_NV41:
+	case V4L2_PIX_FMT_NV64:
+	case V4L2_PIX_FMT_NV46:
 	case V4L2_PIX_FMT_YVU410:
 	case V4L2_PIX_FMT_YVU420:
 	case V4L2_PIX_FMT_YUYV:
@@ -885,7 +1012,7 @@ int msm_isp_get_bit_per_pixel(uint32_t output_format)
 	case V4L2_PIX_FMT_YUV420:
 	case V4L2_PIX_FMT_GREY:
 	case V4L2_PIX_FMT_PAL8:
-	case MSM_V4L2_PIX_FMT_META:
+	case V4L2_PIX_FMT_UV8:
 		return 8;
 	case V4L2_PIX_FMT_SBGGR10:
 	case V4L2_PIX_FMT_SGBRG10:
@@ -930,16 +1057,16 @@ void msm_isp_update_error_frame_count(struct vfe_device *vfe_dev)
 void msm_isp_process_error_info(struct vfe_device *vfe_dev)
 {
 	int i;
-	uint8_t num_stats_type =
-		vfe_dev->hw_info->stats_hw_info->num_stats_type;
+	uint8_t num_stats_type =		vfe_dev->hw_info->stats_hw_info->num_stats_type;
 	struct msm_vfe_error_info *error_info = &vfe_dev->error_info;
 	static DEFINE_RATELIMIT_STATE(rs,
 		DEFAULT_RATELIMIT_INTERVAL, DEFAULT_RATELIMIT_BURST);
 	static DEFINE_RATELIMIT_STATE(rs_stats,
 		DEFAULT_RATELIMIT_INTERVAL, DEFAULT_RATELIMIT_BURST);
 
-	if (error_info->error_count == 1 ||
-		!(error_info->info_dump_frame_count % 100)) {
+//	if (error_info->error_count == 1 ||
+//		!(error_info->info_dump_frame_count % 100)) {
+	if (1) {
 		vfe_dev->hw_info->vfe_ops.core_ops.
 			process_error_status(vfe_dev);
 		error_info->error_mask0 = 0;
@@ -949,7 +1076,7 @@ void msm_isp_process_error_info(struct vfe_device *vfe_dev)
 		for (i = 0; i < MAX_NUM_STREAM; i++) {
 			if (error_info->stream_framedrop_count[i] != 0 &&
 				__ratelimit(&rs)) {
-				pr_err("%s: Stream[%d]: dropped %d frames\n",
+			pr_err("%s: Stream[%d]: dropped %d frames\n",
 					__func__, i,
 					error_info->stream_framedrop_count[i]);
 				error_info->stream_framedrop_count[i] = 0;
@@ -959,7 +1086,7 @@ void msm_isp_process_error_info(struct vfe_device *vfe_dev)
 			if (error_info->stats_framedrop_count[i] != 0 &&
 				__ratelimit(&rs_stats)) {
 				pr_err("%s: Stats stream[%d]: dropped %d frames\n",
-					__func__, i,
+				__func__, i,
 					error_info->stats_framedrop_count[i]);
 				error_info->stats_framedrop_count[i] = 0;
 			}
@@ -975,6 +1102,151 @@ static inline void msm_isp_update_error_info(struct vfe_device *vfe_dev,
 	vfe_dev->error_info.error_count++;
 }
 
+#if 1
+static void msm_isp_process_overflow_irq(
+	struct vfe_device *vfe_dev,
+	uint32_t *irq_status0, uint32_t *irq_status1)
+{
+	uint32_t overflow_mask; //, rdi_wm_mask;
+
+	/*Mask out all other irqs if recovery is started*/
+	if (atomic_read(&vfe_dev->error_info.overflow_state) != NO_OVERFLOW) {
+		uint32_t halt_restart_mask0, halt_restart_mask1;
+		vfe_dev->hw_info->vfe_ops.core_ops.get_halt_restart_mask(
+			&halt_restart_mask0, &halt_restart_mask1);
+		*irq_status0 &= halt_restart_mask0;
+		*irq_status1 &= halt_restart_mask1;
+
+		return;
+	}
+
+	/*Check if any overflow bit is set*/
+	vfe_dev->hw_info->vfe_ops.core_ops.
+		get_overflow_mask(&overflow_mask);
+	overflow_mask &= *irq_status1;
+
+//  vfe_dev->hw_info->vfe_ops.core_ops.
+//    get_rdi_wm_mask(vfe_dev, &rdi_wm_mask);
+  /*
+  if (((overflow_mask & 0xFE00) >> 9) & rdi_wm_mask) {
+
+  }
+  */
+	if (overflow_mask) {
+		struct msm_isp_event_data error_event;
+		pr_err("%s: overflow_dbg Bus overflow detected: 0x%x\n",
+				__func__, overflow_mask);
+		atomic_set(&vfe_dev->error_info.overflow_state,
+				OVERFLOW_DETECTED);
+		/*Store current IRQ mask*/
+		vfe_dev->hw_info->vfe_ops.core_ops.get_irq_mask(vfe_dev,
+			&vfe_dev->error_info.overflow_recover_irq_mask0,
+			&vfe_dev->error_info.overflow_recover_irq_mask1);
+		/*Halt the hardware & Clear all other IRQ mask*/
+		vfe_dev->hw_info->vfe_ops.axi_ops.halt(vfe_dev, 0);
+        	atomic_set(&vfe_dev->error_info.overflow_state,
+                	HALT_REQUESTED);
+		pr_err("%s overflow_dbg VFE%d HALT done! \n", __func__, vfe_dev->pdev->id);
+		/*Stop CAMIF Immediately*/
+		vfe_dev->hw_info->vfe_ops.core_ops.
+			update_camif_state(vfe_dev, DISABLE_CAMIF_IMMEDIATELY);
+		/*Update overflow state*/
+//		atomic_set(&vfe_dev->error_info.overflow_state, HALT_REQUESTED);
+		*irq_status0 = 0;
+		*irq_status1 = 0;
+
+//  overflow_mask &= ~(rdi_wm_mask << 9);
+//    pr_err("%s: overflow_dbg Error! RDI overflow detected. Notify ISPIF to reset overflow_mask 0x%x\n",
+//      __func__, overflow_mask);
+   
+	/* frame id should be of src_info[overflow RDI WM]. For now take RAW_0 since RAW_0 *
+         *will be the first to be allocated anyway */
+		error_event.frame_id = vfe_dev->axi_data.src_info[VFE_PIX_0].frame_id;
+//    error_event.input_src = VFE_RAW_0; /* Only support single RDI usecase currently */
+		error_event.u.error_info.error_mask = (1 << ISP_WM_BUS_OVERFLOW);
+		msm_isp_send_event(vfe_dev, ISP_EVENT_WM_BUS_OVERFLOW, &error_event);
+	}
+}
+#endif
+
+#if 1
+void msm_isp_reset_burst_count_and_frame_drop(
+	struct vfe_device *vfe_dev, struct msm_vfe_axi_stream *stream_info)
+{
+	struct msm_vfe_axi_stream_request_cmd stream_cfg_cmd;
+	if (stream_info->state != ACTIVE ||
+		stream_info->stream_type != BURST_STREAM) {
+		return;
+	}
+	if (stream_info->stream_type == BURST_STREAM &&
+		stream_info->num_burst_capture != 0) {
+		stream_cfg_cmd.axi_stream_handle =
+			stream_info->stream_handle;
+		stream_cfg_cmd.burst_count =
+			stream_info->num_burst_capture;
+		stream_cfg_cmd.frame_skip_pattern =
+			stream_info->frame_skip_pattern;
+		stream_cfg_cmd.init_frame_drop =
+			stream_info->init_frame_drop;
+		msm_isp_calculate_framedrop(&vfe_dev->axi_data,
+			&stream_cfg_cmd);
+		msm_isp_reset_framedrop(vfe_dev, stream_info);
+	}
+}
+#endif
+
+#if 0
+static inline void msm_isp_process_overflow_recovery(
+	struct vfe_device *vfe_dev,
+	uint32_t irq_status0, uint32_t irq_status1)
+{
+	uint32_t halt_restart_mask0, halt_restart_mask1;
+	vfe_dev->hw_info->vfe_ops.core_ops.
+		get_halt_restart_mask(&halt_restart_mask0,
+							  &halt_restart_mask1);
+	irq_status0 &= halt_restart_mask0;
+	irq_status1 &= halt_restart_mask1;
+	if (irq_status0 == 0 && irq_status1 == 0)
+		return;
+
+	switch (atomic_read(&vfe_dev->error_info.overflow_state)) {
+	case HALT_REQUESTED: {
+		pr_err("%s: Halt done, Restart Pending\n", __func__);
+		/*Reset the hardware*/
+		vfe_dev->hw_info->vfe_ops.core_ops.reset_hw(vfe_dev, 0);
+		/*Update overflow state*/
+		atomic_set(&vfe_dev->error_info.overflow_state,
+				RESTART_REQUESTED);
+	}
+		break;
+	case RESTART_REQUESTED: {
+		pr_err("%s: Restart done, Resuming\n", __func__);
+		/*Reset the burst stream frame drop pattern, in the
+		 *case where bus overflow happens during the burstshot,
+		 *the framedrop pattern might be updated after reg update
+		 *to skip all the frames after the burst shot. The burst shot
+		 *might not be completed due to the overflow, so the framedrop
+		 *pattern need to change back to the original settings in order
+		 *to recovr from overflow.
+		 */
+		msm_isp_reset_burst_count(vfe_dev);
+		vfe_dev->hw_info->vfe_ops.axi_ops.
+			reload_wm(vfe_dev, 0xFFFFFFFF);
+		vfe_dev->hw_info->vfe_ops.core_ops.restore_irq_mask(vfe_dev);
+		vfe_dev->hw_info->vfe_ops.core_ops.reg_update(vfe_dev);
+		memset(&vfe_dev->error_info, 0, sizeof(vfe_dev->error_info));
+		atomic_set(&vfe_dev->error_info.overflow_state, NO_OVERFLOW);
+		vfe_dev->hw_info->vfe_ops.core_ops.
+			update_camif_state(vfe_dev, ENABLE_CAMIF);
+	}
+		break;
+	case NO_OVERFLOW:
+	case OVERFLOW_DETECTED:
+	default:
+		break;
+	}
+}
+#endif
 irqreturn_t msm_isp_process_irq(int irq_num, void *data)
 {
 	unsigned long flags;
@@ -985,6 +1257,8 @@ irqreturn_t msm_isp_process_irq(int irq_num, void *data)
 
 	vfe_dev->hw_info->vfe_ops.irq_ops.
 		read_irq_status(vfe_dev, &irq_status0, &irq_status1);
+	msm_isp_process_overflow_irq(vfe_dev,
+		&irq_status0, &irq_status1);
 	vfe_dev->hw_info->vfe_ops.core_ops.
 		get_error_mask(&error_mask0, &error_mask1);
 	error_mask0 &= irq_status0;
@@ -1001,11 +1275,29 @@ irqreturn_t msm_isp_process_irq(int irq_num, void *data)
 		return IRQ_HANDLED;
 	}
 
+/*
+	if (atomic_read(&vfe_dev->error_info.overflow_state) != NO_OVERFLOW) {
+		pr_err("%s HW is in overflow state. Don't process IRQ until recovery\n",
+			__func__);
+		atomic_set(&vfe_dev->irq_cnt, 0);
+		return IRQ_HANDLED;
+	}
+*/
+
+/*
+	if (atomic_read(&vfe_dev->error_info.overflow_state) != NO_OVERFLOW) {
+		pr_err("%s HW is in overflow state. Don't process IRQ until recovery\n",
+			__func__);
+		atomic_set(&vfe_dev->irq_cnt, 0);
+		return IRQ_HANDLED;
+	}
+*/
+
 	spin_lock_irqsave(&vfe_dev->tasklet_lock, flags);
 	queue_cmd = &vfe_dev->tasklet_queue_cmd[vfe_dev->taskletq_idx];
 	if (queue_cmd->cmd_used) {
-		pr_err_ratelimited("%s: Tasklet queue overflow: %d\n",
-			__func__, vfe_dev->pdev->id);
+		pr_err_ratelimited("%s: Tasklet queue overflow: dev_id %d irq_status0 0x%x irq_status1 0x%x error_mask0 0x%x error_mask1 0x%x\n",
+			__func__, vfe_dev->pdev->id,irq_status0, irq_status1, error_mask0, error_mask1);
 		list_del(&queue_cmd->list);
 	} else {
 		atomic_add(1, &vfe_dev->irq_cnt);
@@ -1013,8 +1305,6 @@ irqreturn_t msm_isp_process_irq(int irq_num, void *data)
 	queue_cmd->vfeInterruptStatus0 = irq_status0;
 	queue_cmd->vfeInterruptStatus1 = irq_status1;
 	msm_isp_get_timestamp(&queue_cmd->ts);
-	if (vfe_dev->vt_enable)
-		msm_isp_get_vt_tstamp(vfe_dev, &queue_cmd->ts);
 	queue_cmd->cmd_used = 1;
 	vfe_dev->taskletq_idx =
 		(vfe_dev->taskletq_idx + 1) % MSM_VFE_TASKLETQ_SIZE;
@@ -1048,19 +1338,23 @@ void msm_isp_do_tasklet(unsigned long data)
 		irq_status1 = queue_cmd->vfeInterruptStatus1;
 		ts = queue_cmd->ts;
 		spin_unlock_irqrestore(&vfe_dev->tasklet_lock, flags);
-		ISP_DBG("%s: status0: 0x%x status1: 0x%x\n",
-			__func__, irq_status0, irq_status1);
 		irq_ops->process_reset_irq(vfe_dev,
 			irq_status0, irq_status1);
 		irq_ops->process_halt_irq(vfe_dev,
 			irq_status0, irq_status1);
-		irq_ops->process_camif_irq(vfe_dev,
-			irq_status0, irq_status1, &ts);
+		if (atomic_read(&vfe_dev->error_info.overflow_state) != NO_OVERFLOW) {
+			pr_err("overflow_dbg: VFE%d There is Overflow, Ignore IRQs!!!\n", vfe_dev->pdev->id);
+//			msm_isp_process_overflow_recovery(vfe_dev,
+//				irq_status0, irq_status1);
+			continue;
+		}
 		irq_ops->process_axi_irq(vfe_dev,
 			irq_status0, irq_status1, &ts);
 		irq_ops->process_stats_irq(vfe_dev,
 			irq_status0, irq_status1, &ts);
 		irq_ops->process_reg_update(vfe_dev,
+			irq_status0, irq_status1, &ts);
+		irq_ops->process_camif_irq(vfe_dev,
 			irq_status0, irq_status1, &ts);
 		msm_isp_process_error_info(vfe_dev);
 	}
@@ -1069,8 +1363,10 @@ void msm_isp_do_tasklet(unsigned long data)
 int msm_isp_set_src_state(struct vfe_device *vfe_dev, void *arg)
 {
 	struct msm_vfe_axi_src_state *src_state = arg;
+
 	if (src_state->input_src >= VFE_SRC_MAX)
 		return -EINVAL;
+	
 	vfe_dev->axi_data.src_info[src_state->input_src].active =
 	src_state->src_active;
 	return 0;
@@ -1084,23 +1380,31 @@ int msm_isp_open_node(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 
 	mutex_lock(&vfe_dev->realtime_mutex);
 	mutex_lock(&vfe_dev->core_mutex);
-	if (vfe_dev->vfe_open_cnt == 1) {
-		pr_err("VFE already open\n");
+	pr_err("%s ref_cnt %d\n", __func__,
+		vfe_dev->vfe_open_cnt);
+
+	if (vfe_dev->vfe_open_cnt++) {
 		mutex_unlock(&vfe_dev->core_mutex);
 		mutex_unlock(&vfe_dev->realtime_mutex);
-		return -ENODEV;
+		return 0;
 	}
 
 	if (vfe_dev->hw_info->vfe_ops.core_ops.init_hw(vfe_dev) < 0) {
 		pr_err("%s: init hardware failed\n", __func__);
+		vfe_dev->vfe_open_cnt--;
 		mutex_unlock(&vfe_dev->core_mutex);
 		mutex_unlock(&vfe_dev->realtime_mutex);
 		return -EBUSY;
 	}
+    pr_err("%s: After initialising hardware\n", __func__);
+	memset(&vfe_dev->error_info, 0, sizeof(vfe_dev->error_info));
+	atomic_set(&vfe_dev->error_info.overflow_state, NO_OVERFLOW);
 
-	rc = vfe_dev->hw_info->vfe_ops.core_ops.reset_hw(vfe_dev, ISP_RST_HARD);
+	rc = vfe_dev->hw_info->vfe_ops.core_ops.reset_hw(vfe_dev, 1, 1);
 	if (rc <= 0) {
 		pr_err("%s: reset timeout\n", __func__);
+		vfe_dev->hw_info->vfe_ops.core_ops.release_hw(vfe_dev);
+		vfe_dev->vfe_open_cnt--;
 		mutex_unlock(&vfe_dev->core_mutex);
 		mutex_unlock(&vfe_dev->realtime_mutex);
 		return -EINVAL;
@@ -1112,21 +1416,10 @@ int msm_isp_open_node(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 
 	vfe_dev->buf_mgr->ops->buf_mgr_init(vfe_dev->buf_mgr, "msm_isp", 28);
 
-	switch (vfe_dev->vfe_hw_version) {
-	case VFE40_8974V2_VERSION:
-		vfe_dev->soc_hw_version = msm_camera_io_r(vfe_dev->tcsr_base);
-		break;
-	default:
-		/* SOC HARDWARE VERSION NOT SUPPORTED */
-		vfe_dev->soc_hw_version = 0x00;
-	}
-
 	memset(&vfe_dev->axi_data, 0, sizeof(struct msm_vfe_axi_shared_data));
 	memset(&vfe_dev->stats_data, 0,
 		sizeof(struct msm_vfe_stats_shared_data));
-	memset(&vfe_dev->error_info, 0, sizeof(vfe_dev->error_info));
 	vfe_dev->axi_data.hw_info = vfe_dev->hw_info->axi_hw_info;
-	vfe_dev->vfe_open_cnt++;
 	vfe_dev->taskletq_idx = 0;
 	vfe_dev->vt_enable = 0;
 	vfe_dev->p_avtimer_lsw = NULL;
@@ -1136,6 +1429,18 @@ int msm_isp_open_node(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 	return 0;
 }
 
+#ifdef CONFIG_MSM_AVTIMER
+void msm_isp_end_avtimer(void)
+{
+	avcs_core_disable_power_collapse(0);
+}
+#else
+void msm_isp_end_avtimer(void)
+{
+	pr_err("AV Timer is not supported\n");
+}
+#endif
+
 int msm_isp_close_node(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 {
 	long rc;
@@ -1143,28 +1448,38 @@ int msm_isp_close_node(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 	ISP_DBG("%s\n", __func__);
 	mutex_lock(&vfe_dev->realtime_mutex);
 	mutex_lock(&vfe_dev->core_mutex);
-	if (vfe_dev->vfe_open_cnt == 0) {
-		pr_err("%s: Invalid close\n", __func__);
+	if (!vfe_dev->vfe_open_cnt) {
+		pr_err("%s: Invalid state open cnt %d\n", __func__,
+			vfe_dev->vfe_open_cnt);
 		mutex_unlock(&vfe_dev->core_mutex);
 		mutex_unlock(&vfe_dev->realtime_mutex);
-		return -ENODEV;
+		return -EINVAL;
+	}
+	if (--vfe_dev->vfe_open_cnt) {
+		mutex_unlock(&vfe_dev->core_mutex);
+		mutex_unlock(&vfe_dev->realtime_mutex);
+		return 0;
 	}
 
-	rc = vfe_dev->hw_info->vfe_ops.axi_ops.halt(vfe_dev);
+	pr_err("%s ref_cnt %d\n", __func__,
+		vfe_dev->vfe_open_cnt);
+
+	rc = vfe_dev->hw_info->vfe_ops.axi_ops.halt(vfe_dev, 1);
 	if (rc <= 0)
 		pr_err("%s: halt timeout rc=%ld\n", __func__, rc);
 
+	vfe_dev->hw_info->vfe_ops.core_ops.
+		update_camif_state(vfe_dev, DISABLE_CAMIF_IMMEDIATELY);
+
 	vfe_dev->buf_mgr->ops->buf_mgr_deinit(vfe_dev->buf_mgr);
 	vfe_dev->hw_info->vfe_ops.core_ops.release_hw(vfe_dev);
-	vfe_dev->vfe_open_cnt--;
 	if (vfe_dev->vt_enable) {
 		iounmap(vfe_dev->p_avtimer_lsw);
 		iounmap(vfe_dev->p_avtimer_msw);
-	#ifdef CONFIG_MSM_AVTIMER
-		avcs_core_disable_power_collapse(0);
-	#endif
+		msm_isp_end_avtimer();
 		vfe_dev->vt_enable = 0;
 	}
+	
 	mutex_unlock(&vfe_dev->core_mutex);
 	mutex_unlock(&vfe_dev->realtime_mutex);
 	return 0;

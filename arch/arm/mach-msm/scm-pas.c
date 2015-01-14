@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2010-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -17,11 +17,11 @@
 #include <linux/string.h>
 #include <linux/clk.h>
 #include <linux/dma-mapping.h>
+#include <soc/qcom/scm.h>
+#include <soc/qcom/socinfo.h>
 
 #include <asm/cacheflush.h>
 
-#include <mach/scm.h>
-#include <mach/socinfo.h>
 #include <mach/msm_bus.h>
 #include <mach/msm_bus_board.h>
 #include "scm-pas.h"

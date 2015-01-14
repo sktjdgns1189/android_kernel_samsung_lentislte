@@ -27,6 +27,7 @@
 #include <linux/qpnp/qpnp-adc.h>
 #include <linux/qpnp/power-on.h>
 #include <linux/of_batterydata.h>
+#include <linux/wakelock.h>
 
 /* BMS Register Offsets */
 #define REVISION1			0x0
@@ -128,9 +129,8 @@ struct fcc_sample {
 };
 
 struct bms_irq {
-	unsigned int	irq;
+	int		irq;
 	unsigned long	disabled;
-	bool		ready;
 };
 
 struct bms_wakeup_source {
@@ -281,7 +281,6 @@ struct qpnp_bms_chip {
 	u8				charge_increase;
 	int				fcc_resolution;
 	bool				battery_removed;
-	bool				in_taper_charge;
 	struct bms_irq			sw_cc_thr_irq;
 	struct bms_irq			ocv_thr_irq;
 	struct qpnp_vadc_chip		*vadc_dev;
@@ -395,7 +394,7 @@ static void bms_relax(struct bms_wakeup_source *source)
 
 static void enable_bms_irq(struct bms_irq *irq)
 {
-	if (irq->ready && __test_and_clear_bit(0, &irq->disabled)) {
+	if (__test_and_clear_bit(0, &irq->disabled)) {
 		enable_irq(irq->irq);
 		pr_debug("enabled irq %d\n", irq->irq);
 	}
@@ -403,7 +402,7 @@ static void enable_bms_irq(struct bms_irq *irq)
 
 static void disable_bms_irq(struct bms_irq *irq)
 {
-	if (irq->ready && !__test_and_set_bit(0, &irq->disabled)) {
+	if (!__test_and_set_bit(0, &irq->disabled)) {
 		disable_irq(irq->irq);
 		pr_debug("disabled irq %d\n", irq->irq);
 	}
@@ -411,7 +410,7 @@ static void disable_bms_irq(struct bms_irq *irq)
 
 static void disable_bms_irq_nosync(struct bms_irq *irq)
 {
-	if (irq->ready && !__test_and_set_bit(0, &irq->disabled)) {
+	if (!__test_and_set_bit(0, &irq->disabled)) {
 		disable_irq_nosync(irq->irq);
 		pr_debug("disabled irq %d\n", irq->irq);
 	}
@@ -752,18 +751,13 @@ static void reset_cc(struct qpnp_bms_chip *chip, u8 flags)
 static int get_battery_status(struct qpnp_bms_chip *chip)
 {
 	union power_supply_propval ret = {0,};
-	int rc;
 
 	if (chip->batt_psy == NULL)
 		chip->batt_psy = power_supply_get_by_name("battery");
 	if (chip->batt_psy) {
 		/* if battery has been registered, use the status property */
-		rc = chip->batt_psy->get_property(chip->batt_psy,
+		chip->batt_psy->get_property(chip->batt_psy,
 					POWER_SUPPLY_PROP_STATUS, &ret);
-		if (rc) {
-			pr_debug("Battery does not export status: %d\n", rc);
-			return POWER_SUPPLY_STATUS_UNKNOWN;
-		}
 		return ret.intval;
 	}
 
@@ -772,33 +766,22 @@ static int get_battery_status(struct qpnp_bms_chip *chip)
 	return POWER_SUPPLY_STATUS_UNKNOWN;
 }
 
-static int get_battery_charge_type(struct qpnp_bms_chip *chip)
+static bool is_battery_charging(struct qpnp_bms_chip *chip)
 {
 	union power_supply_propval ret = {0,};
-	int rc;
 
 	if (chip->batt_psy == NULL)
 		chip->batt_psy = power_supply_get_by_name("battery");
 	if (chip->batt_psy) {
-		/* if battery has been registered, use the type property */
-		rc = chip->batt_psy->get_property(chip->batt_psy,
-				POWER_SUPPLY_PROP_CHARGE_TYPE, &ret);
-		if (rc) {
-			pr_debug("Battery does not export charge type: %d\n"
-									, rc);
-			return POWER_SUPPLY_CHARGE_TYPE_NONE;
-		}
-		return ret.intval;
+		/* if battery has been registered, use the status property */
+		chip->batt_psy->get_property(chip->batt_psy,
+					POWER_SUPPLY_PROP_CHARGE_TYPE, &ret);
+		return ret.intval != POWER_SUPPLY_CHARGE_TYPE_NONE;
 	}
 
 	/* Default to false if the battery power supply is not registered. */
 	pr_debug("battery power supply is not registered\n");
-	return POWER_SUPPLY_CHARGE_TYPE_NONE;
-}
-
-static bool is_battery_charging(struct qpnp_bms_chip *chip)
-{
-	return get_battery_status(chip) == POWER_SUPPLY_STATUS_CHARGING;
+	return false;
 }
 
 static bool is_battery_full(struct qpnp_bms_chip *chip)
@@ -826,12 +809,8 @@ static bool is_battery_present(struct qpnp_bms_chip *chip)
 		chip->batt_psy = power_supply_get_by_name("battery");
 	if (chip->batt_psy) {
 		/* if battery has been registered, use the present property */
-		rc = chip->batt_psy->get_property(chip->batt_psy,
+		chip->batt_psy->get_property(chip->batt_psy,
 					POWER_SUPPLY_PROP_PRESENT, &ret);
-		if (rc) {
-			pr_debug("battery does not export present: %d\n", rc);
-			return true;
-		}
 		return ret.intval;
 	}
 
@@ -872,18 +851,13 @@ static int get_battery_insertion_ocv_uv(struct qpnp_bms_chip *chip)
 static bool is_batfet_closed(struct qpnp_bms_chip *chip)
 {
 	union power_supply_propval ret = {0,};
-	int rc;
 
 	if (chip->batt_psy == NULL)
 		chip->batt_psy = power_supply_get_by_name("battery");
 	if (chip->batt_psy) {
 		/* if battery has been registered, use the online property */
-		rc = chip->batt_psy->get_property(chip->batt_psy,
+		chip->batt_psy->get_property(chip->batt_psy,
 					POWER_SUPPLY_PROP_ONLINE, &ret);
-		if (rc) {
-			pr_debug("Battery does not export online: %d\n", rc);
-			return true;
-		}
 		return !!ret.intval;
 	}
 
@@ -1800,7 +1774,6 @@ static int report_cc_based_soc(struct qpnp_bms_chip *chip)
 	int soc, soc_change;
 	int time_since_last_change_sec, charge_time_sec = 0;
 	unsigned long last_change_sec;
-	struct timespec now;
 	struct qpnp_vadc_result result;
 	int batt_temp;
 	int rc;
@@ -1835,7 +1808,7 @@ static int report_cc_based_soc(struct qpnp_bms_chip *chip)
 	last_change_sec = chip->last_soc_change_sec;
 	calculate_delta_time(&last_change_sec, &time_since_last_change_sec);
 
-	charging = chip->battery_status == POWER_SUPPLY_STATUS_CHARGING;
+	charging = is_battery_charging(chip);
 	charging_since_last_report = charging || (chip->last_soc_unbound
 			&& chip->was_charging_at_sleep);
 	/*
@@ -1915,7 +1888,6 @@ static int report_cc_based_soc(struct qpnp_bms_chip *chip)
 	chip->last_soc = bound_soc(soc);
 	backup_soc_and_iavg(chip, batt_temp, chip->last_soc);
 	pr_debug("Reported SOC = %d\n", chip->last_soc);
-	chip->t_soc_queried = now;
 	mutex_unlock(&chip->last_soc_mutex);
 
 	return soc;
@@ -1944,8 +1916,7 @@ static int charging_adjustments(struct qpnp_bms_chip *chip,
 	batt_terminal_uv = vbat_uv + (ibat_ua * chip->r_conn_mohm) / 1000;
 
 	if (chip->soc_at_cv == -EINVAL) {
-		if (batt_terminal_uv >= chip->max_voltage_uv - VDD_MAX_ERR ||
-							chip->in_taper_charge) {
+		if (batt_terminal_uv >= chip->max_voltage_uv - VDD_MAX_ERR) {
 			chip->soc_at_cv = soc;
 			chip->prev_chg_soc = soc;
 			chip->ibat_at_cv_ua = params->iavg_ua;
@@ -2232,12 +2203,7 @@ static int clamp_soc_based_on_voltage(struct qpnp_bms_chip *chip, int soc)
 		pr_err("adc vbat failed err = %d\n", rc);
 		return soc;
 	}
-
-	/* only clamp when discharging */
-	if (is_battery_charging(chip))
-		return soc;
-
-	if (soc <= 0 && vbat_uv > chip->v_cutoff_uv) {
+	if (soc == 0 && vbat_uv > chip->v_cutoff_uv) {
 		pr_debug("clamping soc to 1, vbat (%d) > cutoff (%d)\n",
 						vbat_uv, chip->v_cutoff_uv);
 		return 1;
@@ -2450,13 +2416,8 @@ static int calculate_state_of_charge(struct qpnp_bms_chip *chip,
 	}
 	mutex_unlock(&chip->soc_invalidation_mutex);
 
-	if (chip->first_time_calc_soc && !chip->shutdown_soc_invalid) {
-		pr_debug("Skip adjustment when shutdown SOC has been forced\n");
-		new_calculated_soc = soc;
-	} else {
-		pr_debug("SOC before adjustment = %d\n", soc);
-		new_calculated_soc = adjust_soc(chip, &params, soc, batt_temp);
-	}
+	pr_debug("SOC before adjustment = %d\n", soc);
+	new_calculated_soc = adjust_soc(chip, &params, soc, batt_temp);
 
 	/* always clamp soc due to BMS hw/sw immaturities */
 	new_calculated_soc = clamp_soc_based_on_voltage(chip,
@@ -3264,7 +3225,6 @@ static void charging_ended(struct qpnp_bms_chip *chip)
 	mutex_lock(&chip->last_ocv_uv_mutex);
 	chip->soc_at_cv = -EINVAL;
 	chip->prev_chg_soc = -EINVAL;
-	chip->in_taper_charge = false;
 
 	/* update the chargecycles */
 	if (chip->end_soc > chip->start_soc) {
@@ -3396,11 +3356,6 @@ static void qpnp_bms_external_power_changed(struct power_supply *psy)
 	battery_insertion_check(chip);
 	batfet_status_check(chip);
 	battery_status_check(chip);
-
-	if (POWER_SUPPLY_CHARGE_TYPE_TAPER == get_battery_charge_type(chip))
-		chip->in_taper_charge = true;
-	else
-		chip->in_taper_charge = false;
 }
 
 static int qpnp_bms_power_get_property(struct power_supply *psy,
@@ -3931,7 +3886,6 @@ do {									\
 		pr_err("Unable to request " #irq_name " irq: %d\n", rc);\
 		return -ENXIO;						\
 	}								\
-	chip->irq_name##_irq.ready = true;				\
 } while (0)
 
 static int bms_request_irqs(struct qpnp_bms_chip *chip)
@@ -4138,6 +4092,15 @@ static int read_iadc_channel_select(struct qpnp_bms_chip *chip)
 				return rc;
 			}
 		}
+	} else {
+		rc = qpnp_masked_write_iadc(chip,
+				IADC1_BMS_ADC_INT_RSNSN_CTL,
+				ADC_INT_RSNSN_CTL_MASK, 0x0);
+		if (rc) {
+			pr_err("Unable to set batfet config %x to %x: %d\n",
+				IADC1_BMS_ADC_INT_RSNSN_CTL, 0x0, rc);
+			return rc;
+		}
 	}
 
 	return 0;
@@ -4199,7 +4162,7 @@ static int setup_die_temp_monitoring(struct qpnp_bms_chip *chip)
 	return 0;
 }
 
-static int __devinit qpnp_bms_probe(struct spmi_device *spmi)
+static int qpnp_bms_probe(struct spmi_device *spmi)
 {
 	struct qpnp_bms_chip *chip;
 	bool warm_reset;
@@ -4451,7 +4414,7 @@ static const struct dev_pm_ops qpnp_bms_pm_ops = {
 
 static struct spmi_driver qpnp_bms_driver = {
 	.probe		= qpnp_bms_probe,
-	.remove		= __devexit_p(qpnp_bms_remove),
+	.remove		= qpnp_bms_remove,
 	.driver		= {
 		.name		= QPNP_BMS_DEV_NAME,
 		.owner		= THIS_MODULE,

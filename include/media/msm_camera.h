@@ -30,6 +30,8 @@
 
 #include <linux/msm_ion.h>
 
+//#define BYPASS_COMPANION
+
 #define BIT(nr)   (1UL << (nr))
 
 #define MSM_CAM_IOCTL_MAGIC 'm'
@@ -1555,8 +1557,12 @@ enum msm_camera_i2c_reg_addr_type {
 };
 
 struct msm_camera_i2c_reg_array {
-	uint16_t reg_addr;
-	uint16_t reg_data;
+	uint16_t 	reg_addr;
+	uint16_t 	reg_data;
+#ifndef BYPASS_COMPANION 	
+	uint8_t		data_type;
+	uint32_t 	delay;	
+#endif	
 };
 
 enum msm_camera_i2c_data_type {
@@ -1602,6 +1608,8 @@ enum msm_camera_vreg_name_t {
 	CAM_VIO,
 	CAM_VANA,
 	CAM_VAF,
+	CAM_VDDOIS,/*OIS_VDD_2P8*/
+	CAM_VMOIS,/*OIS_VM_2P8*/
 	CAM_VREG_MAX,
 };
 

@@ -12,6 +12,7 @@
 
 #include <linux/slab.h>
 #include <linux/kernel.h>
+#include <linux/module.h>
 #include <linux/device.h>
 #include <mach/usb_gadget_xport.h>
 
@@ -68,11 +69,12 @@ static unsigned int no_smd_ports;
 static unsigned int no_hsic_sports;
 static unsigned int no_hsuart_sports;
 static unsigned int nr_ports;
+static unsigned int gser_next_free_port;
 
 static struct port_info {
 	enum transport_type	transport;
 	unsigned		port_num;
-	unsigned		client_port_num;
+	unsigned char		client_port_num;
 } gserial_ports[GSERIAL_NO_PORTS];
 
 static inline bool is_transport_sdio(enum transport_type t)
@@ -299,7 +301,7 @@ static struct usb_gadget_strings *gser_strings[] = {
 	NULL,
 };
 
-static int gport_setup(struct usb_configuration *c)
+int gport_setup(struct usb_configuration *c)
 {
 	int ret = 0;
 	int port_idx;
@@ -310,8 +312,15 @@ static int gport_setup(struct usb_configuration *c)
 			__func__, no_tty_ports, no_sdio_ports, no_smd_ports,
 			no_hsic_sports, no_hsuart_sports, nr_ports);
 
-	if (no_tty_ports)
-		ret = gserial_setup(c->cdev->gadget, no_tty_ports);
+	if (no_tty_ports) {
+		for (i = 0; i < no_tty_ports; i++) {
+			ret = gserial_alloc_line(
+					&gserial_ports[i].client_port_num);
+			if (ret)
+				return ret;
+		}
+	}
+
 	if (no_sdio_ports)
 		ret = gsdio_setup(c->cdev->gadget, no_sdio_ports);
 	if (no_smd_ports)
@@ -349,6 +358,14 @@ static int gport_setup(struct usb_configuration *c)
 		}
 	}
 	return ret;
+}
+
+void gport_cleanup(void)
+{
+	int i;
+
+	for (i = 0; i < no_tty_ports; i++)
+		gserial_free_line(gserial_ports[i].client_port_num);
 }
 
 static int gport_connect(struct f_gser *gser)
@@ -771,13 +788,24 @@ static int gser_send_modem_ctrl_bits(struct gserial *port, int ctrl_bits)
 
 /* serial function driver setup/binding */
 
-static int
-gser_bind(struct usb_configuration *c, struct usb_function *f)
+static int gser_bind(struct usb_configuration *c, struct usb_function *f)
 {
 	struct usb_composite_dev *cdev = c->cdev;
 	struct f_gser		*gser = func_to_gser(f);
 	int			status;
 	struct usb_ep		*ep;
+
+	/* REVISIT might want instance-specific strings to help
+	 * distinguish instances ...
+	 */
+
+	/* maybe allocate device-global string ID */
+	if (gser_string_defs[0].id == 0) {
+		status = usb_string_id(c->cdev);
+		if (status < 0)
+			return status;
+		gser_string_defs[0].id = status;
+	}
 
 	/* allocate instance-specific interface IDs */
 	status = usb_interface_id(c, f);
@@ -818,49 +846,33 @@ gser_bind(struct usb_configuration *c, struct usb_function *f)
 	gser->notify_req->context = gser;
 #endif
 
-	/* copy descriptors, and track endpoint copies */
-	f->descriptors = usb_copy_descriptors(gser_fs_function);
-
-	if (!f->descriptors)
-		goto fail;
-
 	/* support all relevant hardware speeds... we expect that when
 	 * hardware is dual speed, all bulk-capable endpoints work at
 	 * both speeds
 	 */
+	gser_hs_in_desc.bEndpointAddress = gser_fs_in_desc.bEndpointAddress;
+	gser_hs_out_desc.bEndpointAddress = gser_fs_out_desc.bEndpointAddress;
+
+	gser_ss_in_desc.bEndpointAddress = gser_fs_in_desc.bEndpointAddress;
+	gser_ss_out_desc.bEndpointAddress = gser_fs_out_desc.bEndpointAddress;
+
 	if (gadget_is_dualspeed(c->cdev->gadget)) {
-		gser_hs_in_desc.bEndpointAddress =
-				gser_fs_in_desc.bEndpointAddress;
-		gser_hs_out_desc.bEndpointAddress =
-				gser_fs_out_desc.bEndpointAddress;
 #ifdef CONFIG_MODEM_SUPPORT
 		gser_hs_notify_desc.bEndpointAddress =
 				gser_fs_notify_desc.bEndpointAddress;
 #endif
-
-		/* copy descriptors, and track endpoint copies */
-		f->hs_descriptors = usb_copy_descriptors(gser_hs_function);
-
-		if (!f->hs_descriptors)
-			goto fail;
-
 	}
 	if (gadget_is_superspeed(c->cdev->gadget)) {
-		gser_ss_in_desc.bEndpointAddress =
-			gser_fs_in_desc.bEndpointAddress;
-		gser_ss_out_desc.bEndpointAddress =
-			gser_fs_out_desc.bEndpointAddress;
 #ifdef CONFIG_MODEM_SUPPORT
 		gser_ss_notify_desc.bEndpointAddress =
 				gser_fs_notify_desc.bEndpointAddress;
 #endif
-
-		/* copy descriptors, and track endpoint copies */
-		f->ss_descriptors = usb_copy_descriptors(gser_ss_function);
-		if (!f->ss_descriptors)
-			goto fail;
 	}
 
+	status = usb_assign_descriptors(f, gser_fs_function, gser_hs_function,
+			gser_ss_function);
+	if (status)
+		goto fail;
 	DBG(cdev, "generic ttyGS%d: %s speed IN/%s OUT/%s\n",
 			gser->port_num,
 			gadget_is_superspeed(c->cdev->gadget) ? "super" :
@@ -869,12 +881,6 @@ gser_bind(struct usb_configuration *c, struct usb_function *f)
 	return 0;
 
 fail:
-	if (f->ss_descriptors)
-		usb_free_descriptors(f->ss_descriptors);
-	if (f->hs_descriptors)
-		usb_free_descriptors(f->hs_descriptors);
-	if (f->descriptors)
-		usb_free_descriptors(f->descriptors);
 #ifdef CONFIG_MODEM_SUPPORT
 	if (gser->notify_req)
 		gs_free_req(gser->notify, gser->notify_req);
@@ -894,61 +900,134 @@ fail:
 	return status;
 }
 
-static void
-gser_unbind(struct usb_configuration *c, struct usb_function *f)
+static inline struct f_serial_opts *to_f_serial_opts(struct config_item *item)
+{
+	return container_of(to_config_group(item), struct f_serial_opts,
+			    func_inst.group);
+}
+
+CONFIGFS_ATTR_STRUCT(f_serial_opts);
+static ssize_t f_serial_attr_show(struct config_item *item,
+				  struct configfs_attribute *attr,
+				  char *page)
+{
+	struct f_serial_opts *opts = to_f_serial_opts(item);
+	struct f_serial_opts_attribute *f_serial_opts_attr =
+		container_of(attr, struct f_serial_opts_attribute, attr);
+	ssize_t ret = 0;
+
+	if (f_serial_opts_attr->show)
+		ret = f_serial_opts_attr->show(opts, page);
+
+	return ret;
+}
+
+static void serial_attr_release(struct config_item *item)
+{
+	struct f_serial_opts *opts = to_f_serial_opts(item);
+
+	usb_put_function_instance(&opts->func_inst);
+}
+
+static struct configfs_item_operations serial_item_ops = {
+	.release	= serial_attr_release,
+	.show_attribute = f_serial_attr_show,
+};
+
+static ssize_t f_serial_port_num_show(struct f_serial_opts *opts, char *page)
+{
+	return sprintf(page, "%u\n", opts->port_num);
+}
+
+static struct f_serial_opts_attribute f_serial_port_num =
+	__CONFIGFS_ATTR_RO(port_num, f_serial_port_num_show);
+
+static struct configfs_attribute *acm_attrs[] = {
+	&f_serial_port_num.attr,
+	NULL,
+};
+
+static struct config_item_type serial_func_type = {
+	.ct_item_ops	= &serial_item_ops,
+	.ct_attrs	= acm_attrs,
+	.ct_owner	= THIS_MODULE,
+};
+
+static void gser_free_inst(struct usb_function_instance *f)
+{
+	struct f_serial_opts *opts;
+
+	opts = container_of(f, struct f_serial_opts, func_inst);
+	if (!nr_ports)
+		gserial_free_line(opts->port_num);
+
+	kfree(opts);
+}
+
+static struct usb_function_instance *gser_alloc_inst(void)
+{
+	struct f_serial_opts *opts;
+	int ret;
+
+	opts = kzalloc(sizeof(*opts), GFP_KERNEL);
+	if (!opts)
+		return ERR_PTR(-ENOMEM);
+
+	opts->func_inst.free_func_inst = gser_free_inst;
+
+	/* Check if tty registration is handled here or not */
+	if (!nr_ports) {
+		ret = gserial_alloc_line(&opts->port_num);
+		if (ret) {
+			kfree(opts);
+			return ERR_PTR(ret);
+		}
+	}
+	config_group_init_type_name(&opts->func_inst.group, "",
+				    &serial_func_type);
+
+	return &opts->func_inst;
+}
+
+static void gser_free(struct usb_function *f)
+{
+	struct f_gser *serial;
+
+	serial = func_to_gser(f);
+	kfree(serial);
+	gser_next_free_port--;
+}
+
+static void gser_unbind(struct usb_configuration *c, struct usb_function *f)
 {
 #ifdef CONFIG_MODEM_SUPPORT
 	struct f_gser *gser = func_to_gser(f);
 #endif
-	if (gadget_is_dualspeed(c->cdev->gadget))
-		usb_free_descriptors(f->hs_descriptors);
-	if (gadget_is_superspeed(c->cdev->gadget))
-		usb_free_descriptors(f->ss_descriptors);
-	usb_free_descriptors(f->descriptors);
+	usb_free_all_descriptors(f);
 #ifdef CONFIG_MODEM_SUPPORT
 	gs_free_req(gser->notify, gser->notify_req);
 #endif
-	kfree(func_to_gser(f));
 }
 
-/**
- * gser_bind_config - add a generic serial function to a configuration
- * @c: the configuration to support the serial instance
- * @port_num: /dev/ttyGS* port this interface will use
- * Context: single threaded during gadget setup
- *
- * Returns zero on success, else negative errno.
- *
- * Caller must have called @gserial_setup() with enough ports to
- * handle all the ones it binds.  Caller is also responsible
- * for calling @gserial_cleanup() before module unload.
- */
-int gser_bind_config(struct usb_configuration *c, u8 port_num)
+struct usb_function *gser_alloc(struct usb_function_instance *fi)
 {
 	struct f_gser	*gser;
-	int		status;
-
-	/* REVISIT might want instance-specific strings to help
-	 * distinguish instances ...
-	 */
-
-	/* maybe allocate device-global string ID */
-	if (gser_string_defs[0].id == 0) {
-		status = usb_string_id(c->cdev);
-		if (status < 0)
-			return status;
-		gser_string_defs[0].id = status;
-	}
+	struct f_serial_opts *opts;
 
 	/* allocate and initialize one new instance */
-	gser = kzalloc(sizeof *gser, GFP_KERNEL);
+	gser = kzalloc(sizeof(*gser), GFP_KERNEL);
 	if (!gser)
-		return -ENOMEM;
+		return ERR_PTR(-ENOMEM);
+
+	opts = container_of(fi, struct f_serial_opts, func_inst);
 
 #ifdef CONFIG_MODEM_SUPPORT
 	spin_lock_init(&gser->lock);
 #endif
-	gser->port_num = port_num;
+	if (nr_ports)
+		opts->port_num = gser_next_free_port++;
+
+	gser->port_num = opts->port_num;
 
 	gser->port.func.name = "gser";
 	gser->port.func.strings = gser_strings;
@@ -956,12 +1035,13 @@ int gser_bind_config(struct usb_configuration *c, u8 port_num)
 	gser->port.func.unbind = gser_unbind;
 	gser->port.func.set_alt = gser_set_alt;
 	gser->port.func.disable = gser_disable;
-	gser->transport		= gserial_ports[port_num].transport;
+	gser->port.func.free_func = gser_free;
+	gser->transport		= gserial_ports[opts->port_num].transport;
 #ifdef CONFIG_MODEM_SUPPORT
 	/* We support only three ports for now */
-	if (port_num == 0)
+	if (opts->port_num == 0)
 		gser->port.func.name = "modem";
-	else if (port_num == 1)
+	else if (opts->port_num == 1)
 		gser->port.func.name = "nmea";
 	else
 		gser->port.func.name = "modem2";
@@ -976,16 +1056,18 @@ int gser_bind_config(struct usb_configuration *c, u8 port_num)
 	gser->port.send_break = gser_send_break;
 #endif
 
-	status = usb_add_function(c, &gser->port.func);
-	if (status)
-		kfree(gser);
-	return status;
+	return &gser->port.func;
 }
+
+DECLARE_USB_FUNCTION_INIT(gser, gser_alloc_inst, gser_alloc);
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Al Borchers");
+MODULE_AUTHOR("David Brownell");
 
 /**
  * gserial_init_port - bind a gserial_port to its transport
  */
-static int gserial_init_port(int port_num, const char *name,
+int gserial_init_port(int port_num, const char *name,
 		const char *port_name)
 {
 	enum transport_type transport;
@@ -1003,7 +1085,6 @@ static int gserial_init_port(int port_num, const char *name,
 
 	switch (transport) {
 	case USB_GADGET_XPORT_TTY:
-		gserial_ports[port_num].client_port_num = no_tty_ports;
 		no_tty_ports++;
 		break;
 	case USB_GADGET_XPORT_SDIO:

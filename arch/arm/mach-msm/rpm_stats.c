@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2012, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -26,7 +26,6 @@
 #include <linux/of.h>
 #include <asm/uaccess.h>
 #include <asm/arch_timer.h>
-#include <mach/msm_iomap.h>
 #include "rpm_stats.h"
 
 
@@ -227,7 +226,7 @@ static int msm_rpmstats_copy_stats(struct msm_rpmstats_private_data *pdata)
 			usec);
 }
 
-static int msm_rpmstats_file_read(struct file *file, char __user *bufu,
+static ssize_t msm_rpmstats_file_read(struct file *file, char __user *bufu,
 				  size_t count, loff_t *ppos)
 {
 	struct msm_rpmstats_private_data *prvdata;
@@ -277,8 +276,8 @@ static int msm_rpmstats_file_open(struct inode *inode, struct file *file)
 	if (!prvdata->reg_base) {
 		kfree(file->private_data);
 		prvdata = NULL;
-		pr_err("%s: ERROR could not ioremap start=%p, len=%u\n",
-			__func__, (void *)pdata->phys_addr_base,
+		pr_err("%s: ERROR could not ioremap start=%pa, len=%u\n",
+			__func__, &pdata->phys_addr_base,
 			pdata->phys_size);
 		return -EBUSY;
 	}
@@ -310,7 +309,7 @@ static const struct file_operations msm_rpmstats_fops = {
 	.llseek   = no_llseek,
 };
 
-static  int __devinit msm_rpmstats_probe(struct platform_device *pdev)
+static  int msm_rpmstats_probe(struct platform_device *pdev)
 {
 	struct dentry *dent = NULL;
 	struct msm_rpmstats_platform_data *pdata;
@@ -364,7 +363,7 @@ static  int __devinit msm_rpmstats_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static int __devexit msm_rpmstats_remove(struct platform_device *pdev)
+static int msm_rpmstats_remove(struct platform_device *pdev)
 {
 	struct dentry *dent;
 
@@ -381,7 +380,7 @@ static struct of_device_id rpm_stats_table[] = {
 
 static struct platform_driver msm_rpmstats_driver = {
 	.probe	= msm_rpmstats_probe,
-	.remove = __devexit_p(msm_rpmstats_remove),
+	.remove = msm_rpmstats_remove,
 	.driver = {
 		.name = "msm_rpm_stat",
 		.owner = THIS_MODULE,

@@ -26,6 +26,8 @@
 #include <linux/of.h>
 #include <linux/of_device.h>
 #include <linux/kmemleak.h>
+#include <linux/dma-mapping.h>
+#include <soc/qcom/scm.h>
 
 #include <asm/sizes.h>
 
@@ -33,7 +35,6 @@
 #include <mach/iommu_hw-v1.h>
 #include <mach/msm_iommu_priv.h>
 #include <mach/iommu.h>
-#include <mach/scm.h>
 #include <mach/memory.h>
 
 /* bitmap of the page sizes currently supported */
@@ -55,11 +56,12 @@
 #define MAXIMUM_VIRT_SIZE	(300*SZ_1M)
 
 
-#define MAKE_CP_VERSION(major, minor, patch) \
+#define MAKE_VERSION(major, minor, patch) \
 	(((major & 0x3FF) << 22) | ((minor & 0x3FF) << 12) | (patch & 0xFFF))
 
 
 static struct iommu_access_ops *iommu_access_ops;
+static int is_secure;
 
 static const struct of_device_id msm_smmu_list[] = {
 	{ .compatible = "qcom,msm-smmu-v1", },
@@ -296,11 +298,15 @@ static int msm_iommu_sec_ptbl_init(void)
 		unsigned int size;
 		unsigned int spare;
 	} pinit;
-	unsigned int *buf;
 	int psize[2] = {0, 0};
 	unsigned int spare;
 	int ret, ptbl_ret = 0;
 	int version;
+	/* Use a dummy device for dma_alloc_coherent allocation */
+	struct device dev = { 0 };
+	void *cpu_addr;
+	dma_addr_t paddr;
+	DEFINE_DMA_ATTRS(attrs);
 
 	for_each_matching_node(np, msm_smmu_list)
 		if (of_find_property(np, "qcom,iommu-secure-id", NULL) &&
@@ -314,7 +320,7 @@ static int msm_iommu_sec_ptbl_init(void)
 
 	version = scm_get_feat_version(SCM_SVC_MP);
 
-	if (version >= MAKE_CP_VERSION(1, 1, 1)) {
+	if (version >= MAKE_VERSION(1, 1, 1)) {
 		struct msm_cp_pool_size psize;
 		int retval;
 
@@ -343,15 +349,17 @@ static int msm_iommu_sec_ptbl_init(void)
 		goto fail;
 	}
 
-	buf = kmalloc(psize[0], GFP_KERNEL);
-	if (!buf) {
+	dma_set_attr(DMA_ATTR_NO_KERNEL_MAPPING, &attrs);
+	dev.coherent_dma_mask = DMA_BIT_MASK(sizeof(dma_addr_t) * 8);
+	cpu_addr = dma_alloc_attrs(&dev, psize[0], &paddr, GFP_KERNEL, &attrs);
+	if (!cpu_addr) {
 		pr_err("%s: Failed to allocate %d bytes for PTBL\n",
 			__func__, psize[0]);
 		ret = -ENOMEM;
 		goto fail;
 	}
 
-	pinit.paddr = virt_to_phys(buf);
+	pinit.paddr = (unsigned int)paddr;
 	pinit.size = psize[0];
 
 	ret = scm_call(SCM_SVC_MP, IOMMU_SECURE_PTBL_INIT, &pinit,
@@ -365,17 +373,15 @@ static int msm_iommu_sec_ptbl_init(void)
 		goto fail_mem;
 	}
 
-	kmemleak_not_leak(buf);
-
 	return 0;
 
 fail_mem:
-	kfree(buf);
+	dma_free_coherent(&dev, psize[0], cpu_addr, paddr);
 fail:
 	return ret;
 }
 
-int msm_iommu_sec_program_iommu(int sec_id)
+int msm_iommu_sec_program_iommu(int sec_id, u32 cb_num)
 {
 	struct msm_scm_sec_cfg {
 		unsigned int id;
@@ -384,6 +390,7 @@ int msm_iommu_sec_program_iommu(int sec_id)
 	int ret, scm_ret = 0;
 
 	cfg.id = sec_id;
+	cfg.spare = cb_num;
 
 	ret = scm_call(SCM_SVC_MP, IOMMU_SECURE_CFG, &cfg, sizeof(cfg),
 			&scm_ret, sizeof(scm_ret));
@@ -604,7 +611,8 @@ static int msm_iommu_attach_dev(struct iommu_domain *domain, struct device *dev)
 			goto fail;
 		}
 
-		ret = msm_iommu_sec_program_iommu(iommu_drvdata->sec_id);
+		ret = msm_iommu_sec_program_iommu(iommu_drvdata->sec_id,
+						ctx_drvdata->num);
 
 		/* bfb settings are always programmed by HLOS */
 		program_iommu_bfb_settings(iommu_drvdata->base,
@@ -770,7 +778,7 @@ fail:
 }
 
 static phys_addr_t msm_iommu_iova_to_phys(struct iommu_domain *domain,
-					  unsigned long va)
+					  phys_addr_t va)
 {
 	return 0;
 }
@@ -785,6 +793,32 @@ static phys_addr_t msm_iommu_get_pt_base_addr(struct iommu_domain *domain)
 {
 	return 0;
 }
+
+void msm_iommu_check_scm_call_avail(void)
+{
+	is_secure = scm_is_call_available(SCM_SVC_MP, IOMMU_SECURE_CFG);
+}
+
+int msm_iommu_get_scm_call_avail(void)
+{
+	return is_secure;
+}
+
+/*
+ * VFE SMMU is changing from being non-secure to being secure.
+ * For backwards compatibility we need to check whether the secure environment
+ * has support for this.
+ */
+static s32 secure_camera_enabled = -1;
+int is_vfe_secure(void)
+{
+	if (secure_camera_enabled == -1) {
+		u32 ver = scm_get_feat_version(SCM_SVC_SEC_CAMERA);
+		secure_camera_enabled = ver >= MAKE_VERSION(1, 0, 0);
+	}
+	return secure_camera_enabled;
+}
+
 
 static struct iommu_ops msm_iommu_ops = {
 	.domain_init = msm_iommu_domain_init,

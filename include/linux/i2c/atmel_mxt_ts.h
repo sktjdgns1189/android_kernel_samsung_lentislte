@@ -16,6 +16,9 @@
 
 #include <linux/types.h>
 
+/* For key_map array */
+#define MXT_NUM_GPIO		4
+
 /* Orient */
 #define MXT_NORMAL		0x0
 #define MXT_DIAGONAL		0x1
@@ -68,12 +71,15 @@ struct mxt_platform_data {
 	u32 disp_maxy;
 
 	unsigned long irqflags;
+	bool is_tp;
+	const unsigned int key_map[MXT_NUM_GPIO];
 	bool	i2c_pull_up;
 	bool	digital_pwr_regulator;
 	int reset_gpio;
 	u32 reset_gpio_flags;
 	int irq_gpio;
 	u32 irq_gpio_flags;
+	int i2cmode_gpio;
 	int *key_codes;
 	bool need_calibration;
 	bool no_force_update;

@@ -12,8 +12,10 @@
  */
 
 #include <linux/slab.h>
-#include <mach/iommu_domains.h>
-#include "msm_smem.h"
+#include <linux/msm_ion.h>
+#include <linux/types.h>
+#include <linux/msm_iommu_domains.h>
+#include "msm_vidc_resources.h"
 #include "msm_vidc_debug.h"
 
 struct smem_client {
@@ -46,7 +48,7 @@ static u32 get_tz_usage(struct smem_client *client, enum hal_buffer buffer_type)
 
 static int get_device_address(struct smem_client *smem_client,
 		struct ion_handle *hndl, unsigned long align,
-		unsigned long *iova, unsigned long *buffer_size,
+		dma_addr_t *iova, unsigned long *buffer_size,
 		u32 flags, enum hal_buffer buffer_type)
 {
 	int rc = 0;
@@ -61,14 +63,15 @@ static int get_device_address(struct smem_client *smem_client,
 
 	clnt = smem_client->clnt;
 	if (!clnt) {
-		dprintk(VIDC_ERR, "Invalid client");
+		dprintk(VIDC_ERR, "Invalid client\n");
 		return -EINVAL;
 	}
 
 	rc = msm_smem_get_domain_partition(smem_client, flags, buffer_type,
 			&domain, &partition);
 	if (rc) {
-		dprintk(VIDC_ERR, "Failed to get domain and partition: %d", rc);
+		dprintk(VIDC_ERR, "Failed to get domain and partition: %d\n",
+				rc);
 		goto mem_domain_get_failed;
 	}
 
@@ -82,16 +85,16 @@ static int get_device_address(struct smem_client *smem_client,
 	}
 	if (is_iommu_present(smem_client->res)) {
 		dprintk(VIDC_DBG,
-				"Calling ion_map_iommu - domain: %d, partition: %d",
+				"Calling ion_map_iommu - domain: %d, partition: %d\n",
 				domain, partition);
 		rc = ion_map_iommu(clnt, hndl, domain, partition, align,
 				0, iova, buffer_size, 0, 0);
 	} else {
-		dprintk(VIDC_DBG, "Using physical memory address");
+		dprintk(VIDC_DBG, "Using physical memory address\n");
 		rc = ion_phys(clnt, hndl, iova, (size_t *)buffer_size);
 	}
 	if (rc) {
-		dprintk(VIDC_ERR, "ion memory map failed - %d", rc);
+		dprintk(VIDC_ERR, "ion memory map failed - %d\n", rc);
 		goto mem_map_failed;
 	}
 
@@ -116,12 +119,12 @@ static void put_device_address(struct smem_client *smem_client,
 
 	clnt = smem_client->clnt;
 	if (!clnt) {
-		dprintk(VIDC_WARN, "Invalid client");
+		dprintk(VIDC_WARN, "Invalid client\n");
 		return;
 	}
 	if (is_iommu_present(smem_client->res)) {
 		dprintk(VIDC_DBG,
-				"Calling ion_unmap_iommu - domain: %d, parition: %d",
+				"Calling ion_unmap_iommu - domain: %d, parition: %d\n",
 				domain_num, partition_num);
 		ion_unmap_iommu(clnt, hndl, domain_num, partition_num);
 	}
@@ -135,7 +138,7 @@ static int ion_user_to_kernel(struct smem_client *client, int fd, u32 offset,
 		struct msm_smem *mem, enum hal_buffer buffer_type)
 {
 	struct ion_handle *hndl;
-	unsigned long iova = 0;
+	dma_addr_t iova = 0;
 	unsigned long buffer_size = 0;
 	unsigned long ionflags = 0;
 	int rc = 0;
@@ -187,7 +190,7 @@ static int alloc_ion_mem(struct smem_client *client, size_t size, u32 align,
 	int map_kernel)
 {
 	struct ion_handle *hndl;
-	unsigned long iova = 0;
+	dma_addr_t iova = 0;
 	unsigned long buffer_size = 0;
 	unsigned long heap_mask = 0;
 	int rc = 0;
@@ -268,7 +271,7 @@ static void free_ion_mem(struct smem_client *client, struct msm_smem *mem)
 	rc = msm_smem_get_domain_partition((void *)client, mem->flags,
 			mem->buffer_type, &domain, &partition);
 	if (rc) {
-		dprintk(VIDC_ERR, "Failed to get domain, partition: %d", rc);
+		dprintk(VIDC_ERR, "Failed to get domain, partition: %d\n", rc);
 		return;
 	}
 
@@ -400,10 +403,11 @@ int msm_smem_cache_operations(void *clt, struct msm_smem *mem,
 }
 
 void *msm_smem_new_client(enum smem_type mtype,
-		struct msm_vidc_platform_resources *res)
+		void *platform_resources)
 {
 	struct smem_client *client = NULL;
 	void *clnt = NULL;
+	struct msm_vidc_platform_resources *res = platform_resources;
 	switch (mtype) {
 	case SMEM_ION:
 		clnt = ion_new_client();
@@ -424,7 +428,7 @@ void *msm_smem_new_client(enum smem_type mtype,
 			mtype);
 	}
 	return client;
-};
+}
 
 struct msm_smem *msm_smem_alloc(void *clt, size_t size, u32 align, u32 flags,
 		enum hal_buffer buffer_type, int map_kernel)
@@ -511,7 +515,7 @@ int msm_smem_get_domain_partition(void *clt, u32 flags, enum hal_buffer
 	bool is_secure = (flags & SMEM_SECURE);
 	struct iommu_info *iommu_map;
 	if (!domain_num || !partition_num) {
-		dprintk(VIDC_DBG, "passed null to get domain partition!");
+		dprintk(VIDC_DBG, "passed null to get domain partition!\n");
 		return -EINVAL;
 	}
 
@@ -538,3 +542,4 @@ int msm_smem_get_domain_partition(void *clt, u32 flags, enum hal_buffer
 			*domain_num, *partition_num);
 	return 0;
 }
+

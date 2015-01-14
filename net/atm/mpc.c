@@ -592,8 +592,7 @@ static netdev_tx_t mpc_send_packet(struct sk_buff *skb,
 		goto non_ip;
 
 	while (i < mpc->number_of_mps_macs) {
-		if (!compare_ether_addr(eth->h_dest,
-					(mpc->mps_macs + i*ETH_ALEN)))
+		if (ether_addr_equal(eth->h_dest, mpc->mps_macs + i * ETH_ALEN))
 			if (send_via_shortcut(skb, mpc) == 0) /* try shortcut */
 				return NETDEV_TX_OK;
 		i++;
@@ -707,7 +706,7 @@ static void mpc_push(struct atm_vcc *vcc, struct sk_buff *skb)
 		dprintk("(%s) control packet arrived\n", dev->name);
 		/* Pass control packets to daemon */
 		skb_queue_tail(&sk->sk_receive_queue, skb);
-		sk->sk_data_ready(sk, skb->len);
+		sk->sk_data_ready(sk);
 		return;
 	}
 
@@ -993,7 +992,7 @@ int msg_to_mpoad(struct k_message *mesg, struct mpoa_client *mpc)
 
 	sk = sk_atm(mpc->mpoad_vcc);
 	skb_queue_tail(&sk->sk_receive_queue, skb);
-	sk->sk_data_ready(sk, skb->len);
+	sk->sk_data_ready(sk);
 
 	return 0;
 }
@@ -1276,7 +1275,7 @@ static void purge_egress_shortcut(struct atm_vcc *vcc, eg_cache_entry *entry)
 
 	sk = sk_atm(vcc);
 	skb_queue_tail(&sk->sk_receive_queue, skb);
-	sk->sk_data_ready(sk, skb->len);
+	sk->sk_data_ready(sk);
 	dprintk("exiting\n");
 }
 
