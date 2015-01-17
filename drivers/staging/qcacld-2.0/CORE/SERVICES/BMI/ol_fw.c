@@ -60,7 +60,7 @@
 static struct hash_fw fw_hash;
 #endif
 
-#if defined(HIF_PCI) || defined(HIF_SDIO)
+#ifdef HIF_PCI
 static u_int32_t refclk_speed_to_hz[] = {
 	48000000, /* SOC_REFCLK_48_MHZ */
 	19200000, /* SOC_REFCLK_19_2_MHZ */
@@ -121,10 +121,6 @@ static int ol_get_fw_files_for_target(struct ol_fw_files *pfw_files,
     }
     return 0;
 }
-#endif
-
-#ifdef HIF_USB
-static A_STATUS ol_usb_extra_initialization(struct ol_softc *scn);
 #endif
 
 extern int
@@ -949,9 +945,6 @@ static void ramdump_work_handler(struct work_struct *ramdump)
 	/* Allocate memory to save ramdump */
 	if (ramdump_scn->enableFwSelfRecovery) {
 		vos_set_logp_in_progress(VOS_MODULE_ID_VOSS, FALSE);
-#if defined(HIF_SDIO) && defined(WLAN_OPEN_SOURCE)
-		kobject_uevent(&ramdump_scn->adf_dev->dev->kobj, KOBJ_OFFLINE);
-#endif
 		goto out_fail;
 	}
 
@@ -1076,21 +1069,11 @@ void ol_ramdump_handler(struct ol_softc *scn)
 		pr_err("Firmware crash detected...\n");
 		pr_err("Host SW version: %s\n", QWLAN_VERSIONSTR);
 		pr_err("FW version: %d.%d.%d.%d", MSPId, mSPId, SIId, CRMId);
-
-		if (vos_is_load_unload_in_progress(VOS_MODULE_ID_VOSS, NULL)) {
-			printk("%s: Loading/Unloading is in progress, ignore!\n",
-				__func__);
-			return;
-		}
-
 		reg = (A_UINT32 *) (data + 4);
 		print_hex_dump(KERN_DEBUG, " ", DUMP_PREFIX_OFFSET, 16, 4, reg,
 				min_t(A_UINT32, len - 4, FW_REG_DUMP_CNT * 4),
 				false);
 		scn->fw_ram_dumping = 0;
-
-		if (scn->enableFwSelfRecovery)
-			vos_set_logp_in_progress(VOS_MODULE_ID_VOSS, TRUE);
 	}
 	else if (pattern == FW_REG_PATTERN) {
 		reg = (A_UINT32 *) (data + 4);
@@ -1470,7 +1453,7 @@ ol_check_dataset_patch(struct ol_softc *scn, u_int32_t *address)
 	return 0;
 }
 
-#if defined(HIF_PCI) || defined(HIF_SDIO)
+#ifdef HIF_PCI
 
 A_STATUS ol_fw_populate_clk_settings(A_refclk_speed_t refclk,
 				struct cmnos_clock_s *clock_s)
@@ -1550,10 +1533,8 @@ A_STATUS ol_patch_pll_switch(struct ol_softc * scn)
 	u_int32_t cmnos_cpu_speed_addr = 0;
 #ifdef HIF_USB/* fail for USB case */
 	struct hif_usb_softc *sc = scn->hif_sc;
-#elif defined HIF_PCI
-	struct hif_pci_softc *sc = scn->hif_sc;
 #else
-    struct ath_hif_sdio_softc *sc = scn->hif_sc;
+	struct hif_pci_softc *sc = scn->hif_sc;
 #endif
 
 	switch (scn->target_version) {
@@ -1834,41 +1815,11 @@ A_STATUS ol_patch_pll_switch(struct ol_softc * scn)
 }
 #endif
 
-#ifdef CONFIG_CNSS
-/* AXI Start Address */
-#define TARGET_ADDR (0xa0000)
-
-void ol_transfer_codeswap_struct(struct ol_softc *scn) {
-	struct hif_pci_softc *sc = scn->hif_sc;
-	struct codeswap_codeseg_info wlan_codeswap;
-	A_STATUS rv;
-
-	if (!sc || !sc->hif_device) {
-		pr_err("%s: hif_pci_softc is null\n", __func__);
-		return;
-	}
-
-	if (cnss_get_codeswap_struct(&wlan_codeswap)) {
-		pr_err("%s: failed to get codeswap structure\n", __func__);
-		return;
-	}
-
-	rv = BMIWriteMemory(scn->hif_hdl, TARGET_ADDR,
-		(u_int8_t *)&wlan_codeswap, sizeof(wlan_codeswap), scn);
-
-	if (rv != A_OK) {
-		pr_err("Failed to Write 0xa0000 for Target Memory Expansion\n");
-		return;
-	}
-	pr_info("%s:codeswap structure is successfully downloaded\n", __func__);
-}
-#endif
-
 int ol_download_firmware(struct ol_softc *scn)
 {
 	u_int32_t param, address = 0;
 	int status = !EOK;
-#if defined(HIF_PCI) || defined(HIF_SDIO)
+#if defined(HIF_PCI)
 	A_STATUS ret;
 #endif
 
@@ -1897,7 +1848,7 @@ int ol_download_firmware(struct ol_softc *scn)
 		printk("%s: Target address not known! Using 0x%x\n", __func__, address);
 	}
 
-#if defined(HIF_PCI) || defined(HIF_SDIO)
+#if defined(HIF_PCI)
 	ret = ol_patch_pll_switch(scn);
 	if (ret) {
 		pr_err("pll switch failed. status %d\n", ret);
@@ -1935,10 +1886,6 @@ int ol_download_firmware(struct ol_softc *scn)
 		printk("%s: Using 0x%x for the remainder of init\n", __func__, address);
 
 		if ( scn->enablesinglebinary == FALSE ) {
-#ifdef CONFIG_CNSS
-			ol_transfer_codeswap_struct(scn);
-#endif
-
 			status = ol_transfer_bin_file(scn, ATH_OTP_FILE,
 						      address, TRUE);
 			if (status == EOK) {
@@ -2071,8 +2018,6 @@ int ol_download_firmware(struct ol_softc *scn)
 
 #ifdef HIF_SDIO
 	status = ol_sdio_extra_initialization(scn);
-#elif defined(HIF_USB)
-	status = ol_usb_extra_initialization(scn);
 #endif
 
 	return status;
@@ -2381,6 +2326,10 @@ u_int8_t ol_get_number_of_peers_supported(struct ol_softc *scn)
 }
 
 #ifdef HIF_SDIO
+#define SDIO_SWAP_MAILBOX_FW_ACK	0x10000
+#define SDIO_REDUCE_TX_COMPL_FW_ACK	0X20000
+#define SDIO_SWAP_MAILBOX_SET		0x1
+#define SDIO_REDUCE_TX_COMPL_SET	0x2
 
 /*Setting SDIO block size, mbox ISR yield limit for SDIO based HIF*/
 static A_STATUS
@@ -2463,10 +2412,7 @@ ol_sdio_extra_initialization(struct ol_softc *scn)
 			break;
 		}
 
-		param |= (HI_ACS_FLAGS_SDIO_SWAP_MAILBOX_SET|
-                  HI_ACS_FLAGS_SDIO_REDUCE_TX_COMPL_SET|
-                  HI_ACS_FLAGS_ALT_DATA_CREDIT_SIZE);
-
+		param |= (SDIO_SWAP_MAILBOX_SET|SDIO_REDUCE_TX_COMPL_SET);
 		BMIWriteMemory(scn->hif_hdl,
 				host_interest_item_address(scn->target_type,
 				offsetof(struct host_interest_s,
@@ -2494,36 +2440,15 @@ ol_target_ready(struct ol_softc *scn, void *cfg_ctx)
 		return;
 	}
 
-	if (value & HI_ACS_FLAGS_SDIO_SWAP_MAILBOX_FW_ACK) {
+	if (value & SDIO_SWAP_MAILBOX_FW_ACK) {
 		printk("MAILBOX SWAP Service is enabled!\n");
 		HIFSetMailboxSwap(scn->hif_hdl);
 	}
 
-	if (value & HI_ACS_FLAGS_SDIO_REDUCE_TX_COMPL_FW_ACK) {
+	if (value & SDIO_REDUCE_TX_COMPL_FW_ACK) {
 		printk("Reduced Tx Complete service is enabled!\n");
 		ol_cfg_set_tx_free_at_download(cfg_ctx);
 
 	}
-#ifdef HIF_MBOX_SLEEP_WAR
-	HIFSetMboxSleep(scn->hif_hdl, true, true, true);
-#endif
-}
-#endif
-
-#ifdef HIF_USB
-static A_STATUS
-ol_usb_extra_initialization(struct ol_softc *scn)
-{
-	A_STATUS status = !EOK;
-	u_int32_t param = 0;
-
-	param |= HI_ACS_FLAGS_ALT_DATA_CREDIT_SIZE;
-	status = BMIWriteMemory(scn->hif_hdl,
-				host_interest_item_address(scn->target_type,
-				offsetof(struct host_interest_s,
-					hi_acs_flags)),
-				(u_int8_t *)&param, 4, scn);
-
-	return status;
 }
 #endif

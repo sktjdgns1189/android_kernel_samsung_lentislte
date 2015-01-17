@@ -57,11 +57,6 @@
 //Number of items that can be configured
 #define MAX_CFG_INI_ITEMS   512
 
-#ifdef SAP_AUTH_OFFLOAD
-/* 802.11 pre-share key length */
-#define WLAN_PSK_STRING_LENGTH   (64)
-#endif /* SAP_AUTH_OFFLOAD */
-
 // Defines for all of the things we read from the configuration (registry).
 
 #define CFG_RTS_THRESHOLD_NAME                 "RTSThreshold"
@@ -236,19 +231,21 @@ typedef enum
     eHDD_DOT11_MODE_11g_ONLY,
     eHDD_DOT11_MODE_11n_ONLY,
     eHDD_DOT11_MODE_11b_ONLY,
+#ifdef WLAN_FEATURE_11AC
     eHDD_DOT11_MODE_11ac_ONLY,
     eHDD_DOT11_MODE_11ac,
-    eHDD_DOT11_MODE_11a,
+#endif
 }eHddDot11Mode;
 
 #define CFG_DOT11_MODE_NAME                    "gDot11Mode"
 #define CFG_DOT11_MODE_MIN                     eHDD_DOT11_MODE_AUTO
 #ifdef WLAN_FEATURE_11AC
+#define CFG_DOT11_MODE_MAX                     eHDD_DOT11_MODE_11ac
 #define CFG_DOT11_MODE_DEFAULT                 eHDD_DOT11_MODE_11ac
 #else
+#define CFG_DOT11_MODE_MAX                     eHDD_DOT11_MODE_11b_ONLY
 #define CFG_DOT11_MODE_DEFAULT                 eHDD_DOT11_MODE_11n
 #endif
-#define CFG_DOT11_MODE_MAX                     eHDD_DOT11_MODE_11a
 
 #define CFG_SAP_FORCE_11AC_FOR_11N             "gSapForce11ACFor11n"
 #define CFG_SAP_FORCE_11AC_FOR_11N_MIN         ( 0 )
@@ -1029,11 +1026,6 @@ typedef enum
 #define CFG_NEIGHBOR_LOOKUP_RSSI_THRESHOLD_MAX       (120)
 #define CFG_NEIGHBOR_LOOKUP_RSSI_THRESHOLD_DEFAULT   (78)
 
-#define CFG_DELAY_BEFORE_VDEV_STOP_NAME      "gDelayBeforeVdevStop"
-#define CFG_DELAY_BEFORE_VDEV_STOP_MIN       (2)
-#define CFG_DELAY_BEFORE_VDEV_STOP_MAX       (200)
-#define CFG_DELAY_BEFORE_VDEV_STOP_DEFAULT   (20)
-
 /*
  * This parameter is the drop in RSSI value that will trigger a precautionary
  * scan by firmware.
@@ -1398,13 +1390,6 @@ typedef enum
 #define CFG_SAP_SCC_CHAN_AVOIDANCE_MAX     ( 1 )
 #define CFG_SAP_SCC_CHAN_AVOIDANCE_DEFAULT ( 0 )
 #endif /* FEATURE_WLAN_FORCE_SAP_SCC */
-
-#ifdef IPA_UC_STA_OFFLOAD
-#define CFG_IPA_UC_STA_OFFLOAD             "gIpaUcStaOffload"
-#define CFG_IPA_UC_STA_OFFLOAD_MIN         ( 0 )
-#define CFG_IPA_UC_STA_OFFLOAD_MAX         ( 1 )
-#define CFG_IPA_UC_STA_OFFLOAD_DEFAULT     ( 0 )
-#endif /* IPA_UC_STA_OFFLOAD */
 
 /*
  * VOS Trace Enable Control
@@ -2339,15 +2324,18 @@ This feature requires the dependent cfg.ini "gRoamPrefer5GHz" set to 1 */
 #define CFG_RA_RATE_LIMIT_INTERVAL_DEFAULT         (60)/*60 SEC*/
 #endif
 
+//Enable Memory Debug
+#ifdef MEMORY_DEBUG
+#define CFG_ENABLE_MEMORY_DEBUG_NAME             "gEnableMemoryDebug"
+#define CFG_ENABLE_MEMORY_DEBUG_MIN              (0)
+#define CFG_ENABLE_MEMORY_DEBUG_MAX              (1)
+#define CFG_ENABLE_MEMORY_DEBUG_DEFAULT          (1)
+#endif
+
 #define CFG_INITIAL_DWELL_TIME_NAME            "gInitialDwellTime"
 #define CFG_INITIAL_DWELL_TIME_DEFAULT         (0)
 #define CFG_INITIAL_DWELL_TIME_MIN             (0)
 #define CFG_INITIAL_DWELL_TIME_MAX             (100)
-
-#define CFG_INITIAL_SCAN_NO_DFS_CHNL_NAME         "gInitialScanNoDFSChnl"
-#define CFG_INITIAL_SCAN_NO_DFS_CHNL_DEFAULT      (0)
-#define CFG_INITIAL_SCAN_NO_DFS_CHNL_MIN          (0)
-#define CFG_INITIAL_SCAN_NO_DFS_CHNL_MAX          (1)
 
 #define CFG_OVERRIDE_COUNTRY_CODE                "gStaCountryCode"
 #define CFG_OVERRIDE_COUNTRY_CODE_DEFAULT        "000"
@@ -2358,7 +2346,7 @@ This feature requires the dependent cfg.ini "gRoamPrefer5GHz" set to 1 */
 #define CFG_ROAMING_DFS_CHANNEL_ENABLED_ACTIVE     (2)
 #define CFG_ROAMING_DFS_CHANNEL_MIN                (CFG_ROAMING_DFS_CHANNEL_DISABLED)
 #define CFG_ROAMING_DFS_CHANNEL_MAX                (CFG_ROAMING_DFS_CHANNEL_ENABLED_ACTIVE)
-#define CFG_ROAMING_DFS_CHANNEL_DEFAULT            (CFG_ROAMING_DFS_CHANNEL_DISABLED)
+#define CFG_ROAMING_DFS_CHANNEL_DEFAULT            (CFG_ROAMING_DFS_CHANNEL_ENABLED_NORMAL)
 
 #ifdef MSM_PLATFORM
 #define CFG_BUS_BANDWIDTH_HIGH_THRESHOLD           "gBusBandwidthHighThreshold"
@@ -2382,14 +2370,14 @@ This feature requires the dependent cfg.ini "gRoamPrefer5GHz" set to 1 */
 #define CFG_BUS_BANDWIDTH_COMPUTE_INTERVAL_MAX     ( 10000 )
 
 #define CFG_TCP_DELACK_THRESHOLD_HIGH              "gTcpDelAckThresholdHigh"
-#define CFG_TCP_DELACK_THRESHOLD_HIGH_DEFAULT      ( 10000 )
+#define CFG_TCP_DELACK_THRESHOLD_HIGH_DEFAULT      ( 4000 )
 #define CFG_TCP_DELACK_THRESHOLD_HIGH_MIN          ( 1000 )
-#define CFG_TCP_DELACK_THRESHOLD_HIGH_MAX          ( 16000 )
+#define CFG_TCP_DELACK_THRESHOLD_HIGH_MAX          ( 10000 )
 
 #define CFG_TCP_DELACK_THRESHOLD_LOW               "gTcpDelAckThresholdLow"
 #define CFG_TCP_DELACK_THRESHOLD_LOW_DEFAULT       ( 1000 )
 #define CFG_TCP_DELACK_THRESHOLD_LOW_MIN           ( 0 )
-#define CFG_TCP_DELACK_THRESHOLD_LOW_MAX           ( 10000 )
+#define CFG_TCP_DELACK_THRESHOLD_LOW_MAX           ( 4000 )
 #endif /* MSM_PLATFORM */
 
 #ifdef WLAN_FEATURE_11W
@@ -2587,149 +2575,10 @@ This feature requires the dependent cfg.ini "gRoamPrefer5GHz" set to 1 */
 #define CFG_DHCP_SERVER_OFFLOAD_NUM_CLIENT_MAX      ( 8 )
 #define CFG_DHCP_SERVER_OFFLOAD_NUM_CLIENT_DEFAULT  ( CFG_DHCP_SERVER_OFFLOAD_NUM_CLIENT_MAX )
 
-/* Starting address assigned to DHCP client */
-#define CFG_DHCP_SERVER_OFFLOAD_CLIENT_IPBASE_NAME     "gDHCPClientStartIP"
-#define CFG_DHCP_SERVER_OFFLOAD_CLIENT_IPBASE_MIN      ( 100 )
-#define CFG_DHCP_SERVER_OFFLOAD_CLIENT_IPBASE_MAX      ( 255 )
-#define CFG_DHCP_SERVER_OFFLOAD_CLIENT_IPBASE_DEFAULT  ( CFG_DHCP_SERVER_OFFLOAD_CLIENT_IPBASE_MIN )
-
 /* DHCP Server IP*/
 #define CFG_DHCP_SERVER_IP_NAME     "gDHCPServerIP"
 #define CFG_DHCP_SERVER_IP_DEFAULT  ""
 #endif /* DHCP_SERVER_OFFLOAD */
-
-#define CFG_ENABLE_MAC_ADDR_SPOOFING               "gEnableMacAddrSpoof"
-#define CFG_ENABLE_MAC_ADDR_SPOOFING_MIN           (0)
-#define CFG_ENABLE_MAC_ADDR_SPOOFING_MAX           (1)
-#define CFG_ENABLE_MAC_ADDR_SPOOFING_DEFAULT       (1)
-
-/*
- * Custom concurrency rule1:
- * If SAP comes up first and STA comes up later then SAP
- * needs to follow STA's channel.
- */
-#define CFG_ENABLE_CUSTOM_CONC_RULE1_NAME         "gEnableCustomConcRule1"
-#define CFG_ENABLE_CUSTOM_CONC_RULE1_NAME_MIN     (0)
-#define CFG_ENABLE_CUSTOM_CONC_RULE1_NAME_MAX     (1)
-#define CFG_ENABLE_CUSTOM_CONC_RULE1_NAME_DEFAULT (0)
-
-#define CFG_ENABLE_CUSTOM_CONC_RULE2_NAME         "gEnableCustomConcRule2"
-#define CFG_ENABLE_CUSTOM_CONC_RULE2_NAME_MIN     (0)
-#define CFG_ENABLE_CUSTOM_CONC_RULE2_NAME_MAX     (1)
-#define CFG_ENABLE_CUSTOM_CONC_RULE2_NAME_DEFAULT (0)
-
-#define CFG_ENABLE_STA_CONNECTION_IN_5GHZ         "gEnableStaConnectionIn5Ghz"
-#define CFG_ENABLE_STA_CONNECTION_IN_5GHZ_MIN     (0)
-#define CFG_ENABLE_STA_CONNECTION_IN_5GHZ_MAX     (1)
-#define CFG_ENABLE_STA_CONNECTION_IN_5GHZ_DEFAULT (1)
-
-#ifdef MDNS_OFFLOAD
-/*
- * Enable/Disable multicast DNS Offload
- * 0x0 - Disable mDNS (Default)
- * 0x1 - Enable mDNS
- */
-#define CFG_MDNS_OFFLOAD_SUPPORT_NAME               "gMDNSOffloadEnable"
-#define CFG_MDNS_OFFLOAD_SUPPORT_MIN                ( 0 )
-#define CFG_MDNS_OFFLOAD_SUPPORT_MAX                ( 1 )
-#define CFG_MDNS_OFFLOAD_SUPPORT_ENABLE             ( 1 )
-#define CFG_MDNS_OFFLOAD_SUPPORT_DEFAULT            ( CFG_MDNS_OFFLOAD_SUPPORT_MIN )
-
-/* Set FQDN string for mDNS */
-#define CFG_MDNS_FQDN_NAME                          "gMDNSFqdn"
-#define CFG_MDNS_FQDN_DEFAULT                       ""
-
-/* Set UFQDN string for mDNS */
-#define CFG_MDNS_UNIQUE_FQDN_NAME                   "gMDNSUniqueFqdn"
-#define CFG_MDNS_UNIQUE_FQDN_DEFAULT                ""
-
-/* Set the response Type A to mDNS queries */
-#define CFG_MDNS_RESPONSE_TYPE_A_NAME               "gMDNSResponseTypeA"
-#define CFG_MDNS_RESPONSE_TYPE_A_DEFAULT            ""
-#define CFG_MDNS_RESPONSE_TYPE_A_IPV4_NAME          "gMDNSResponseTypeAIpv4Addr"
-#define CFG_MDNS_RESPONSE_TYPE_A_IPV4_MIN           ( 1 )
-#define CFG_MDNS_RESPONSE_TYPE_A_IPV4_MAX           ( 0xffffffff )
-#define CFG_MDNS_RESPONSE_TYPE_A_IPV4_DEFAULT       ( 0xffffffff )
-
-/* Set the response Type TXT to mDNS queries */
-#define CFG_MDNS_RESPONSE_TYPE_TXT_NAME             "gMDNSResponseTypeTXT"
-#define CFG_MDNS_RESPONSE_TYPE_TXT_DEFAULT          ""
-#define CFG_MDNS_RESPONSE_TYPE_TXT_CNT_NAME        "gMDNSResponseTypeTXTContent"
-#define CFG_MDNS_RESPONSE_TYPE_TXT_CNT_DEFAULT     ""
-
-/* Set the response Type PTR to mDNS queries */
-#define CFG_MDNS_RESPONSE_TYPE_PTR_NAME             "gMDNSResponseTypePTR"
-#define CFG_MDNS_RESPONSE_TYPE_PTR_DEFAULT          ""
-#define CFG_MDNS_RESPONSE_TYPE_PTR_DN_NAME          "gMDNSResponseTypePTRDomainName"
-#define CFG_MDNS_RESPONSE_TYPE_PTR_DN_DEFAULT       ""
-
-/* Set the response Type SRV to mDNS queries */
-#define CFG_MDNS_RESPONSE_TYPE_SRV_NAME             "gMDNSResponseTypeSRV"
-#define CFG_MDNS_RESPONSE_TYPE_SRV_DEFAULT          ""
-
-/* Set the response Type SRV Priority to mDNS queries */
-#define CFG_MDNS_RESPONSE_TYPE_SRV_PRIORITY_NAME    "gMDNSResponseTypeSRVPriority"
-#define CFG_MDNS_RESPONSE_TYPE_SRV_PRIORITY_MIN     ( 0 )
-#define CFG_MDNS_RESPONSE_TYPE_SRV_PRIORITY_MAX     ( 65535 )
-#define CFG_MDNS_RESPONSE_TYPE_SRV_PRIORITY_DEFAULT ( CFG_MDNS_RESPONSE_TYPE_SRV_PRIORITY_MIN )
-
-/* Set the response Type SRV Weight to mDNS queries */
-#define CFG_MDNS_RESPONSE_TYPE_SRV_WEIGHT_NAME      "gMDNSResponseTypeSRVWeight"
-#define CFG_MDNS_RESPONSE_TYPE_SRV_WEIGHT_MIN       ( 0 )
-#define CFG_MDNS_RESPONSE_TYPE_SRV_WEIGHT_MAX       ( 65525 )
-#define CFG_MDNS_RESPONSE_TYPE_SRV_WEIGHT_DEFAULT   ( CFG_MDNS_RESPONSE_TYPE_SRV_WEIGHT_MIN )
-
-/* Set the response Type SRV Port to mDNS queries */
-#define CFG_MDNS_RESPONSE_TYPE_SRV_PORT_NAME        "gMDNSResponseTypeSRVPort"
-#define CFG_MDNS_RESPONSE_TYPE_SRV_PORT_MIN         ( 0 )
-#define CFG_MDNS_RESPONSE_TYPE_SRV_PORT_MAX         ( 65525 )
-#define CFG_MDNS_RESPONSE_TYPE_SRV_PORT_DEFAULT     ( 80 )
-
-/* Set the response Type SRV Target to mDNS queries */
-#define CFG_MDNS_RESPONSE_TYPE_SRV_TGT_NAME      "gMDNSResponseTypeSRVTarget"
-#define CFG_MDNS_RESPONSE_TYPE_SRV_TGT_DEFAULT   ""
-#endif /* MDNS_OFFLOAD */
-
-#ifdef SAP_AUTH_OFFLOAD
-/* Enable/Disable SAP Authentication offload
- * Default: Disable
- */
-#define CFG_ENABLE_SAP_AUTH_OFL_NAME                   "gEnableSAPAuthOffload"
-#define CFG_ENABLE_SAP_AUTH_OFL_MIN                    ( 0 )
-#define CFG_ENABLE_SAP_AUTH_OFL_MAX                    ( 1 )
-#define CFG_ENABLE_SAP_AUTH_OFL_DEFAULT                ( 0 )
-
-/* SAP Authentication offload Security Type
- *  0: None Security
- *  1: WPA2-PSK CCMP
- */
-#define CFG_SAP_AUTH_OFL_SECURITY_TYPE_NAME               "gSAPAuthOffloadSec"
-#define CFG_SAP_AUTH_OFL_SECURITY_TYPE_MIN                ( 0 )
-#define CFG_SAP_AUTH_OFL_SECURITY_TYPE_MAX                ( 1 )
-#define CFG_SAP_AUTH_OFL_SECURITY_TYPE_DEFAULT            ( 0 )
-
-/* SAP Authentication offload Security Key */
-#define CFG_SAP_AUTH_OFL_KEY_NAME     "gSAPAuthOffloadKey"
-#define CFG_SAP_AUTH_OFL_KEY_DEFAULT  ""
-#endif /* SAP_AUTH_OFFLOAD */
-
-enum dot11p_mode {
-    WLAN_HDD_11P_DISABLED = 0,
-    WLAN_HDD_11P_STANDALONE,
-    WLAN_HDD_11P_CONCURRENT,
-};
-
-#define CFG_DOT11P_MODE_NAME             "gDot11PMode"
-#define CFG_DOT11P_MODE_DEFAULT          ( WLAN_HDD_11P_DISABLED )
-#define CFG_DOT11P_MODE_MIN              ( WLAN_HDD_11P_DISABLED )
-#define CFG_DOT11P_MODE_MAX              ( WLAN_HDD_11P_CONCURRENT )
-
-#ifdef FEATURE_BUS_AUTO_SUSPEND
-#define CFG_ENABLE_AUTO_SUSPEND                   "gEnableBusAutoSuspend"
-#define CFG_ENABLE_AUTO_SUSPEND_MIN               ( 0 )
-#define CFG_ENABLE_AUTO_SUSPEND_MAX               ( 1 )
-#define CFG_ENABLE_AUTO_SUSPEND_DEFAULT           ( 0 )
-#endif
 
 /*---------------------------------------------------------------------------
   Type declarations
@@ -2828,7 +2677,6 @@ typedef struct
    v_U16_t       nNeighborScanPeriod;
    v_U8_t        nNeighborReassocRssiThreshold;
    v_U8_t        nNeighborLookupRssiThreshold;
-   v_U8_t        delay_before_vdev_stop;
    v_U8_t        nOpportunisticThresholdDiff;
    v_U8_t        nRoamRescanRssiDiff;
    v_U8_t        neighborScanChanList[WNI_CFG_VALID_CHANNEL_LIST_LEN];
@@ -2854,7 +2702,6 @@ typedef struct
    v_U32_t        nActiveMaxChnTime;     //in units of milliseconds
 
    v_U32_t        nInitialDwellTime;     //in units of milliseconds
-   bool           initial_scan_no_dfs_chnl;
 
    v_U32_t        nActiveMinChnTimeBtc;     //in units of milliseconds
    v_U32_t        nActiveMaxChnTimeBtc;     //in units of milliseconds
@@ -3197,6 +3044,9 @@ typedef struct
 
    v_U32_t                     defaultRateIndex24Ghz;
    char                        overrideCountryCode[4];
+#ifdef MEMORY_DEBUG
+   v_BOOL_t                    IsMemoryDebugSupportEnabled;
+#endif
 
    v_U8_t                      allowDFSChannelRoam;
 
@@ -3286,44 +3136,8 @@ typedef struct
 #ifdef DHCP_SERVER_OFFLOAD
    v_BOOL_t                    enableDHCPServerOffload;
    v_U32_t                     dhcpMaxNumClients;
-   uint32_t                    dhcp_client_start_ip;
    v_U8_t                      dhcpServerIP[IPADDR_STRING_LENGTH];
 #endif  /* DHCP_SERVER_OFFLOAD */
-
-   bool                        enable_mac_spoofing;
-#ifdef IPA_UC_STA_OFFLOAD
-   bool                        ipa_uc_sta_offload;
-#endif
-   uint8_t                     conc_custom_rule1;
-   uint8_t                     conc_custom_rule2;
-   uint8_t                     is_sta_connection_in_5gz_enabled;
-
-#ifdef MDNS_OFFLOAD
-   uint32_t                    enable_mdns_offload;
-   uint8_t                     mdns_fqdn[MAX_MDNS_FQDN_LEN];
-   uint8_t                     mdns_uniquefqdn[MAX_MDNS_FQDN_LEN];
-   uint8_t                     mdns_resp_type_a[MAX_MDNS_RESP_LEN];
-   uint32_t                    mdns_resp_type_a_ipv4;
-   uint8_t                     mdns_resp_type_txt[MAX_MDNS_RESP_LEN];
-   uint8_t                     mdns_resp_type_txt_content[MAX_MDNS_RESP_LEN];
-   uint8_t                     mdns_resp_type_ptr[MAX_MDNS_RESP_LEN];
-   uint8_t                     mdns_resp_type_ptr_dname[MAX_MDNS_RESP_LEN];
-   uint8_t                     mdns_resp_type_srv[MAX_MDNS_RESP_LEN];
-   uint16_t                    mdns_resp_type_srv_priority;
-   uint16_t                    mdns_resp_type_srv_weight;
-   uint16_t                    mdns_resp_type_srv_port;
-   uint8_t                     mdns_resp_type_srv_target[MAX_MDNS_RESP_LEN];
-#endif  /* MDNS_OFFLOAD */
-
-#ifdef SAP_AUTH_OFFLOAD
-   bool                        enable_sap_auth_offload;
-   uint32_t                    sap_auth_offload_sec_type;
-   uint8_t                     sap_auth_offload_key[WLAN_PSK_STRING_LENGTH];
-#endif /* SAP_AUTH_OFFLOAD */
-   uint8_t                     dot11p_mode;
-#ifdef FEATURE_BUS_AUTO_SUSPEND
-   bool                        enable_bus_auto_suspend;
-#endif
 } hdd_config_t;
 
 #ifdef WLAN_FEATURE_MBSSID
@@ -3470,13 +3284,6 @@ void hdd_dfs_indicate_radar(void *context, void *param);
 
 VOS_STATUS hdd_string_to_u8_array( char *str, tANI_U8 *intArray, tANI_U8 *len,
                tANI_U8 intArrayMaxLen );
-
-#ifdef MDNS_OFFLOAD
-VOS_STATUS hdd_string_to_string_array(char *data, uint8_t *datalist,
-                                  char separator, uint8_t *num_entries,
-                                  uint8_t max_entries, uint8_t max_len_entry);
-#endif
-
 #ifdef WLAN_FEATURE_MBSSID
 v_VOID_t hdd_mbssid_apply_def_cfg_ini(hdd_adapter_t *pAdapter);
 #endif

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2015 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2014 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -266,7 +266,8 @@ tSirRetStatus schSetFixedBeaconFields(tpAniSirGlobal pMac,tpPESession psessionEn
     offset = sizeof( tAniBeaconStruct );
     ptr    = psessionEntry->pSchBeaconFrameBegin + offset;
 
-    if (LIM_IS_AP_ROLE(psessionEntry)) {
+    if((psessionEntry->limSystemRole == eLIM_AP_ROLE))
+    {
         /* Initialize the default IE bitmap to zero */
         vos_mem_set(( tANI_U8* )&(psessionEntry->DefProbeRspIeBitmap), (sizeof( tANI_U32 ) * 8), 0);
 
@@ -323,9 +324,10 @@ tSirRetStatus schSetFixedBeaconFields(tpAniSirGlobal pMac,tpPESession psessionEn
       PopulateDot11fTPCReport( pMac, &pBcn2->TPCReport, psessionEntry);
 
       /* Need to insert channel switch announcement here */
-      if ((LIM_IS_AP_ROLE(psessionEntry) ||
-           LIM_IS_P2P_DEVICE_GO(psessionEntry)) &&
-           psessionEntry->dfsIncludeChanSwIe == VOS_TRUE) {
+      if ((psessionEntry->limSystemRole == eLIM_AP_ROLE ||
+           psessionEntry->limSystemRole == eLIM_P2P_DEVICE_GO) &&
+           psessionEntry->dfsIncludeChanSwIe == VOS_TRUE)
+      {
          /* Channel switch announcement only if radar is detected
           * and SAP has instructed to announce channel switch IEs
           * in beacon and probe responses
@@ -352,10 +354,6 @@ tSirRetStatus schSetFixedBeaconFields(tpAniSirGlobal pMac,tpPESession psessionEn
       }
     }
 
-#ifdef FEATURE_AP_MCC_CH_AVOIDANCE
-    /* populate proprietary IE for MDM device operating in AP-MCC */
-    populate_dot11f_avoid_channels_ie(pMac, &pBcn2->QComVendorIE, psessionEntry);
-#endif /* FEATURE_AP_MCC_CH_AVOIDANCE */
 
     if (psessionEntry->dot11mode != WNI_CFG_DOT11_MODE_11B)
         PopulateDot11fERPInfo( pMac, &pBcn2->ERPInfo, psessionEntry );
@@ -390,20 +388,14 @@ tSirRetStatus schSetFixedBeaconFields(tpAniSirGlobal pMac,tpPESession psessionEn
                        &pBcn2->WPA );
           PopulateDot11fRSNOpaque( pMac, &psessionEntry->pLimStartBssReq->rsnIE,
                        &pBcn2->RSNOpaque );
-#ifdef SAP_AUTH_OFFLOAD
-        /* Software AP Authentication Offload feature
-         * only support WPA2-PSK AES and we
-         * need to update RSNIE for beacon
-         */
-        sap_auth_offload_update_rsn_ie(pMac, &pBcn2->RSNOpaque);
-#endif
     }
 
     if(psessionEntry->limWmeEnabled)
     {
         PopulateDot11fWMM( pMac, &pBcn2->WMMInfoAp, &pBcn2->WMMParams, &pBcn2->WMMCaps, psessionEntry);
     }
-    if (LIM_IS_AP_ROLE(psessionEntry)) {
+    if(psessionEntry->limSystemRole == eLIM_AP_ROLE)
+    {
         if(psessionEntry->wps_state != SAP_WPS_DISABLED)
         {
             PopulateDot11fBeaconWPSIEs( pMac, &pBcn2->WscBeacon, psessionEntry);
@@ -434,7 +426,8 @@ tSirRetStatus schSetFixedBeaconFields(tpAniSirGlobal pMac,tpPESession psessionEn
         }
     }
 
-    if (LIM_IS_AP_ROLE(psessionEntry)) {
+    if((psessionEntry->limSystemRole == eLIM_AP_ROLE))
+    {
         /* Can be efficiently updated whenever new IE added  in Probe response in future */
         limUpdateProbeRspTemplateIeBitmapBeacon2(pMac,pBcn2,&psessionEntry->DefProbeRspIeBitmap[0],
                                                 &psessionEntry->probeRespFrame);
@@ -597,17 +590,6 @@ void limUpdateProbeRspTemplateIeBitmapBeacon2(tpAniSirGlobal pMac,
                      sizeof(beacon2->ChanSwitchAnn));
 
     }
-
-#ifdef FEATURE_AP_MCC_CH_AVOIDANCE
-    if(beacon2->QComVendorIE.present)
-    {
-        SetProbeRspIeBitmap(DefProbeRspIeBitmap, SIR_MAC_QCOM_VENDOR_EID);
-        vos_mem_copy((void *)&prb_rsp->QComVendorIE,
-                     (void *)&beacon2->QComVendorIE,
-                     sizeof(beacon2->QComVendorIE));
-    }
-#endif /* FEATURE_AP_MCC_CH_AVOIDANCE */
-
     /* ERP information */
     if(beacon2->ERPInfo.present)
     {
@@ -833,36 +815,35 @@ schProcessPreBeaconInd(tpAniSirGlobal pMac, tpSirMsgQ limMsg)
         goto end;
     }
 
-    switch(GET_LIM_SYSTEM_ROLE(psessionEntry)) {
+    switch(psessionEntry->limSystemRole){
+
     case eLIM_STA_IN_IBSS_ROLE:
     case eLIM_BT_AMP_AP_ROLE:
     case eLIM_BT_AMP_STA_ROLE:
-        /* Generate IBSS parameter set */
+        // generate IBSS parameter set
         if(psessionEntry->statypeForBss == STA_ENTRY_SELF)
-            writeBeaconToMemory(pMac, (tANI_U16) beaconSize,
-                               (tANI_U16)beaconSize, psessionEntry);
-        else
-            PELOGE(schLog(pMac, LOGE, FL("can not send beacon for PEER session entry"));)
+            writeBeaconToMemory(pMac, (tANI_U16) beaconSize, (tANI_U16)beaconSize, psessionEntry);
+    else
+        PELOGE(schLog(pMac, LOGE, FL("can not send beacon for PEER session entry"));)
         break;
 
-    case eLIM_AP_ROLE: {
+    case eLIM_AP_ROLE:{
          tANI_U8 *ptr = &psessionEntry->pSchBeaconFrameBegin[psessionEntry->schBeaconOffsetBegin];
          tANI_U16 timLength = 0;
-
-         if (psessionEntry->statypeForBss == STA_ENTRY_SELF) {
+         if(psessionEntry->statypeForBss == STA_ENTRY_SELF){
              pmmGenerateTIM(pMac, &ptr, &timLength, psessionEntry->dtimPeriod);
-             beaconSize += 2 + timLength;
-             writeBeaconToMemory(pMac, (tANI_U16) beaconSize,
-                                (tANI_U16)beaconSize, psessionEntry);
-         } else
-             PELOGE(schLog(pMac, LOGE, FL("can not send beacon for PEER session entry"));)
+         beaconSize += 2 + timLength;
+         writeBeaconToMemory(pMac, (tANI_U16) beaconSize, (tANI_U16)beaconSize, psessionEntry);
+     }
+     else
+         PELOGE(schLog(pMac, LOGE, FL("can not send beacon for PEER session entry"));)
          }
-         break;
+     break;
+
 
     default:
-        PELOGE(schLog(pMac, LOGE,
-               FL("Error-PE has Receive PreBeconGenIndication when System is in %d role"),
-               GET_LIM_SYSTEM_ROLE(psessionEntry));)
+        PELOGE(schLog(pMac, LOGE, FL("Error-PE has Receive PreBeconGenIndication when System is in %d role"),
+               psessionEntry->limSystemRole);)
     }
 
 end:

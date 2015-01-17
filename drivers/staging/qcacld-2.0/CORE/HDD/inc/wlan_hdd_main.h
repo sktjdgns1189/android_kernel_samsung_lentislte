@@ -94,7 +94,6 @@
 #define SOFTAP_BSS_STARTED     (4)
 #define DEVICE_IFACE_OPENED    (5)
 #define TDLS_INIT_DONE         (6)
-#define ACS_IN_PROGRESS        (7)
 
 /** Maximum time(ms)to wait for disconnect to complete **/
 #define WLAN_WAIT_TIME_DISCONNECT  2000
@@ -195,7 +194,7 @@
 #define WLAN_HDD_QOS_MAP_CONFIGURE 4
 #define HDD_SAP_WAKE_LOCK_DURATION 10000 //in msecs
 
-#define HDD_MOD_EXIT_SSR_MAX_RETRIES 60
+#define HDD_MOD_EXIT_SSR_MAX_RETRIES 30
 
 /* Maximum number of interfaces allowed(STA, P2P Device, P2P Interfaces) */
 #ifndef WLAN_OPEN_P2P_INTERFACE
@@ -222,12 +221,6 @@
 
 #define HDD_MIN_TX_POWER (-100) // minimum tx power
 #define HDD_MAX_TX_POWER (+100)  // maximum tx power
-
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,14,0))
-#ifdef CONFIG_CNSS
-#define cfg80211_vendor_cmd_reply(skb) cnss_vendor_cmd_reply(skb)
-#endif
-#endif
 
 typedef v_U8_t tWlanHddMacAddr[HDD_MAC_ADDR_LEN];
 
@@ -317,25 +310,39 @@ typedef struct hdd_tx_rx_stats_s
    // start_xmit stats
    __u32    txXmitCalled;
    __u32    txXmitDropped;
+   __u32    txXmitBackPressured;
+   __u32    txXmitQueued;
    __u32    txXmitClassifiedAC[NUM_TX_QUEUES];
    __u32    txXmitDroppedAC[NUM_TX_QUEUES];
+   __u32    txXmitBackPressuredAC[NUM_TX_QUEUES];
+   __u32    txXmitQueuedAC[NUM_TX_QUEUES];
+   // fetch_cbk stats
+   __u32    txFetched;
+   __u32    txFetchedAC[NUM_TX_QUEUES];
+   __u32    txFetchEmpty;
+   __u32    txFetchLowResources;
+   __u32    txFetchDequeueError;
+   __u32    txFetchDequeued;
+   __u32    txFetchDequeuedAC[NUM_TX_QUEUES];
+   __u32    txFetchDePressured;
+   __u32    txFetchDePressuredAC[NUM_TX_QUEUES];
    // complete_cbk_stats
    __u32    txCompleted;
+   // flush stats
+   __u32    txFlushed;
+   __u32    txFlushedAC[NUM_TX_QUEUES];
+   // Deque depressure stats
+   __u32    txDequeDePressured;
+   __u32    txDequeDePressuredAC[NUM_TX_QUEUES];
    // rx stats
    __u32    rxChains;
    __u32    rxPackets;
    __u32    rxDropped;
    __u32    rxDelivered;
    __u32    rxRefused;
+   __u32    pkt_tx_count; //TX pkt Counter used for dynamic splitscan
+   __u32    pkt_rx_count; //RX pkt Counter used for dynamic splitscan
 
-   __u32    netq_disable_cnt;
-   __u32    netq_enable_cnt;
-   bool     netq_state_off;
-
-   bool     is_txflow_paused;
-   __u32    txflow_pause_cnt;
-   __u32    txflow_unpause_cnt;
-   __u32    txflow_timer_cnt;
 } hdd_tx_rx_stats_t;
 
 #ifdef WLAN_FEATURE_11W
@@ -527,8 +534,7 @@ typedef enum device_mode
    WLAN_HDD_MONITOR,
    WLAN_HDD_FTM,
    WLAN_HDD_IBSS,
-   WLAN_HDD_P2P_DEVICE,
-   WLAN_HDD_OCB
+   WLAN_HDD_P2P_DEVICE
 }device_mode_t;
 
 typedef enum rem_on_channel_request_type
@@ -754,8 +760,6 @@ struct hdd_ap_ctx_s
    vos_timer_t hdd_ap_inactivity_timer;
 
    v_U8_t   operatingChannel;
-
-   v_U8_t   secondaryChannel;
 
    v_BOOL_t uIsAuthenticated;
 
@@ -1080,7 +1084,6 @@ struct hdd_adapter_s
     /* this need to be adapter struct since adapter type can be dyn changed */
     mbssid_sap_dyn_ini_config_t sap_dyn_ini_cfg;
 #endif
-    struct work_struct scan_block_work;
 #ifdef MSM_PLATFORM
     unsigned long prev_rx_packets;
     unsigned long prev_tx_packets;
@@ -1106,9 +1109,6 @@ struct hdd_adapter_s
 
    /* variable for temperature in Celsius */
    int temperature;
-
-    /* 802.11p */
-    struct completion hdd_ocb_set_sched_req_var;
 };
 
 #define WLAN_HDD_GET_STATION_CTX_PTR(pAdapter) (&(pAdapter)->sessionCtx.station)
@@ -1471,12 +1471,6 @@ struct hdd_context_s
     adf_os_work_t  sta_ap_intf_check_work;
 #endif
 
-    struct work_struct  sap_start_work;
-    bool is_sap_restart_required;
-    bool is_sta_connection_pending;
-    spinlock_t sap_update_info_lock;
-    spinlock_t sta_update_info_lock;
-
     v_U8_t dev_dfs_cac_status;
 
     v_BOOL_t btCoexModeSet;
@@ -1505,12 +1499,6 @@ struct hdd_context_s
     /* RoC request queue and work */
     struct work_struct rocReqWork;
     hdd_list_t hdd_roc_req_q;
-    bool mcc_mode;
-#ifdef FEATURE_BUS_AUTO_SUSPEND
-    vos_timer_t auto_suspend_timer;
-    atomic_t auto_suspend_state;
-    atomic_t auto_suspend_stop_requested;
-#endif
 };
 
 /*---------------------------------------------------------------------------
@@ -1519,8 +1507,6 @@ struct hdd_context_s
 #ifdef FEATURE_WLAN_MCC_TO_SCC_SWITCH
 void wlan_hdd_check_sta_ap_concurrent_ch_intf(void *sta_pAdapter);
 #endif
-
-const char* hdd_device_mode_to_string(uint8_t device_mode);
 
 VOS_STATUS hdd_get_front_adapter( hdd_context_t *pHddCtx,
                                   hdd_adapter_list_node_t** ppAdapterNode);
@@ -1702,11 +1688,16 @@ void wlan_hdd_send_svc_nlink_msg(int type, void *data, int len);
 void wlan_hdd_auto_shutdown_enable(hdd_context_t *hdd_ctx, v_U8_t enable);
 #endif
 
+#ifdef WLAN_FEATURE_MBSSID
 hdd_adapter_t *hdd_get_con_sap_adapter(hdd_adapter_t *this_sap_adapter);
+#endif
 
 boolean hdd_is_5g_supported(hdd_context_t * pHddCtx);
 
 #ifdef FEATURE_GREEN_AP
+boolean hdd_wlan_green_ap_is_ps_on(hdd_context_t *pHddCtx);
+int hdd_wlan_green_ap_enable(hdd_adapter_t *pHostapdAdapter,
+        v_U8_t enable);
 void hdd_wlan_green_ap_mc(hdd_context_t *pHddCtx,
         hdd_green_ap_event_t event);
 #endif
@@ -1724,27 +1715,4 @@ void hdd_update_macaddr(hdd_config_t *cfg_ini, v_MACADDR_t hw_macaddr);
 void wlan_hdd_disable_roaming(hdd_adapter_t *pAdapter);
 void wlan_hdd_enable_roaming(hdd_adapter_t *pAdapter);
 #endif
-int hdd_set_miracast_mode(hdd_adapter_t *pAdapter, tANI_U8 *command);
-VOS_STATUS wlan_hdd_check_custom_con_channel_rules(hdd_adapter_t *sta_adapter,
-                                              hdd_adapter_t *ap_adapter,
-                                              tCsrRoamProfile *roam_profile,
-                                              tScanResultHandle *scan_cache,
-                                              bool *concurrent_chnl_same);
-#ifdef WLAN_FEATURE_MBSSID
-void wlan_hdd_stop_sap(hdd_adapter_t *ap_adapter);
-void wlan_hdd_start_sap(hdd_adapter_t *ap_adapter);
-#else
-static inline void wlan_hdd_stop_sap(hdd_adapter_t *ap_adapter) {}
-static inline void wlan_hdd_start_sap(hdd_adapter_t *ap_adapter) {}
-#endif
-int wlan_hdd_get_link_speed(hdd_adapter_t *sta_adapter, uint32_t *link_speed);
-#ifdef FEATURE_BUS_AUTO_SUSPEND
-void hdd_start_auto_suspend_attempt(hdd_context_t *hdd_ctx, bool delayed);
-void hdd_stop_auto_suspend_attempt(hdd_context_t *hdd_ctx);
-#else
-static inline void hdd_start_auto_suspend_attempt(hdd_context_t *hdd_ctx,
-              bool delayed) {}
-static inline void hdd_stop_auto_suspend_attempt(hdd_context_t *hdd_ctx) {}
-#endif
-
 #endif    // end #if !defined( WLAN_HDD_MAIN_H )

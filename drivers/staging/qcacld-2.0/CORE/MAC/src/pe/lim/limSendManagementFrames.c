@@ -708,10 +708,9 @@ limSendProbeRspMgmtFrame(tpAniSirGlobal pMac,
     tANI_BOOLEAN         isVHTEnabled = eANI_BOOLEAN_FALSE;
     tDot11fIEExtCap      extractedExtCap;
     tANI_BOOLEAN         extractedExtCapFlag = eANI_BOOLEAN_TRUE;
-
-    if (ANI_DRIVER_TYPE(pMac) == eDRIVER_TYPE_MFG) {
-        /* We don't answer requests in this case */
-        return;
+    if(pMac->gDriverType == eDRIVER_TYPE_MFG)         // We don't answer requests
+    {
+        return;                     // in this case.
     }
 
     if(NULL == psessionEntry)
@@ -745,9 +744,12 @@ limSendProbeRspMgmtFrame(tpAniSirGlobal pMac,
     // Timestamp to be updated by TFP, below.
 
     // Beacon Interval:
-    if (LIM_IS_AP_ROLE(psessionEntry)) {
+    if(psessionEntry->limSystemRole == eLIM_AP_ROLE)
+    {
         pFrm->BeaconInterval.interval = pMac->sch.schObject.gSchBeaconInterval;
-    } else {
+    }
+    else
+    {
         nSirStatus = wlan_cfgGetInt( pMac, WNI_CFG_BEACON_INTERVAL, &cfg);
         if (eSIR_SUCCESS != nSirStatus)
         {
@@ -768,12 +770,15 @@ limSendProbeRspMgmtFrame(tpAniSirGlobal pMac,
     PopulateDot11fIBSSParams( pMac, &pFrm->IBSSParams, psessionEntry );
 
 
-    if (LIM_IS_AP_ROLE(psessionEntry)) {
+    if(psessionEntry->limSystemRole == eLIM_AP_ROLE)
+    {
         if(psessionEntry->wps_state != SAP_WPS_DISABLED)
         {
             PopulateDot11fProbeResWPSIEs(pMac, &pFrm->WscProbeRes, psessionEntry);
         }
-    } else {
+    }
+    else
+    {
         if (wlan_cfgGetInt(pMac, (tANI_U16) WNI_CFG_WPS_ENABLE, &tmp) != eSIR_SUCCESS)
             limLog(pMac, LOGP,"Failed to cfg get id %d", WNI_CFG_WPS_ENABLE );
 
@@ -1385,7 +1390,8 @@ limSendAssocRspMgmtFrame(tpAniSirGlobal pMac,
                       pSta->supportedRates.llbRates, pSta->supportedRates.llaRates );
     }
 
-    if (LIM_IS_AP_ROLE(psessionEntry)) {
+    if(psessionEntry->limSystemRole == eLIM_AP_ROLE)
+    {
         if( pSta != NULL && eSIR_SUCCESS == statusCode )
         {
             pAssocReq =
@@ -1459,7 +1465,7 @@ limSendAssocRspMgmtFrame(tpAniSirGlobal pMac,
 
     vos_mem_set(( tANI_U8* )&beaconParams, sizeof( tUpdateBeaconParams), 0);
 
-    if (LIM_IS_AP_ROLE(psessionEntry)) {
+    if( psessionEntry->limSystemRole == eLIM_AP_ROLE ){
         if(psessionEntry->gLimProtectionControl != WNI_CFG_FORCE_POLICY_PROTECTION_DISABLE)
         limDecideApProtection(pMac, peerMacAddr, &beaconParams,psessionEntry);
     }
@@ -2565,13 +2571,13 @@ limSendReassocReqWithFTIEsMgmtFrame(tpAniSirGlobal     pMac,
 
     frm.ListenInterval.interval = pMlmReassocReq->listenInterval;
 
-    /* *
-     * Get the bssid of the older AP.
-     * The previous ap bssid is stored in the FT Session
-     * while creating the PE FT Session for reassociation.
-     * */
-    vos_mem_copy((tANI_U8*)frm.CurrentAPAddress.mac,
-                  psessionEntry->prev_ap_bssid, sizeof(tSirMacAddr));
+    // Get the old bssid of the older AP.
+    if (NULL != psessionEntry->ftPEContext.pFTPreAuthReq)
+    {
+       vos_mem_copy( ( tANI_U8* )frm.CurrentAPAddress.mac,
+             psessionEntry->ftPEContext.pFTPreAuthReq->currbssId,
+             sizeof(tSirMacAddr));
+    }
 
     PopulateDot11fSSID2( pMac, &frm.SSID );
     PopulateDot11fSuppRates( pMac, POPULATE_DOT11F_RATES_OPERATIONAL,
@@ -3513,8 +3519,9 @@ limSendAuthMgmtFrame(tpAniSirGlobal pMac,
     pMacHdr->fc.wep = wepBit;
 
     // Prepare BSSId
-    if (LIM_IS_AP_ROLE(psessionEntry) ||
-        LIM_IS_BT_AMP_AP_ROLE(psessionEntry)) {
+    if ((psessionEntry->limSystemRole == eLIM_AP_ROLE)||
+        (psessionEntry->limSystemRole == eLIM_BT_AMP_AP_ROLE) )
+    {
         vos_mem_copy( (tANI_U8 *) pMacHdr->bssId,
                       (tANI_U8 *) psessionEntry->bssId,
                       sizeof( tSirMacAddr ));
@@ -3684,7 +3691,6 @@ eHalStatus limSendDeauthCnf(tpAniSirGlobal pMac)
 
 
         /// Receive path cleanup with dummy packet
-        limFTCleanupPreAuthInfo(pMac,psessionEntry);
         limCleanupRxPath(pMac, pStaDs,psessionEntry);
         /// Free up buffer allocated for mlmDeauthReq
         vos_mem_free(pMlmDeauthReq);
@@ -3749,7 +3755,7 @@ eHalStatus limSendDisassocCnf(tpAniSirGlobal pMac)
         }
 
 #ifdef WLAN_FEATURE_VOWIFI_11R
-        if  (LIM_IS_STA_ROLE(psessionEntry) &&
+        if  ( (psessionEntry->limSystemRole == eLIM_STA_ROLE ) &&
                 (
 #ifdef FEATURE_WLAN_ESE
                 (psessionEntry->isESEconnection ) ||
@@ -3781,7 +3787,7 @@ eHalStatus limSendDisassocCnf(tpAniSirGlobal pMac)
                    " isLFR %d"
 #endif
                    " is11r %d reason %d"),
-                   GET_LIM_SYSTEM_ROLE(psessionEntry),
+                   psessionEntry->limSystemRole,
 #ifdef FEATURE_WLAN_ESE
                    psessionEntry->isESEconnection,
 #endif

@@ -80,10 +80,6 @@
  */
 #define BSSIDX_INVALID             254
 
-#ifdef SAP_AUTH_OFFLOAD
-#define MAX_CONNECT_REQ_LENGTH 512
-#endif
-
 #define HAL_IS_VALID_BSS_INDEX(pMac, bssIdx)  ((BSSIDX_INVALID != (bssIdx)) && ((bssIdx) < (pMac)->hal.memMap.maxBssids))
 
 // Beacon structure
@@ -1068,7 +1064,6 @@ typedef struct
 #ifdef WLAN_FEATURE_ROAM_OFFLOAD
   tANI_U8          setRICparams;
 #endif
-  uint8_t          sme_session_id;
 } tAddTsParams, *tpAddTsParams;
 
 typedef struct
@@ -1574,29 +1569,6 @@ typedef struct sNanRequest
     tANI_U16 request_data_len;
     tANI_U8  request_data[];
 } tNanRequest, *tpNanRequest;
-#endif
-
-#ifdef SAP_AUTH_OFFLOAD
-struct sap_offload_add_sta_req
-{
-    tANI_U32 assoc_id;
-    tANI_U32 conn_req_len;
-    tANI_U8 conn_req[MAX_CONNECT_REQ_LENGTH];
-};
-struct sap_offload_del_sta_req
-{
-    tANI_U32 assoc_id;
-    tANI_U32 reason_code;
-    tSirMacAddr sta_mac;
-};
-#endif /* SAP_AUTH_OFFLOAD */
-
-#ifdef WLAN_FEATURE_APFIND
-struct hal_apfind_request
-{
-    u_int16_t request_data_len;
-    u_int8_t  request_data[];
-};
 #endif
 
 #endif /* _HALMSGAPI_H_ */

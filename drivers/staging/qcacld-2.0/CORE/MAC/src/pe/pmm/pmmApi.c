@@ -542,7 +542,7 @@ tSirRetStatus pmmSendChangePowerSaveMsg(tpAniSirGlobal pMac)
         return retStatus;
     }
 
-    vos_mem_zero(pExitBmpsParams, sizeof(*pExitBmpsParams));
+    vos_mem_set( (tANI_U8 *)pExitBmpsParams, sizeof(*pExitBmpsParams), 0);
     msgQ.type = WDA_EXIT_BMPS_REQ;
     msgQ.reserved = 0;
     msgQ.bodyptr = pExitBmpsParams;
@@ -616,14 +616,12 @@ tSirRetStatus  pmmSendInitPowerSaveMsg(tpAniSirGlobal pMac,tpPESession psessionE
         return eSIR_FAILURE;
     }
 
-    pBmpsParams = vos_mem_malloc(sizeof(*pBmpsParams));
+    pBmpsParams = vos_mem_malloc(sizeof(tEnterBmpsParams));
     if ( NULL == pBmpsParams )
     {
         pmmLog(pMac, LOGP, "PMM: Not able to allocate memory for Enter Bmps");
         return eSIR_FAILURE;
     }
-
-    vos_mem_zero(pBmpsParams, sizeof(*pBmpsParams));
 
     pMac->pmm.inMissedBeaconScenario = FALSE;
     pBmpsParams->respReqd = TRUE;
@@ -1148,13 +1146,13 @@ void pmmProcessMessage(tpAniSirGlobal pMac, tpSirMsgQ pMsg)
             tpSirPowerSaveCfg pPSCfg;
             tSirMbMsg *pMbMsg = (tSirMbMsg *)pMsg->bodyptr;
 
-            pPSCfg = vos_mem_malloc(sizeof(*pPSCfg));
+            pPSCfg = vos_mem_malloc(sizeof(tSirPowerSaveCfg));
             if ( NULL == pPSCfg )
             {
                 pmmLog(pMac, LOGP, "PMM: Not able to allocate memory for PMC Config");
             }
-            vos_mem_copy(pPSCfg, pMbMsg->data, sizeof(*pPSCfg));
-            pmmSendPowerSaveCfg(pMac, pPSCfg);
+            (void) vos_mem_copy(pPSCfg, pMbMsg->data, sizeof(tSirPowerSaveCfg));
+            (void) pmmSendPowerSaveCfg(pMac, pPSCfg);
         }
             break;
 
@@ -1171,13 +1169,13 @@ void pmmProcessMessage(tpAniSirGlobal pMac, tpSirMsgQ pMsg)
             tpExitBmpsInfo  pExitBmpsInfo;
             tSirMbMsg      *pMbMsg = (tSirMbMsg *)pMsg->bodyptr;
 
-            pExitBmpsInfo = vos_mem_malloc(sizeof(*pExitBmpsInfo));
+            pExitBmpsInfo = vos_mem_malloc(sizeof(tExitBmpsInfo));
             if ( NULL == pExitBmpsInfo )
             {
                 pmmLog(pMac, LOGP, "PMM: Failed to allocate memory for Exit BMPS Info ");
             }
-            vos_mem_copy(pExitBmpsInfo, pMbMsg->data, sizeof(*pExitBmpsInfo));
-            pmmExitBmpsRequestHandler(pMac, pExitBmpsInfo);
+            (void) vos_mem_copy(pExitBmpsInfo, pMbMsg->data, sizeof(tExitBmpsInfo));
+            (void) pmmExitBmpsRequestHandler(pMac, pExitBmpsInfo);
         }
             break;
 
@@ -1912,7 +1910,7 @@ void pmmSendWowlAddBcastPtrn(tpAniSirGlobal pMac,  tpSirMsgQ pMsg)
         pmmLog(pMac, LOGP, FL("Fail to allocate memory for WoWLAN Add Bcast Pattern "));
         return;
     }
-    vos_mem_copy(pBcastPtrn, pMbMsg->data, sizeof(*pBcastPtrn));
+    (void) vos_mem_copy(pBcastPtrn, pMbMsg->data, sizeof(*pBcastPtrn));
 
     if (NULL == pBcastPtrn)
     {
@@ -1960,7 +1958,7 @@ void pmmSendWowlDelBcastPtrn(tpAniSirGlobal pMac, tpSirMsgQ pMsg)
         pmmLog(pMac, LOGP, FL("Fail to allocate memory for WoWLAN Delete Bcast Pattern "));
         return;
     }
-    vos_mem_copy(pDeletePtrn, pMbMsg->data, sizeof(*pDeletePtrn));
+    (void) vos_mem_copy(pDeletePtrn, pMbMsg->data, sizeof(*pDeletePtrn));
 
     if (NULL == pDeletePtrn)
     {
@@ -2046,13 +2044,13 @@ skip_pmm_state_check:
         pmmLog(pMac, LOGP, FL("Fail to allocate memory for Enter Wowl Request "));
         goto end;
     }
-    vos_mem_zero(pHalWowlParams, sizeof(*pHalWowlParams));
+    (void) vos_mem_set((tANI_U8 *)pHalWowlParams, sizeof(*pHalWowlParams), 0);
 
     // fill in the message field
     pHalWowlParams->ucMagicPktEnable = pSmeWowlParams->ucMagicPktEnable;
     pHalWowlParams->ucPatternFilteringEnable = pSmeWowlParams->ucPatternFilteringEnable;
-    vos_mem_copy(pHalWowlParams->magicPtrn,
-                pSmeWowlParams->magicPtrn, sizeof(tSirMacAddr));
+    (void)vos_mem_copy( (tANI_U8 *)pHalWowlParams->magicPtrn, (tANI_U8 *)pSmeWowlParams->magicPtrn,
+                         sizeof(tSirMacAddr) );
 
 #ifdef WLAN_WAKEUP_EVENTS
     pHalWowlParams->ucWoWEAPIDRequestEnable = pSmeWowlParams->ucWoWEAPIDRequestEnable;
@@ -2269,7 +2267,7 @@ skip_pe_session_lookup:
         goto failure;
     }
 
-    vos_mem_zero(pHalWowlMsg, sizeof(*pHalWowlMsg));
+    (void) vos_mem_set((tANI_U8 *)pHalWowlMsg, sizeof(*pHalWowlMsg), 0);
 
     if (!pMac->psOffloadEnabled)
           pHalWowlMsg->bssIdx = pSessionEntry->bssIdx;
@@ -2459,7 +2457,7 @@ tSirRetStatus pmmUapsdSendChangePwrSaveMsg (tpAniSirGlobal pMac, tANI_U8 mode)
 
     if (SIR_PM_SLEEP_MODE == mode)
     {
-        pUapsdParams = vos_mem_malloc(sizeof(*pUapsdParams));
+        pUapsdParams = vos_mem_malloc(sizeof(tUapsdParams));
         if ( NULL == pUapsdParams )
         {
             PELOGW(pmmLog(pMac, LOGW, FL("pmmUapsd : failed to allocate memory"));)
@@ -2467,7 +2465,7 @@ tSirRetStatus pmmUapsdSendChangePwrSaveMsg (tpAniSirGlobal pMac, tANI_U8 mode)
             return retStatus;
         }
 
-        vos_mem_zero(pUapsdParams, sizeof(*pUapsdParams));
+        vos_mem_set( (tANI_U8 *)pUapsdParams, sizeof(tUapsdParams), 0);
         msgQ.type = WDA_ENTER_UAPSD_REQ;
         msgQ.bodyptr = pUapsdParams;
 
@@ -2573,7 +2571,7 @@ tSirRetStatus pmmUapsdSendChangePwrSaveMsg (tpAniSirGlobal pMac, tANI_U8 mode)
     }
     else
     {
-        pExitUapsdParams = vos_mem_malloc(sizeof(*pExitUapsdParams));
+        pExitUapsdParams = vos_mem_malloc(sizeof(tExitUapsdParams));
         if ( NULL == pExitUapsdParams )
         {
             PELOGW(pmmLog(pMac, LOGW, FL("pmmUapsd : failed to allocate memory"));)
@@ -2581,7 +2579,7 @@ tSirRetStatus pmmUapsdSendChangePwrSaveMsg (tpAniSirGlobal pMac, tANI_U8 mode)
             return retStatus;
         }
 
-        vos_mem_zero(pExitUapsdParams, sizeof(*pExitUapsdParams));
+        vos_mem_set( (tANI_U8 *)pExitUapsdParams, sizeof(tExitUapsdParams), 0);
         msgQ.type = WDA_EXIT_UAPSD_REQ;
         msgQ.bodyptr = pExitUapsdParams;
         pExitUapsdParams->bssIdx = pSessionEntry->bssIdx;
@@ -3097,7 +3095,7 @@ tSirRetStatus pmmOffloadEnterBmpsReqHandler(tpAniSirGlobal pMac,
         return eSIR_SUCCESS;
     }
 
-    pEnablePsReqParams = vos_mem_malloc(sizeof(*pEnablePsReqParams));
+    pEnablePsReqParams = vos_mem_malloc(sizeof(tEnablePsParams));
     if (NULL == pEnablePsReqParams)
     {
         pmmLog(pMac, LOGE,
@@ -3108,7 +3106,6 @@ tSirRetStatus pmmOffloadEnterBmpsReqHandler(tpAniSirGlobal pMac,
         return eSIR_MEM_ALLOC_FAILED;
     }
 
-    vos_mem_zero(pEnablePsReqParams, sizeof(*pEnablePsReqParams));
     /* Fill the BSSID  corresponding to PS Req */
     vos_mem_copy(pEnablePsReqParams->bssid, psReqData->bssId,
                  sizeof(tSirMacAddr));
@@ -3245,7 +3242,7 @@ tSirRetStatus pmmOffloadExitBmpsReqHandler(tpAniSirGlobal pMac,
         return eSIR_FAILURE;
     }
 
-    pDisablePsReqParams = vos_mem_malloc(sizeof(*pDisablePsReqParams));
+    pDisablePsReqParams = vos_mem_malloc(sizeof(tDisablePsParams));
     if (NULL == pDisablePsReqParams)
     {
         pmmLog(pMac, LOGE, FL("Memory allocation failed for tDisablePsParams"));
@@ -3255,7 +3252,6 @@ tSirRetStatus pmmOffloadExitBmpsReqHandler(tpAniSirGlobal pMac,
         return eSIR_MEM_ALLOC_FAILED;
     }
 
-    vos_mem_zero(pDisablePsReqParams, sizeof(*pDisablePsReqParams));
     /* Fill the BSSID  corresponding to PS Req */
     vos_mem_copy(pDisablePsReqParams->bssid, psReqData->bssId,
                  sizeof(tSirMacAddr));
@@ -3373,7 +3369,7 @@ tSirRetStatus pmmOffloadEnterUapsdReqHandler(tpAniSirGlobal pMac,
         return eSIR_FAILURE;
     }
 
-    pEnableUapsdReqParams = vos_mem_malloc(sizeof(*pEnableUapsdReqParams));
+    pEnableUapsdReqParams = vos_mem_malloc(sizeof(tEnableUapsdParams));
     if (NULL == pEnableUapsdReqParams)
     {
         pmmLog(pMac, LOGE,
@@ -3381,7 +3377,6 @@ tSirRetStatus pmmOffloadEnterUapsdReqHandler(tpAniSirGlobal pMac,
         return eSIR_MEM_ALLOC_FAILED;
     }
 
-    vos_mem_zero(pEnableUapsdReqParams, sizeof(*pEnableUapsdReqParams));
     uapsdDeliveryMask = (psessionEntry->gUapsdPerAcBitmask |
                          psessionEntry->gUapsdPerAcDeliveryEnableMask);
 
@@ -3522,7 +3517,7 @@ tSirRetStatus pmmOffloadExitUapsdReqHandler(tpAniSirGlobal pMac,
         return eSIR_FAILURE;
     }
 
-    pDisableUapsdReqParams = vos_mem_malloc(sizeof(*pDisableUapsdReqParams));
+    pDisableUapsdReqParams = vos_mem_malloc(sizeof(tDisablePsParams));
     if (NULL == pDisableUapsdReqParams)
     {
         pmmLog(pMac, LOGE,
@@ -3530,7 +3525,6 @@ tSirRetStatus pmmOffloadExitUapsdReqHandler(tpAniSirGlobal pMac,
         return eSIR_MEM_ALLOC_FAILED;
     }
 
-    vos_mem_zero(pDisableUapsdReqParams, sizeof(*pDisableUapsdReqParams));
     /* Fill the BSSID  corresponding to PS Req */
     vos_mem_copy(pDisableUapsdReqParams->bssid, psReqData->bssId,
                  sizeof(tSirMacAddr));

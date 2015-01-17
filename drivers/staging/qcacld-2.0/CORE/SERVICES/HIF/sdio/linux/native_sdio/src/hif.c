@@ -35,10 +35,7 @@
 #include <linux/kthread.h>
 #include "if_ath_sdio.h"
 #include "regtable.h"
-#include "vos_api.h"
-#include "wma_api.h"
-#include "hif_internal.h"
-#include "adf_os_time.h"
+
 /* by default setup a bounce buffer for the data packets, if the underlying host controller driver
    does not use DMA you may be able to skip this step and save the memory allocation and transfer time */
 #define HIF_USE_DMA_BOUNCE_BUFFER 1
@@ -57,13 +54,6 @@
 
 #define MAX_HIF_DEVICES 2
 
-#ifdef HIF_MBOX_SLEEP_WAR
-#define HIF_MIN_SLEEP_INACTIVITY_TIME_MS     50
-#define HIF_SLEEP_DISABLE_UPDATE_DELAY 1
-#define HIF_IS_WRITE_REQUEST_MBOX1_TO_3(request) \
-                ((request->request & HIF_WRITE)&& \
-                (request->address >= 0x1000 && request->address < 0x1FFFF))
-#endif
 unsigned int mmcbusmode = 0;
 module_param(mmcbusmode, uint, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
 MODULE_PARM_DESC(mmcbusmode, "Set MMC driver Bus Mode: 1-SDR12, 2-SDR25, 3-SDR50, 4-DDR50, 5-SDR104");
@@ -501,24 +491,6 @@ void AddToAsyncList(HIF_DEVICE *device, BUS_REQUEST *busrequest)
     spin_unlock_irqrestore(&device->asynclock, flags);
 }
 
-A_STATUS
-HIFSyncRead(HIF_DEVICE *device,
-               A_UINT32 address,
-               A_UCHAR *buffer,
-               A_UINT32 length,
-               A_UINT32 request,
-               void *context)
-{
-       A_STATUS status;
-
-       AR_DEBUG_ASSERT(device != NULL);
-       AR_DEBUG_ASSERT(device->func != NULL);
-
-       sdio_claim_host(device->func);
-       status = __HIFReadWrite(device, address, buffer, length, request & ~HIF_SYNCHRONOUS, NULL);
-       sdio_release_host(device->func);
-       return status;
-}
 
 /* queue a read/write request */
 A_STATUS
@@ -617,14 +589,6 @@ static int async_task(void *param)
             AR_DEBUG_PRINTF(ATH_DEBUG_TRACE, ("AR6000: async task stopping\n"));
             break;
         }
-#ifdef HIF_MBOX_SLEEP_WAR
-        /* No write request, and device state is sleep enter into sleep mode */
-        if ((device->asyncreq == NULL) &&
-            (adf_os_atomic_read(&device->mbox_state) == HIF_MBOX_REQUEST_TO_SLEEP_STATE)) {
-            HIFSetMboxSleep(device, true, true, false);
-            continue;
-        }
-#endif
         /* we want to hold the host over multiple cmds if possible, but holding the host blocks card interrupts */
         sdio_claim_host(device->func);
         spin_lock_irqsave(&device->asynclock, flags);
@@ -638,19 +602,7 @@ static int async_task(void *param)
             }
             spin_unlock_irqrestore(&device->asynclock, flags);
             AR_DEBUG_PRINTF(ATH_DEBUG_TRACE, ("AR6000: async_task processing req: 0x%lX\n", (unsigned long)request));
-#ifdef HIF_MBOX_SLEEP_WAR
-            /* write request pending for mailbox(1-3),
-	     * and the mbox state is sleep then awake the device */
-            if (HIF_IS_WRITE_REQUEST_MBOX1_TO_3(request)) {
-                if (adf_os_atomic_read(&device->mbox_state) == HIF_MBOX_SLEEP_STATE) {
-                    HIFSetMboxSleep(device, false, true, false);
-                    adf_os_timer_cancel(&device->sleep_timer);
-                    adf_os_timer_start(&device->sleep_timer, HIF_MIN_SLEEP_INACTIVITY_TIME_MS);
-                }
-                /* Update the write time stamp */
-                device->sleep_ticks = adf_os_ticks();
-            }
-#endif
+
             if (request->pScatterReq != NULL) {
                 A_ASSERT(device->scatter_enabled);
                     /* this is a queued scatter request, pass the request to scatter routine which
@@ -973,10 +925,6 @@ PowerStateChangeNotify(HIF_DEVICE *device, HIF_DEVICE_POWER_CHANGE_TYPE config)
     AR_DEBUG_PRINTF(ATH_DEBUG_TRACE, ("AR6000: +PowerStateChangeNotify %d\n", config));
     switch (config) {
        case HIF_DEVICE_POWER_DOWN:
-#ifdef HIF_MBOX_SLEEP_WAR
-            adf_os_timer_cancel(&device->sleep_timer);
-            HIFSetMboxSleep(device, true, true, false);
-#endif
             /* Disable 4bits in order to let SDIO bus detect DAT1 as interrupt source */
             SdioEnable4bits(device, 0);
             break;
@@ -1155,58 +1103,6 @@ hifIRQHandler(struct sdio_func *func)
     AR_DEBUG_ASSERT(status == A_OK || status == A_ECANCELED);
     AR_DEBUG_PRINTF(ATH_DEBUG_TRACE, ("AR6000: -hifIRQHandler\n"));
 }
-
-#ifdef HIF_MBOX_SLEEP_WAR
-static void
-HIF_sleep_entry(void *arg)
-{
-    HIF_DEVICE *device = (HIF_DEVICE *)arg;
-    A_UINT32 idle_ms;
-
-    idle_ms = adf_os_ticks_to_msecs(adf_os_ticks()
-                                    - device->sleep_ticks);
-    if (idle_ms >= HIF_MIN_SLEEP_INACTIVITY_TIME_MS) {
-       adf_os_atomic_set(&device->mbox_state, HIF_MBOX_REQUEST_TO_SLEEP_STATE);
-       up(&device->sem_async);
-    } else {
-       adf_os_timer_cancel(&device->sleep_timer);
-       adf_os_timer_start(&device->sleep_timer,
-                          HIF_MIN_SLEEP_INACTIVITY_TIME_MS);
-    }
-}
-
-void
-HIFSetMboxSleep(HIF_DEVICE *device, bool sleep, bool wait, bool cache)
-{
-    if (!device || !device->func|| !device->func->card) {
-        printk("HIFSetMboxSleep incorrect input arguments\n");
-        return;
-    }
-    sdio_claim_host(device->func);
-    if (cache) {
-       __HIFReadWrite(device, FIFO_TIMEOUT_AND_CHIP_CONTROL,
-                      (A_UCHAR*)(&device->init_sleep), 4,
-                      HIF_RD_SYNC_BYTE_INC, NULL);
-    }
-    if (sleep) {
-        device->init_sleep &= FIFO_TIMEOUT_AND_CHIP_CONTROL_DISABLE_SLEEP_OFF;
-        adf_os_atomic_set(&device->mbox_state, HIF_MBOX_SLEEP_STATE);
-    } else {
-        device->init_sleep |=  FIFO_TIMEOUT_AND_CHIP_CONTROL_DISABLE_SLEEP_ON;
-        adf_os_atomic_set(&device->mbox_state, HIF_MBOX_AWAKE_STATE);
-    }
-
-    __HIFReadWrite(device, FIFO_TIMEOUT_AND_CHIP_CONTROL,
-                   (A_UCHAR*)&device->init_sleep, 4,
-                   HIF_WR_SYNC_BYTE_INC, NULL);
-    sdio_release_host(device->func);
-     /*Wait for 1ms for the written value to take effect */
-    if (wait) {
-       adf_os_mdelay(HIF_SLEEP_DISABLE_UPDATE_DELAY);
-    }
-    return;
-}
-#endif
 
 /* handle HTC startup via thread*/
 static int startup_task(void *param)
@@ -1527,11 +1423,6 @@ TODO: MMC SDIO3.0 Setting should also be modified in ReInit() function when Powe
         }
         sema_init(&device->sem_async, 0);
     }
-#ifdef HIF_MBOX_SLEEP_WAR
-    adf_os_timer_init(NULL, &device->sleep_timer,
-                         HIF_sleep_entry, (void *)device);
-    adf_os_atomic_set(&device->mbox_state, HIF_MBOX_UNKNOWN_STATE);
-#endif
 
     ret = hifEnableFunc(device, func);
     return (ret == A_OK || ret == A_PENDING) ? 0 : -1;
@@ -1656,10 +1547,6 @@ static A_STATUS hifDisableFunc(HIF_DEVICE *device, struct sdio_func *func)
         device->async_task = NULL;
         sema_init(&device->sem_async, 0);
     }
-#ifdef HIF_MBOX_SLEEP_WAR
-    adf_os_timer_cancel(&device->sleep_timer);
-    HIFSetMboxSleep(device, true, true, false);
-#endif
     /* Disable the card */
     sdio_claim_host(device->func);
     ret = sdio_disable_func(device->func);
@@ -1915,24 +1802,6 @@ static int hifDeviceSuspend(struct device *dev)
 #endif
 
     HIF_DEVICE *device = getHifDevice(func);
-    void *vos = vos_get_global_context(VOS_MODULE_ID_HIF, NULL);
-    v_VOID_t *temp_module;
-
-    if (vos_is_logp_in_progress(VOS_MODULE_ID_HIF, NULL)) {
-        AR_DEBUG_PRINTF(ATH_DEBUG_ERROR, ("%s: LOPG in progress\n", __func__));
-        return (-1);
-    }
-
-    temp_module = vos_get_context(VOS_MODULE_ID_WDA, vos);
-    if (!temp_module) {
-        AR_DEBUG_PRINTF(ATH_DEBUG_ERROR, ("%s: WDA module is NULL\n", __func__));
-        return (-1);
-    }
-
-    if (wma_check_scan_in_progress(temp_module)) {
-        AR_DEBUG_PRINTF(ATH_DEBUG_ERROR, ("%s: Scan in progress. Aborting suspend\n", __func__));
-        return (-1);
-    }
 
 #if defined(MMC_PM_KEEP_POWER) || (LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,34))
     if (device && device->func) {
@@ -1990,13 +1859,7 @@ static int hifDeviceSuspend(struct device *dev)
                 return ret;
             }
 
-            if (wma_is_wow_mode_selected(temp_module)) {
-                if (wma_enable_wow_in_fw(temp_module)) {
-                    AR_DEBUG_PRINTF(ATH_DEBUG_ERROR, ("wow mode failure\n"));
-                    return -1;
-                }
-            }
-
+            /* TODO:WOW support */
             if (pm_flag & MMC_PM_WAKE_SDIO_IRQ){
                 AR_DEBUG_PRINTF(ATH_DEBUG_INFO, ("hifDeviceSuspend: wow enter\n"));
                 config = HIF_DEVICE_POWER_DOWN;
@@ -2073,17 +1936,6 @@ static int hifDeviceResume(struct device *dev)
     A_STATUS status = A_OK;
     HIF_DEVICE_POWER_CHANGE_TYPE  config;
     HIF_DEVICE *device;
-    void *vos = vos_get_global_context(VOS_MODULE_ID_HIF, NULL);
-    v_VOID_t * temp_module;
-
-    if (vos == NULL)
-        return 0;
-
-    temp_module = vos_get_context(VOS_MODULE_ID_WDA, vos);
-    if (!temp_module) {
-        AR_DEBUG_PRINTF(ATH_DEBUG_ERROR, ("%s: WDA module is NULL\n", __func__));
-        return (-1);
-    }
 
     device = getHifDevice(func);
 
@@ -2118,15 +1970,6 @@ static int hifDeviceResume(struct device *dev)
         status = osdrvCallbacks.deviceResumeHandler(device->claimedContext);
         device->is_suspend = FALSE;
     }
-
-    /* No need to send WMI_PDEV_RESUME_CMDID to FW if WOW is enabled */
-    if (!wma_is_wow_mode_selected(temp_module)) {
-        wma_resume_target(temp_module);
-    } else if (wma_disable_wow_in_fw(temp_module)) {
-        AR_DEBUG_PRINTF(ATH_DEBUG_ERROR, ("%s: disable wow in fw failed\n", __func__));
-        status = (-1);
-    }
-
     AR_DEBUG_PRINTF(ATH_DEBUG_TRACE, ("AR6000: -hifDeviceResume\n"));
     device->DeviceState = HIF_DEVICE_STATE_ON;
 
@@ -2382,7 +2225,3 @@ void HIFsuspendwow(HIF_DEVICE *hif_device)
     printk(KERN_INFO "HIFsuspendwow TODO\n");
 }
 
-A_BOOL HIFIsMailBoxSwapped(HIF_DEVICE *hd)
-{
-    return ((struct hif_device *)hd)->swap_mailbox;
-}

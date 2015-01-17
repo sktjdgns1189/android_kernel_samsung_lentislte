@@ -96,6 +96,7 @@ typedef tANI_U8 tSirVersionString[SIR_VERSION_STRING_LEN];
 
 #define WIFI_SCANNING_MAC_OUI_LENGTH 3
 
+
 #ifdef FEATURE_WLAN_EXTSCAN
 
 #define WLAN_EXTSCAN_MAX_CHANNELS                 40
@@ -627,7 +628,6 @@ typedef struct sSirSmeStartBssReq
     tSirMacSSid             ssId;
     tANI_U8                 channelId;
     ePhyChanBondState       cbMode;
-    tANI_U8                 vht_channel_width;
 
     tANI_U8                 privacy;
     tANI_U8                 apUapsdEnable;
@@ -1096,9 +1096,8 @@ typedef struct sSirSmeJoinRsp
     tANI_U16                length;
     tANI_U8                 sessionId;         // Session ID
     tANI_U16                transactionId;     // Transaction ID for cmd
-    tSirResultCodes         statusCode;
-    tAniAuthType            authType;
-    tANI_U32                vht_channel_width;
+    tSirResultCodes    statusCode;
+    tAniAuthType       authType;
     tANI_U16        protStatusCode; //It holds reasonCode when join fails due to deauth/disassoc frame.
                                     //Otherwise it holds status code.
     tANI_U16        aid;
@@ -1123,14 +1122,6 @@ typedef struct sSirSmeJoinRsp
 
     /* Timing and fine Timing measurement capability clubbed together */
     tANI_U8            timingMeasCap;
-
-#ifdef FEATURE_WLAN_TDLS
-    /* TDLS prohibited and TDLS channel switch prohibited are set as
-     * per ExtCap IE in received assoc/re-assoc response from AP
-     */
-    bool tdls_prohibited;
-    bool tdls_chan_swit_prohibited;
-#endif
 
     tANI_U8         frames[ 1 ];
 #ifdef FEATURE_WLAN_MCC_TO_SCC_SWITCH
@@ -2137,6 +2128,22 @@ typedef struct sAniGetSnrReq
     void                    *pDevContext; //device context
     tANI_S8                 snr;
 } tAniGetSnrReq, *tpAniGetSnrReq;
+
+#if defined WLAN_FEATURE_VOWIFI_11R || defined FEATURE_WLAN_ESE || defined(FEATURE_WLAN_LFR)
+typedef struct sAniGetRoamRssiRsp
+{
+    // Common for all types are responses
+    tANI_U16                msgType;    // message type is same as the request type
+    tANI_U16                msgLen;  // length of the entire request, includes the pStatsBuf length too
+    tANI_U8                 sessionId;
+    tANI_U32                rc;         //success/failure
+    tANI_U32                staId;  // Per STA stats request must contain valid
+    tANI_S8                 rssi;
+    void                    *rssiReq;  //rssi request backup
+
+} tAniGetRoamRssiRsp, *tpAniGetRoamRssiRsp;
+
+#endif
 
 #if defined(FEATURE_WLAN_ESE) || defined(FEATURE_WLAN_ESE_UPLOAD)
 typedef struct sSirTsmIE
@@ -3204,7 +3211,6 @@ typedef struct sSirWPSProbeRspIE {
 #define SIR_WPS_BEACON_SELECTEDREGISTRACFGMETHOD_PRESENT    0x00000020
 #define SIR_WPS_BEACON_UUIDE_PRESENT    0x00000080
 #define SIR_WPS_BEACON_RF_BANDS_PRESENT    0x00000100
-#define SIR_WPS_UUID_LEN 16
 
 typedef struct sSirWPSBeaconIE {
    v_U32_t  FieldPresent;
@@ -3214,7 +3220,7 @@ typedef struct sSirWPSBeaconIE {
    v_BOOL_t SelectedRegistra;  //BOOL:  indicates if the user has recently activated a Registrar to add an Enrollee.
    v_U16_t  DevicePasswordID;  // Device Password ID
    v_U16_t  SelectedRegistraCfgMethod; // Selected Registrar config method
-   v_U8_t   UUID_E[SIR_WPS_UUID_LEN];   /* Unique identifier of the AP */
+   v_U8_t   UUID_E[16];        // Unique identifier of the AP.
    v_U8_t   RFBand;           // RF bands available on the AP
 } tSirWPSBeaconIE;
 
@@ -3273,6 +3279,7 @@ typedef struct sSirSetHT2040Mode
 } tSirSetHT2040Mode, *tpSirSetHT2040Mode;
 #endif
 
+#define SIR_WPS_UUID_LEN 16
 #define SIR_WPS_PBC_WALK_TIME   120  // 120 Second
 
 typedef struct sSirWPSPBCSession {
@@ -3491,9 +3498,6 @@ typedef struct sSirWlanSuspendParam
     tANI_U8 configuredMcstBcstFilterSetting;
     tANI_U8 sessionId;
     tANI_U8 connectedState;
-#ifdef FEATURE_BUS_AUTO_SUSPEND
-    void (*resumed_callback)(void *);
-#endif
 }tSirWlanSuspendParam,*tpSirWlanSuspendParam;
 
 typedef struct sSirWlanResumeParam
@@ -3704,7 +3708,6 @@ typedef struct sSirRoamOffloadScanReq
   eAniBoolean RoamScanOffloadEnabled;
   eAniBoolean MAWCEnabled;
   tANI_S8     LookupThreshold;
-  tANI_U8     delay_before_vdev_stop;
   tANI_U8     OpportunisticScanThresholdDiff;
   tANI_U8     RoamRescanRssiDiff;
   tANI_U8     RoamRssiDiff;
@@ -4274,8 +4277,6 @@ typedef struct sSirUpdateChanParam
     tANI_U8 chanId;
     tANI_U8 pwr;
     tANI_BOOLEAN dfsSet;
-    bool half_rate;
-    bool quarter_rate;
 } tSirUpdateChanParam, *tpSirUpdateChanParam;
 
 typedef struct sSirUpdateChan
@@ -4584,7 +4585,6 @@ typedef struct sSirChanChangeRequest
     tANI_U16     messageLen;
     tANI_U8      targetChannel;
     tANI_U8      cbMode;
-    tANI_U8      vht_channel_width;
     tANI_U8      bssid[VOS_MAC_ADDR_SIZE];
 }tSirChanChangeRequest, *tpSirChanChangeRequest;
 
@@ -5156,18 +5156,6 @@ typedef struct
     tANI_U8 oui[WIFI_SCANNING_MAC_OUI_LENGTH];
 } tSirScanMacOui, *tpSirScanMacOui;
 
-enum {
-    SIR_AP_RX_DATA_OFFLOAD             = 0x00,
-    SIR_STA_RX_DATA_OFFLOAD            = 0x01,
-};
-
-struct sir_ipa_offload_enable_disable
-{
-    uint32_t offload_type;
-    uint32_t vdev_id;
-    uint32_t enable;
-};
-
 /*---------------------------------------------------------------------------
   WLAN_HAL_LL_NOTIFY_STATS
 ---------------------------------------------------------------------------*/
@@ -5532,7 +5520,6 @@ typedef struct
     tANI_U32 dhcpSrvOffloadEnabled;
     tANI_U32 dhcpClientNum;
     tANI_U32 dhcpSrvIP;
-    tANI_U32 dhcp_client_start_ip;
 } tSirDhcpSrvOffloadInfo, *tpSirDhcpSrvOffloadInfo;
 #endif /* DHCP_SERVER_OFFLOAD */
 
@@ -5546,33 +5533,6 @@ typedef struct
 } tSirLedFlashingReq, *tpSirLedFlashingReq;
 #endif
 
-#ifdef MDNS_OFFLOAD
-#define MAX_MDNS_FQDN_LEN                         64
-#define MAX_MDNS_RESP_LEN                         512
-
-typedef struct
-{
-    tANI_U32 vdev_id;
-    tANI_U32 mDNSOffloadEnabled;
-} tSirMDNSOffloadInfo, *tpSirMDNSOffloadInfo;
-
-typedef struct
-{
-    tANI_U32 vdev_id;
-    tANI_U32 fqdn_type;
-    tANI_U32 fqdn_len;
-    tANI_U8 fqdn_data[MAX_MDNS_FQDN_LEN];
-} tSirMDNSFqdnInfo, *tpSirMDNSFqdnInfo;
-
-typedef struct
-{
-    tANI_U32 vdev_id;
-    tANI_U32 resourceRecord_count;
-    tANI_U32 resp_len;
-    tANI_U8 resp_data[MAX_MDNS_RESP_LEN];
-} tSirMDNSResponseInfo, *tpSirMDNSResponseInfo;
-#endif /* MDNS_OFFLOAD */
-
 /* find the size of given member within a structure */
 #ifndef member_size
 #define member_size(type, member) (sizeof(((type *)0)->member))
@@ -5584,72 +5544,5 @@ typedef struct
 
 /* number of neighbor reports that we can handle in Neighbor Report Response */
 #define MAX_SUPPORTED_NEIGHBOR_RPT 15
-
-#ifdef SAP_AUTH_OFFLOAD
-/* 80211 Pre-Share Key length */
-#define SIR_PSK_MAX_LEN   64
-
-/* Definition for Software AP Auth Offload Security Type */
-enum tSirSecurityType
-{
-    eSIR_OFFLOAD_NONE,
-    eSIR_OFFLOAD_WPA2PSK_CCMP,
-};
-
-/* Structure for Software AP Auth Offload feature */
-struct tSirSapOffloadInfo
-{
-    uint32_t vdev_id;
-    bool sap_auth_offload_enable;
-    uint32_t sap_auth_offload_sec_type;
-    uint32_t key_len;
-    uint8_t key[SIR_PSK_MAX_LEN];
-};
-#endif /* SAP_AUTH_OFFLOAD */
-
-/* OCB Data Structures and defines */
-#define NUM_AC              (4)
-#define OCB_CHANNEL_MAX     (5)
-
-typedef struct sir_qos_params {
-    uint8_t aifsn;
-    uint8_t cwmin;
-    uint8_t cwmax;
-} sir_qos_params_t;
-
-typedef struct sir_ocb_channel
-{
-    uint32_t chan_freq;
-    uint32_t duration;
-    uint32_t start_guard_interval;
-    uint32_t end_guard_interval;
-    uint32_t tx_power;
-    uint32_t tx_rate;
-    sir_qos_params_t qos_params[NUM_AC];
-    uint32_t rx_stats;
-} sir_ocb_channel_t;
-
-typedef struct sir_ocb_sched
-{
-    uint32_t num_channels;
-    sir_ocb_channel_t channels[OCB_CHANNEL_MAX];
-    uint32_t off_channel_tx;
-} sir_ocb_sched_t;
-
-typedef struct sir_ocb_set_sched_response
-{
-    uint8_t status;
-    void *adapter;
-} sir_ocb_set_sched_response_t;
-
-typedef void (*ocb_callback_t)(sir_ocb_set_sched_response_t *);
-
-typedef struct sir_ocb_set_sched_request
-{
-    uint8_t session_id;
-    sir_ocb_sched_t sched;
-    sir_ocb_set_sched_response_t *resp;
-    ocb_callback_t callback;
-} sir_ocb_set_sched_request_t;
 
 #endif /* __SIR_API_H */

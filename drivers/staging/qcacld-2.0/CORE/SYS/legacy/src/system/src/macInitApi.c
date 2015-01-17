@@ -129,7 +129,8 @@ tSirRetStatus macStart(tHalHandle hHal, void* pHalMacStartParams)
          vos_mem_set(pMac->pResetMsg, sizeof(tSirMbMsg), 0);
       }
 
-      if (ANI_DRIVER_TYPE(pMac) != eDRIVER_TYPE_MFG) {
+      if (pMac->gDriverType != eDRIVER_TYPE_MFG)
+      {
          status = peStart(pMac);
       }
 
@@ -183,68 +184,63 @@ tSirRetStatus macStop(tHalHandle hHal, tHalStopType stopType)
 
 tSirRetStatus macOpen(tHalHandle *pHalHandle, tHddHandle hHdd, tMacOpenParameters *pMacOpenParms)
 {
-    tpAniSirGlobal p_mac = NULL;
-    tSirRetStatus status = eSIR_SUCCESS;
+    tpAniSirGlobal pMac = NULL;
 
     if(pHalHandle == NULL)
         return eSIR_FAILURE;
 
     /*
      * Make sure this adapter is not already opened. (Compare pAdapter pointer in already
-     * allocated p_mac structures.)
-     * If it is opened just return pointer to previously allocated p_mac pointer.
+     * allocated pMac structures.)
+     * If it is opened just return pointer to previously allocated pMac pointer.
      * Or should this result in error?
      */
 
-    /* Allocate p_mac */
-    p_mac = vos_mem_malloc(sizeof(tAniSirGlobal));
-    if (NULL == p_mac)
+    /* Allocate pMac */
+    pMac = vos_mem_malloc(sizeof(tAniSirGlobal));
+    if ( NULL == pMac )
         return eSIR_FAILURE;
 
-    /* Initialize the p_mac structure */
-    vos_mem_set(p_mac, sizeof(tAniSirGlobal), 0);
+    /* Initialize the pMac structure */
+    vos_mem_set(pMac, sizeof(tAniSirGlobal), 0);
+
+    /** Store the Driver type in pMac Global.*/
+    //pMac->gDriverType = pMacOpenParms->driverType;
 
     /*
-     * Set various global fields of p_mac here
-     * (Could be platform dependant as some variables in p_mac are platform
+     * Set various global fields of pMac here
+     * (Could be platform dependant as some variables in pMac are platform
      * dependant)
      */
-    p_mac->hHdd      = hHdd;
-    *pHalHandle     = (tHalHandle)p_mac;
+    pMac->hHdd      = hHdd;
+    *pHalHandle     = (tHalHandle)pMac;
 
     {
         /* Call various PE (and other layer init here) */
-        if (eSIR_SUCCESS != logInit(p_mac)) {
-            vos_mem_free(p_mac);
-            return eSIR_FAILURE;
-        }
+        if( eSIR_SUCCESS != logInit(pMac))
+           return eSIR_FAILURE;
 
         /* Call routine to initialize CFG data structures */
-        if (eSIR_SUCCESS != cfgInit(p_mac)) {
-            vos_mem_free(p_mac);
+        if( eSIR_SUCCESS != cfgInit(pMac) )
             return eSIR_FAILURE;
-        }
 
-        sysInitGlobals(p_mac);
+        sysInitGlobals(pMac);
     }
 
-    /* Set the Powersave Offload Capability to TRUE irrespective of
-     * INI param as it should be always enabled for qca-cld driver
-     */
-    p_mac->psOffloadEnabled = TRUE;
-
-    p_mac->scan.nextScanID = 1;
+    /* Set the Powersave Offload Capability */
+    if(pMacOpenParms->powersaveOffloadEnabled)
+    {
+        pMac->psOffloadEnabled = TRUE;
+    }
+    else
+    {
+        pMac->psOffloadEnabled = FALSE;
+    }
+    pMac->scan.nextScanID = 1;
     /* FW: 0 to 2047 and Host: 2048 to 4095 */
-    p_mac->mgmtSeqNum = WLAN_HOST_SEQ_NUM_MIN-1;
+    pMac->mgmtSeqNum = WLAN_HOST_SEQ_NUM_MIN-1;
 
-    status = peOpen(p_mac, pMacOpenParms);
-
-    if (eSIR_SUCCESS != status) {
-        vos_mem_free(p_mac);
-        sysLog(p_mac, LOGE, FL("macOpen failure\n"));
-    }
-
-    return status;
+    return peOpen(pMac, pMacOpenParms);
 }
 
 /** -------------------------------------------------------------

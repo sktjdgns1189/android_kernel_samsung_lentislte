@@ -43,7 +43,6 @@
 #include "bmi_msg.h" /* TARGET_TYPE_ */
 #include "if_ath_sdio.h"
 #include "vos_api.h"
-#include "vos_sched.h"
 
 #ifndef REMOVE_PKT_LOG
 #include "ol_txrx_types.h"
@@ -119,20 +118,12 @@ ath_hif_sdio_probe(void *context, void *hif_handle)
         target_type = TARGET_TYPE_AR9888;
 #elif defined(CONFIG_AR6320_SUPPORT)
         id = ((HIF_DEVICE*)hif_handle)->id;
-        if ((id->device & MANUFACTURER_ID_AR6K_BASE_MASK) == MANUFACTURER_ID_QCA9377_BASE) {
+        if (id->device == MANUFACTURER_ID_QCA9377_BASE) {
             hif_register_tbl_attach(HIF_TYPE_AR6320V2);
             target_register_tbl_attach(TARGET_TYPE_AR6320V2);
-        } else if ((id->device & MANUFACTURER_ID_AR6K_BASE_MASK) == MANUFACTURER_ID_AR6320_BASE) {
-            int ar6kid = id->device & MANUFACTURER_ID_AR6K_REV_MASK;
-            if (ar6kid >= 1) {
-                /* v2 or higher silicon */
-                hif_register_tbl_attach(HIF_TYPE_AR6320V2);
-                target_register_tbl_attach(TARGET_TYPE_AR6320V2);
-            } else {
-                /* legacy v1 silicon */
-                hif_register_tbl_attach(HIF_TYPE_AR6320);
-                target_register_tbl_attach(TARGET_TYPE_AR6320);
-            }
+        } else {
+            hif_register_tbl_attach(HIF_TYPE_AR6320);
+            target_register_tbl_attach(TARGET_TYPE_AR6320);
         }
         target_type = TARGET_TYPE_AR6320;
 
@@ -173,9 +164,8 @@ ath_hif_sdio_probe(void *context, void *hif_handle)
         ret =  A_ERROR;
         goto err_attach1;
     }
-    ret = hif_init_adf_ctx(ol_sc);
-    if (ret == 0)
-        ret = hdd_wlan_startup(&(func->dev), ol_sc);
+
+    ret = hdd_wlan_startup(&(func->dev), ol_sc);
     if ( ret ) {
         VOS_TRACE(VOS_MODULE_ID_HIF, VOS_TRACE_LEVEL_FATAL," hdd_wlan_startup failed");
         goto err_attach2;
@@ -205,7 +195,6 @@ end:
 
 err_attach2:
     athdiag_procfs_remove();
-    hif_deinit_adf_ctx(ol_sc);
 err_attach1:
     A_FREE(ol_sc);
 err_attach:
@@ -260,7 +249,6 @@ ath_hif_sdio_remove(void *context, void *hif_handle)
     __hdd_wlan_exit();
 
     if (sc && sc->ol_sc){
-       hif_deinit_adf_ctx(sc->ol_sc);
        A_FREE(sc->ol_sc);
        sc->ol_sc = NULL;
     }
@@ -352,43 +340,21 @@ void hif_unregister_driver(void)
    return ;
 }
 
-int hif_init_adf_ctx(void *ol_sc)
+void hif_init_adf_ctx(adf_os_device_t adf_dev, void *ol_sc)
 {
-   adf_os_device_t adf_ctx;
-   v_CONTEXT_t pVosContext = NULL;
    struct ol_softc *ol_sc_local = (struct ol_softc *)ol_sc;
    struct ath_hif_sdio_softc *hif_sc = ol_sc_local->hif_sc;
    ENTER();
-   pVosContext = vos_get_global_context(VOS_MODULE_ID_SYS, NULL);
-   if(pVosContext == NULL)
-      return -EFAULT;
-   adf_ctx = vos_mem_malloc(sizeof(*adf_ctx));
-   if (!adf_ctx)
-      return -ENOMEM;
-   vos_mem_zero(adf_ctx, sizeof(*adf_ctx));
-   adf_ctx->drv = &hif_sc->aps_osdev;
-   adf_ctx->dev = hif_sc->aps_osdev.device;
-   ol_sc_local->adf_dev = adf_ctx;
-   ((VosContextType*)(pVosContext))->adf_ctx = adf_ctx;
+   adf_dev->drv = &hif_sc->aps_osdev;
+   adf_dev->dev = hif_sc->aps_osdev.device;
+   ol_sc_local->adf_dev = adf_dev;
    EXIT();
-   return 0;
 }
 
 void hif_deinit_adf_ctx(void *ol_sc)
 {
    struct ol_softc *sc = (struct ol_softc *)ol_sc;
-
-   if (sc == NULL)
-      return;
-   if (sc->adf_dev) {
-      v_CONTEXT_t pVosContext = NULL;
-
-      pVosContext = vos_get_global_context(VOS_MODULE_ID_SYS, NULL);
-      vos_mem_free(sc->adf_dev);
-      sc->adf_dev = NULL;
-      if (pVosContext)
-         ((VosContextType*)(pVosContext))->adf_ctx = NULL;
-   }
+   sc->adf_dev = NULL;
 }
 
 /* Function to set the TXRX handle in the ol_sc context */
@@ -434,14 +400,3 @@ void hif_set_fw_info(void *ol_sc, u32 target_fw_version)
 {
     ((struct ol_softc *)ol_sc)->target_fw_version = target_fw_version;
 }
-
-int hif_pm_runtime_get(void)
-{
-    return 0;
-}
-
-int hif_pm_runtime_put(void)
-{
-    return 0;
-}
-

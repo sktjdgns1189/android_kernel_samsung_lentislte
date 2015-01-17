@@ -69,11 +69,6 @@ should not be more than 2000 */
 #define ENA_TDLS_OFFCHAN      (1 << 0)  /* TDLS Off Channel support */
 #define ENA_TDLS_BUFFER_STA   (1 << 1)  /* TDLS Buffer STA support */
 #define ENA_TDLS_SLEEP_STA    (1 << 2)  /* TDLS Sleep STA support */
-#define TDLS_SEC_OFFCHAN_OFFSET_0        0
-#define TDLS_SEC_OFFCHAN_OFFSET_40PLUS   40
-#define TDLS_SEC_OFFCHAN_OFFSET_40MINUS  (-40)
-#define TDLS_SEC_OFFCHAN_OFFSET_80       80
-#define TDLS_SEC_OFFCHAN_OFFSET_160      160
 
 #define TDLS_PEER_LIST_SIZE   256
 
@@ -301,6 +296,8 @@ int wlan_hdd_tdls_set_rssi(hdd_adapter_t *pAdapter, u8 *mac, tANI_S8 rxRssi);
 
 int wlan_hdd_tdls_set_responder(hdd_adapter_t *pAdapter, u8 *mac, tANI_U8 responder);
 
+int wlan_hdd_tdls_get_responder(hdd_adapter_t *pAdapter, u8 *mac);
+
 int wlan_hdd_tdls_set_signature(hdd_adapter_t *pAdapter, u8 *mac, tANI_U8 uSignature);
 
 int wlan_hdd_tdls_set_params(struct net_device *dev, tdls_config_params_t *config);
@@ -323,7 +320,19 @@ void wlan_hdd_tdls_decrement_peer_count(hdd_adapter_t *pAdapter);
 
 void wlan_hdd_tdls_check_bmps(hdd_adapter_t *pAdapter);
 
+u8 wlan_hdd_tdls_is_peer_progress(hdd_adapter_t *pAdapter, u8 *mac);
+
 hddTdlsPeer_t *wlan_hdd_tdls_is_progress(hdd_context_t *pHddCtx, u8* mac, u8 skip_self);
+
+void wlan_hdd_tdls_set_mode(hdd_context_t *pHddCtx,
+                            eTDLSSupportMode tdls_mode,
+                            v_BOOL_t bUpdateLast);
+
+tANI_U32 wlan_hdd_tdls_discovery_sent_cnt(hdd_context_t *pHddCtx);
+
+void wlan_hdd_tdls_check_power_save_prohibited(hdd_adapter_t *pAdapter);
+
+void wlan_hdd_tdls_free_scan_request (tdls_scan_context_t *tdls_scan_ctx);
 
 int wlan_hdd_tdls_copy_scan_context(hdd_context_t *pHddCtx,
                             struct wiphy *wiphy,
@@ -380,9 +389,8 @@ void wlan_hdd_tdls_get_wifi_hal_state(hddTdlsPeer_t *curr_peer,
                                       tANI_S32 *reason);
 int wlan_hdd_set_callback(hddTdlsPeer_t *curr_peer,
                           cfg80211_exttdls_callback callback);
+hddTdlsPeer_t *wlan_hdd_tdls_find_first_connected_peer(hdd_adapter_t *pAdapter);
 int hdd_set_tdls_offchannel(hdd_context_t *pHddCtx, int offchannel);
 int hdd_set_tdls_secoffchanneloffset(hdd_context_t *pHddCtx, int offchanoffset);
 int hdd_set_tdls_offchannelmode(hdd_adapter_t *pAdapter, int offchanmode);
-void wlan_hdd_update_tdls_info(hdd_adapter_t *adapter, bool tdls_prohibited,
-                               bool tdls_chan_swit_prohibited);
 #endif // __HDD_TDSL_H

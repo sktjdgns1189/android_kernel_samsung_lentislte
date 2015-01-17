@@ -203,16 +203,6 @@ cbNotifySetNeighborLookupRssiThreshold(hdd_context_t *pHddCtx,
 }
 
 static void
-cb_notify_set_delay_before_vdev_stop(hdd_context_t *pHddCtx,
-                                     unsigned long NotifyId)
-{
-    /* At the point this routine is called, the value in the cfg_ini
-       table has already been updated */
-    sme_set_delay_before_vdev_stop(pHddCtx->hHal, 0,
-                                   pHddCtx->cfg_ini->delay_before_vdev_stop);
-}
-
-static void
 cbNotifySetNeighborScanPeriod(hdd_context_t *pHddCtx, unsigned long NotifyId)
 {
     /* At the point this routine is called, the value in the cfg_ini
@@ -1593,14 +1583,6 @@ REG_TABLE_ENTRY g_registry_table[] =
                          CFG_ROAMING_DFS_CHANNEL_MAX,
                          cbNotifySetDFSScanMode, 0),
 
-   REG_DYNAMIC_VARIABLE( CFG_DELAY_BEFORE_VDEV_STOP_NAME, WLAN_PARAM_Integer,
-                      hdd_config_t, delay_before_vdev_stop,
-                      VAR_FLAGS_OPTIONAL | VAR_FLAGS_RANGE_CHECK_ASSUME_DEFAULT,
-                      CFG_DELAY_BEFORE_VDEV_STOP_DEFAULT,
-                      CFG_DELAY_BEFORE_VDEV_STOP_MIN,
-                      CFG_DELAY_BEFORE_VDEV_STOP_MAX,
-                      cb_notify_set_delay_before_vdev_stop, 0 ),
-
 #endif /* WLAN_FEATURE_NEIGHBOR_ROAMING */
 
    REG_VARIABLE( CFG_QOS_WMM_BURST_SIZE_DEFN_NAME , WLAN_PARAM_Integer,
@@ -2968,13 +2950,6 @@ REG_TABLE_ENTRY g_registry_table[] =
                  CFG_INITIAL_DWELL_TIME_MIN,
                  CFG_INITIAL_DWELL_TIME_MAX ),
 
-   REG_VARIABLE( CFG_INITIAL_SCAN_NO_DFS_CHNL_NAME, WLAN_PARAM_Integer,
-                 hdd_config_t, initial_scan_no_dfs_chnl,
-                 VAR_FLAGS_OPTIONAL | VAR_FLAGS_RANGE_CHECK_ASSUME_DEFAULT,
-                 CFG_INITIAL_SCAN_NO_DFS_CHNL_DEFAULT,
-                 CFG_INITIAL_SCAN_NO_DFS_CHNL_MIN,
-                 CFG_INITIAL_SCAN_NO_DFS_CHNL_MAX ),
-
    REG_VARIABLE( CFG_ACS_BAND_SWITCH_THRESHOLD, WLAN_PARAM_Integer,
                  hdd_config_t, acsBandSwitchThreshold,
 #ifndef WLAN_FEATURE_MBSSID
@@ -3024,6 +2999,15 @@ REG_TABLE_ENTRY g_registry_table[] =
                         hdd_config_t, overrideCountryCode,
                         VAR_FLAGS_OPTIONAL,
                         (void *)CFG_OVERRIDE_COUNTRY_CODE_DEFAULT),
+
+#ifdef MEMORY_DEBUG
+   REG_VARIABLE( CFG_ENABLE_MEMORY_DEBUG_NAME, WLAN_PARAM_Integer,
+                 hdd_config_t, IsMemoryDebugSupportEnabled,
+                 VAR_FLAGS_OPTIONAL | VAR_FLAGS_RANGE_CHECK_ASSUME_DEFAULT,
+                 CFG_ENABLE_MEMORY_DEBUG_DEFAULT,
+                 CFG_ENABLE_MEMORY_DEBUG_MIN,
+                 CFG_ENABLE_MEMORY_DEBUG_MAX ),
+#endif
 
    REG_VARIABLE( CFG_DEBUG_P2P_REMAIN_ON_CHANNEL_NAME, WLAN_PARAM_Integer,
                  hdd_config_t, debugP2pRemainOnChannel,
@@ -3378,173 +3362,11 @@ REG_TABLE_ENTRY g_registry_table[] =
                  CFG_DHCP_SERVER_OFFLOAD_NUM_CLIENT_MIN,
                  CFG_DHCP_SERVER_OFFLOAD_NUM_CLIENT_MAX ),
 
-   REG_VARIABLE( CFG_DHCP_SERVER_OFFLOAD_CLIENT_IPBASE_NAME,
-                 WLAN_PARAM_Integer, hdd_config_t, dhcp_client_start_ip,
-                 VAR_FLAGS_OPTIONAL | VAR_FLAGS_RANGE_CHECK_ASSUME_DEFAULT,
-                 CFG_DHCP_SERVER_OFFLOAD_CLIENT_IPBASE_DEFAULT,
-                 CFG_DHCP_SERVER_OFFLOAD_CLIENT_IPBASE_MIN,
-                 CFG_DHCP_SERVER_OFFLOAD_CLIENT_IPBASE_MAX ),
-
    REG_VARIABLE_STRING( CFG_DHCP_SERVER_IP_NAME, WLAN_PARAM_String,
                  hdd_config_t, dhcpServerIP,
                  VAR_FLAGS_OPTIONAL,
                  (void *) CFG_DHCP_SERVER_IP_DEFAULT ),
 #endif /* DHCP_SERVER_OFFLOAD */
-
-   REG_VARIABLE( CFG_ENABLE_MAC_ADDR_SPOOFING, WLAN_PARAM_Integer,
-                 hdd_config_t, enable_mac_spoofing,
-                 VAR_FLAGS_OPTIONAL | VAR_FLAGS_RANGE_CHECK_ASSUME_DEFAULT,
-                 CFG_ENABLE_MAC_ADDR_SPOOFING_DEFAULT,
-                 CFG_ENABLE_MAC_ADDR_SPOOFING_MIN,
-                 CFG_ENABLE_MAC_ADDR_SPOOFING_MAX ),
-#ifdef IPA_UC_STA_OFFLOAD
-   REG_VARIABLE( CFG_IPA_UC_STA_OFFLOAD, WLAN_PARAM_Integer,
-              hdd_config_t, ipa_uc_sta_offload,
-              VAR_FLAGS_OPTIONAL | VAR_FLAGS_RANGE_CHECK_ASSUME_DEFAULT,
-              CFG_IPA_UC_STA_OFFLOAD_DEFAULT,
-              CFG_IPA_UC_STA_OFFLOAD_MIN,
-              CFG_IPA_UC_STA_OFFLOAD_MAX ),
-#endif
-
-   REG_VARIABLE( CFG_ENABLE_CUSTOM_CONC_RULE1_NAME,  WLAN_PARAM_Integer,
-                 hdd_config_t, conc_custom_rule1,
-                 VAR_FLAGS_OPTIONAL | VAR_FLAGS_RANGE_CHECK,
-                 CFG_ENABLE_CUSTOM_CONC_RULE1_NAME_DEFAULT,
-                 CFG_ENABLE_CUSTOM_CONC_RULE1_NAME_MIN,
-                 CFG_ENABLE_CUSTOM_CONC_RULE1_NAME_MAX),
-
-   REG_VARIABLE( CFG_ENABLE_CUSTOM_CONC_RULE2_NAME,  WLAN_PARAM_Integer,
-                 hdd_config_t, conc_custom_rule2,
-                 VAR_FLAGS_OPTIONAL | VAR_FLAGS_RANGE_CHECK,
-                 CFG_ENABLE_CUSTOM_CONC_RULE2_NAME_DEFAULT,
-                 CFG_ENABLE_CUSTOM_CONC_RULE2_NAME_MIN,
-                 CFG_ENABLE_CUSTOM_CONC_RULE2_NAME_MAX),
-
-   REG_VARIABLE( CFG_ENABLE_STA_CONNECTION_IN_5GHZ,  WLAN_PARAM_Integer,
-                 hdd_config_t, is_sta_connection_in_5gz_enabled,
-                 VAR_FLAGS_OPTIONAL | VAR_FLAGS_RANGE_CHECK,
-                 CFG_ENABLE_STA_CONNECTION_IN_5GHZ_DEFAULT,
-                 CFG_ENABLE_STA_CONNECTION_IN_5GHZ_MIN,
-                 CFG_ENABLE_STA_CONNECTION_IN_5GHZ_MAX),
-
-#ifdef MDNS_OFFLOAD
-   REG_VARIABLE( CFG_MDNS_OFFLOAD_SUPPORT_NAME, WLAN_PARAM_Integer,
-                 hdd_config_t, enable_mdns_offload,
-                 VAR_FLAGS_OPTIONAL | VAR_FLAGS_RANGE_CHECK_ASSUME_DEFAULT,
-                 CFG_MDNS_OFFLOAD_SUPPORT_DEFAULT,
-                 CFG_MDNS_OFFLOAD_SUPPORT_MIN,
-                 CFG_MDNS_OFFLOAD_SUPPORT_MAX ),
-
-   REG_VARIABLE_STRING( CFG_MDNS_FQDN_NAME, WLAN_PARAM_String,
-                 hdd_config_t, mdns_fqdn,
-                 VAR_FLAGS_OPTIONAL,
-                 (void *) CFG_MDNS_FQDN_DEFAULT ),
-
-   REG_VARIABLE_STRING( CFG_MDNS_UNIQUE_FQDN_NAME, WLAN_PARAM_String,
-                 hdd_config_t, mdns_uniquefqdn,
-                 VAR_FLAGS_OPTIONAL,
-                 (void *) CFG_MDNS_UNIQUE_FQDN_DEFAULT ),
-
-   REG_VARIABLE_STRING( CFG_MDNS_RESPONSE_TYPE_A_NAME, WLAN_PARAM_String,
-                 hdd_config_t, mdns_resp_type_a,
-                 VAR_FLAGS_OPTIONAL,
-                 (void *) CFG_MDNS_RESPONSE_TYPE_A_DEFAULT ),
-
-   REG_VARIABLE( CFG_MDNS_RESPONSE_TYPE_A_IPV4_NAME, WLAN_PARAM_HexInteger,
-                 hdd_config_t, mdns_resp_type_a_ipv4,
-                 VAR_FLAGS_OPTIONAL | VAR_FLAGS_RANGE_CHECK_ASSUME_DEFAULT,
-                 CFG_MDNS_RESPONSE_TYPE_A_IPV4_DEFAULT,
-                 CFG_MDNS_RESPONSE_TYPE_A_IPV4_MIN,
-                 CFG_MDNS_RESPONSE_TYPE_A_IPV4_MAX ),
-
-   REG_VARIABLE_STRING( CFG_MDNS_RESPONSE_TYPE_TXT_NAME, WLAN_PARAM_String,
-                 hdd_config_t, mdns_resp_type_txt,
-                 VAR_FLAGS_OPTIONAL,
-                 (void *) CFG_MDNS_RESPONSE_TYPE_TXT_DEFAULT ),
-
-   REG_VARIABLE_STRING( CFG_MDNS_RESPONSE_TYPE_TXT_CNT_NAME, WLAN_PARAM_String,
-                 hdd_config_t, mdns_resp_type_txt_content,
-                 VAR_FLAGS_OPTIONAL,
-                 (void *) CFG_MDNS_RESPONSE_TYPE_TXT_CNT_DEFAULT ),
-
-   REG_VARIABLE_STRING( CFG_MDNS_RESPONSE_TYPE_PTR_NAME, WLAN_PARAM_String,
-                 hdd_config_t, mdns_resp_type_ptr,
-                 VAR_FLAGS_OPTIONAL,
-                 (void *) CFG_MDNS_RESPONSE_TYPE_PTR_DEFAULT ),
-
-   REG_VARIABLE_STRING( CFG_MDNS_RESPONSE_TYPE_PTR_DN_NAME, WLAN_PARAM_String,
-                 hdd_config_t, mdns_resp_type_ptr_dname,
-                 VAR_FLAGS_OPTIONAL,
-                 (void *) CFG_MDNS_RESPONSE_TYPE_PTR_DN_DEFAULT ),
-
-   REG_VARIABLE_STRING( CFG_MDNS_RESPONSE_TYPE_SRV_NAME, WLAN_PARAM_String,
-                 hdd_config_t, mdns_resp_type_srv,
-                 VAR_FLAGS_OPTIONAL,
-                 (void *) CFG_MDNS_RESPONSE_TYPE_SRV_DEFAULT ),
-
-   REG_VARIABLE( CFG_MDNS_RESPONSE_TYPE_SRV_PRIORITY_NAME, WLAN_PARAM_Integer,
-                 hdd_config_t, mdns_resp_type_srv_priority,
-                 VAR_FLAGS_OPTIONAL | VAR_FLAGS_RANGE_CHECK_ASSUME_DEFAULT,
-                 CFG_MDNS_RESPONSE_TYPE_SRV_PRIORITY_DEFAULT,
-                 CFG_MDNS_RESPONSE_TYPE_SRV_PRIORITY_MIN,
-                 CFG_MDNS_RESPONSE_TYPE_SRV_PRIORITY_MAX ),
-
-   REG_VARIABLE( CFG_MDNS_RESPONSE_TYPE_SRV_WEIGHT_NAME, WLAN_PARAM_Integer,
-                 hdd_config_t, mdns_resp_type_srv_weight,
-                 VAR_FLAGS_OPTIONAL | VAR_FLAGS_RANGE_CHECK_ASSUME_DEFAULT,
-                 CFG_MDNS_RESPONSE_TYPE_SRV_WEIGHT_DEFAULT,
-                 CFG_MDNS_RESPONSE_TYPE_SRV_WEIGHT_MIN,
-                 CFG_MDNS_RESPONSE_TYPE_SRV_WEIGHT_MAX ),
-
-   REG_VARIABLE( CFG_MDNS_RESPONSE_TYPE_SRV_PORT_NAME, WLAN_PARAM_Integer,
-                 hdd_config_t, mdns_resp_type_srv_port,
-                 VAR_FLAGS_OPTIONAL | VAR_FLAGS_RANGE_CHECK_ASSUME_DEFAULT,
-                 CFG_MDNS_RESPONSE_TYPE_SRV_PORT_DEFAULT,
-                 CFG_MDNS_RESPONSE_TYPE_SRV_PORT_MIN,
-                 CFG_MDNS_RESPONSE_TYPE_SRV_PORT_MAX ),
-
-   REG_VARIABLE_STRING( CFG_MDNS_RESPONSE_TYPE_SRV_TGT_NAME, WLAN_PARAM_String,
-                 hdd_config_t, mdns_resp_type_srv_target,
-                 VAR_FLAGS_OPTIONAL,
-                 (void *) CFG_MDNS_RESPONSE_TYPE_SRV_TGT_DEFAULT ),
-#endif /* MDNS_OFFLOAD */
-
-#ifdef SAP_AUTH_OFFLOAD
-   REG_VARIABLE( CFG_ENABLE_SAP_AUTH_OFL_NAME, WLAN_PARAM_Integer,
-              hdd_config_t, enable_sap_auth_offload,
-              VAR_FLAGS_OPTIONAL | VAR_FLAGS_RANGE_CHECK_ASSUME_DEFAULT,
-              CFG_ENABLE_SAP_AUTH_OFL_DEFAULT,
-              CFG_ENABLE_SAP_AUTH_OFL_MIN,
-              CFG_ENABLE_SAP_AUTH_OFL_MAX ),
-
-   REG_VARIABLE( CFG_SAP_AUTH_OFL_SECURITY_TYPE_NAME, WLAN_PARAM_Integer,
-              hdd_config_t, sap_auth_offload_sec_type,
-              VAR_FLAGS_OPTIONAL | CFG_SAP_AUTH_OFL_SECURITY_TYPE_DEFAULT,
-              CFG_SAP_AUTH_OFL_SECURITY_TYPE_DEFAULT,
-              CFG_SAP_AUTH_OFL_SECURITY_TYPE_MIN,
-              CFG_SAP_AUTH_OFL_SECURITY_TYPE_MAX ),
-
-   REG_VARIABLE_STRING( CFG_SAP_AUTH_OFL_KEY_NAME, WLAN_PARAM_String,
-              hdd_config_t, sap_auth_offload_key,
-              VAR_FLAGS_OPTIONAL,
-              (void *) CFG_SAP_AUTH_OFL_KEY_DEFAULT ),
-#endif /* SAP_AUTH_OFFLOAD */
-
-   REG_VARIABLE(CFG_DOT11P_MODE_NAME, WLAN_PARAM_Integer,
-                hdd_config_t, dot11p_mode,
-                VAR_FLAGS_OPTIONAL | VAR_FLAGS_RANGE_CHECK_ASSUME_DEFAULT,
-                CFG_DOT11P_MODE_DEFAULT,
-                CFG_DOT11P_MODE_MIN,
-                CFG_DOT11P_MODE_MAX),
-
-#ifdef FEATURE_BUS_AUTO_SUSPEND
-   REG_VARIABLE( CFG_ENABLE_AUTO_SUSPEND, WLAN_PARAM_Integer,
-              hdd_config_t, enable_bus_auto_suspend,
-              VAR_FLAGS_OPTIONAL | VAR_FLAGS_RANGE_CHECK_ASSUME_DEFAULT,
-              CFG_ENABLE_AUTO_SUSPEND_DEFAULT,
-              CFG_ENABLE_AUTO_SUSPEND_MIN,
-              CFG_ENABLE_AUTO_SUSPEND_MAX ),
-#endif
 };
 
 #ifdef WLAN_FEATURE_MBSSID
@@ -3781,7 +3603,7 @@ VOS_STATUS hdd_parse_config_ini(hdd_context_t* pHddCtx)
                buffer = i_trim(buffer);
                if(strlen(buffer)>0) {
                   value = buffer;
-                  while (*buffer != '\0')
+                  while(!i_isspace(*buffer) && *buffer != '\0')
                      buffer++;
                   *buffer = '\0';
                   cfgIniTable[i].name= name;
@@ -4143,11 +3965,6 @@ void print_hdd_cfg(hdd_context_t *pHddCtx)
            "Name = [gExtWoWApp2TcpRxTimeout] Value = [%u]",
                    pHddCtx->cfg_ini->extWowApp2TcpRxTimeout);
 #endif
-#ifdef IPA_UC_STA_OFFLOAD
-  VOS_TRACE(VOS_MODULE_ID_HDD, VOS_TRACE_LEVEL_INFO_HIGH,
-          "Name = [gIpaUcStaOffload] Value = [%u] ",
-                   pHddCtx->cfg_ini->ipa_uc_sta_offload);
-#endif
 
 #ifdef DHCP_SERVER_OFFLOAD
   VOS_TRACE(VOS_MODULE_ID_HDD, VOS_TRACE_LEVEL_INFO_HIGH,
@@ -4157,60 +3974,8 @@ void print_hdd_cfg(hdd_context_t *pHddCtx)
            "Name = [gDHCPMaxNumClients] Value = [%u]",
                    pHddCtx->cfg_ini->dhcpMaxNumClients);
   VOS_TRACE(VOS_MODULE_ID_HDD, VOS_TRACE_LEVEL_INFO_HIGH,
-           "Name = [gDHCPClientStartIP] Value = [%u]",
-                   pHddCtx->cfg_ini->dhcp_client_start_ip);
-  VOS_TRACE(VOS_MODULE_ID_HDD, VOS_TRACE_LEVEL_INFO_HIGH,
            "Name = [gDHCPServerIP] Value = [%s]",
                    pHddCtx->cfg_ini->dhcpServerIP);
-#endif
-
-#ifdef MDNS_OFFLOAD
-  VOS_TRACE(VOS_MODULE_ID_HDD, VOS_TRACE_LEVEL_INFO_HIGH,
-           "Name = [gMDNSOffloadEnable] Value = [%u]",
-                   pHddCtx->cfg_ini->enable_mdns_offload);
-  VOS_TRACE(VOS_MODULE_ID_HDD, VOS_TRACE_LEVEL_INFO_HIGH,
-           "Name = [gMDNSFqdn] Value = [%s]",
-                   pHddCtx->cfg_ini->mdns_fqdn);
-  VOS_TRACE(VOS_MODULE_ID_HDD, VOS_TRACE_LEVEL_INFO_HIGH,
-           "Name = [gMDNSUniqueFqdn] Value = [%s]",
-                   pHddCtx->cfg_ini->mdns_uniquefqdn);
-  VOS_TRACE(VOS_MODULE_ID_HDD, VOS_TRACE_LEVEL_INFO_HIGH,
-           "Name = [gMDNSResponseTypeA] Value = [%s]",
-                   pHddCtx->cfg_ini->mdns_resp_type_a);
-  VOS_TRACE(VOS_MODULE_ID_HDD, VOS_TRACE_LEVEL_INFO_HIGH,
-           "Name = [gMDNSResponseTypeAIpv4Addr] Value = [%u]",
-                   pHddCtx->cfg_ini->mdns_resp_type_a_ipv4);
-  VOS_TRACE(VOS_MODULE_ID_HDD, VOS_TRACE_LEVEL_INFO_HIGH,
-           "Name = [gMDNSResponseTypeTXT] Value = [%s]",
-                   pHddCtx->cfg_ini->mdns_resp_type_txt);
-  VOS_TRACE(VOS_MODULE_ID_HDD, VOS_TRACE_LEVEL_INFO_HIGH,
-           "Name = [gMDNSResponseTypeTXTContent] Value = [%s]",
-                   pHddCtx->cfg_ini->mdns_resp_type_txt_content);
-  VOS_TRACE(VOS_MODULE_ID_HDD, VOS_TRACE_LEVEL_INFO_HIGH,
-           "Name = [gMDNSResponseTypePTR] Value = [%s]",
-                   pHddCtx->cfg_ini->mdns_resp_type_ptr);
-  VOS_TRACE(VOS_MODULE_ID_HDD, VOS_TRACE_LEVEL_INFO_HIGH,
-           "Name = [gMDNSResponseTypePTRDomainName] Value = [%s]",
-                   pHddCtx->cfg_ini->mdns_resp_type_ptr_dname);
-  VOS_TRACE(VOS_MODULE_ID_HDD, VOS_TRACE_LEVEL_INFO_HIGH,
-           "Name = [gMDNSResponseTypeSRV] Value = [%s]",
-                   pHddCtx->cfg_ini->mdns_resp_type_srv);
-  VOS_TRACE(VOS_MODULE_ID_HDD, VOS_TRACE_LEVEL_INFO_HIGH,
-           "Name = [gMDNSResponseTypeSRVPriority] Value = [%u]",
-                   pHddCtx->cfg_ini->mdns_resp_type_srv_priority);
-  VOS_TRACE(VOS_MODULE_ID_HDD, VOS_TRACE_LEVEL_INFO_HIGH,
-           "Name = [gMDNSResponseTypeSRVWeight] Value = [%u]",
-                   pHddCtx->cfg_ini->mdns_resp_type_srv_weight);
-  VOS_TRACE(VOS_MODULE_ID_HDD, VOS_TRACE_LEVEL_INFO_HIGH,
-           "Name = [gMDNSResponseTypeSRVPort] Value = [%u]",
-                   pHddCtx->cfg_ini->mdns_resp_type_srv_port);
-  VOS_TRACE(VOS_MODULE_ID_HDD, VOS_TRACE_LEVEL_INFO_HIGH,
-           "Name = [gMDNSResponseTypeSRVTarget] Value = [%s]",
-                   pHddCtx->cfg_ini->mdns_resp_type_srv_target);
-#endif
-#ifdef FEATURE_BUS_AUTO_SUSPEND
-  hddLog(LOG2, "Name = [gEnableBusAutoSuspend] Value = [%u]",
-                   pHddCtx->cfg_ini->enable_bus_auto_suspend);
 #endif
 }
 
@@ -4659,6 +4424,7 @@ static VOS_STATUS hdd_apply_cfg_ini( hdd_context_t *pHddCtx, tCfgIniEntry* iniTa
          VOS_TRACE(VOS_MODULE_ID_HDD, VOS_TRACE_LEVEL_INFO_HIGH, "RegName = %s, VarOffset %u VarSize %u VarDefault %s",
             pRegEntry->RegName, pRegEntry->VarOffset, pRegEntry->VarSize, (char*)pRegEntry->VarDefault);
 #endif
+
          if ( match_status == VOS_STATUS_SUCCESS)
          {
             len_value_str = strlen(value_str);
@@ -4770,16 +4536,9 @@ eCsrPhyMode hdd_cfg_xlate_to_csr_phy_mode( eHddDot11Mode dot11Mode )
          return eCSR_DOT11_MODE_11ac_ONLY;
       case (eHDD_DOT11_MODE_11ac):
          return eCSR_DOT11_MODE_11ac;
-#else
-      /* If 11AC support is not compiled set Auto mode */
-      case (eHDD_DOT11_MODE_11ac):
-      case (eHDD_DOT11_MODE_11ac_ONLY):
-         return eCSR_DOT11_MODE_AUTO;
 #endif
       case (eHDD_DOT11_MODE_AUTO):
          return eCSR_DOT11_MODE_AUTO;
-      case (eHDD_DOT11_MODE_11a):
-         return eCSR_DOT11_MODE_11a;
    }
 
 }
@@ -4963,43 +4722,6 @@ VOS_STATUS hdd_string_to_u8_array( char *str, tANI_U8 *intArray, tANI_U8 *len,
 
 }
 
-#ifdef MDNS_OFFLOAD
-VOS_STATUS hdd_string_to_string_array(char *data, uint8_t *datalist,
-                                    char separator, uint8_t *num_entries,
-                                    uint8_t max_entries, uint8_t max_len_entry)
-{
-    uint8_t num = 0;
-    char *str = data;
-    char *field;
-
-    if ((data == NULL) || ( datalist == NULL) || (num_entries == NULL))
-        return VOS_STATUS_E_INVAL;
-
-    /* parse the string */
-    while (str && ('\0' != *str) && (num < max_entries)) {
-        field = str;
-        while (str && ('\0' != *str) && (separator != *str))
-           str++;
-        if ('\0' == *str) {
-            /* reach the end of string */
-            if ('\0' != *field) {
-              strlcpy((char *)(datalist + (num * max_len_entry)),
-                      field, max_len_entry);
-              num++;
-            }
-            break;
-        }
-        /* replace separator with NUL to terminate the data */
-        *str++ = '\0';
-        strlcpy((char *)(datalist + (num * max_len_entry)),
-                field, max_len_entry);
-        num++;
-    }
-    *num_entries = num;
-
-    return VOS_STATUS_SUCCESS;
-}
-#endif
 
 v_BOOL_t hdd_update_config_dat( hdd_context_t *pHddCtx )
 {
@@ -5756,19 +5478,8 @@ VOS_STATUS hdd_set_sme_config( hdd_context_t *pHddCtx )
 
    smeConfig->csrConfig.phyMode                  = hdd_cfg_xlate_to_csr_phy_mode ( pConfig->dot11Mode );
 
-   if (pConfig->dot11Mode == eHDD_DOT11_MODE_abg ||
-       pConfig->dot11Mode == eHDD_DOT11_MODE_11b ||
-       pConfig->dot11Mode == eHDD_DOT11_MODE_11g ||
-       pConfig->dot11Mode == eHDD_DOT11_MODE_11b_ONLY ||
-       pConfig->dot11Mode == eHDD_DOT11_MODE_11g_ONLY) {
-       smeConfig->csrConfig.channelBondingMode24GHz = 0;
-       smeConfig->csrConfig.channelBondingMode5GHz = 0;
-   } else {
-      smeConfig->csrConfig.channelBondingMode24GHz =
-                       pConfig->nChannelBondingMode24GHz;
-      smeConfig->csrConfig.channelBondingMode5GHz =
-                       pConfig->nChannelBondingMode5GHz;
-   }
+   smeConfig->csrConfig.channelBondingMode24GHz  = pConfig->nChannelBondingMode24GHz;
+   smeConfig->csrConfig.channelBondingMode5GHz   = pConfig->nChannelBondingMode5GHz;
    smeConfig->csrConfig.TxRate                   = pConfig->TxRate;
    smeConfig->csrConfig.nScanResultAgeCount      = pConfig->ScanResultAgeCount;
    smeConfig->csrConfig.scanAgeTimeNCNPS         = pConfig->nScanAgeTimeNCNPS;
@@ -5786,8 +5497,6 @@ VOS_STATUS hdd_set_sme_config( hdd_context_t *pHddCtx )
    smeConfig->csrConfig.nRoamingTime             = pConfig->nRoamingTime;
    smeConfig->csrConfig.IsIdleScanEnabled        = pConfig->nEnableIdleScan;
    smeConfig->csrConfig.nInitialDwellTime        = pConfig->nInitialDwellTime;
-   smeConfig->csrConfig.initial_scan_no_dfs_chnl =
-                                            pConfig->initial_scan_no_dfs_chnl;
    smeConfig->csrConfig.nActiveMaxChnTime        = pConfig->nActiveMaxChnTime;
    smeConfig->csrConfig.nActiveMinChnTime        = pConfig->nActiveMinChnTime;
    smeConfig->csrConfig.nPassiveMaxChnTime       = pConfig->nPassiveMaxChnTime;
@@ -5917,9 +5626,6 @@ VOS_STATUS hdd_set_sme_config( hdd_context_t *pHddCtx )
 #ifdef WLAN_FEATURE_NEIGHBOR_ROAMING
    smeConfig->csrConfig.neighborRoamConfig.nNeighborReassocRssiThreshold = pConfig->nNeighborReassocRssiThreshold;
    smeConfig->csrConfig.neighborRoamConfig.nNeighborLookupRssiThreshold = pConfig->nNeighborLookupRssiThreshold;
-   smeConfig->csrConfig.neighborRoamConfig.delay_before_vdev_stop =
-                                           pConfig->delay_before_vdev_stop;
-
    smeConfig->csrConfig.neighborRoamConfig.nOpportunisticThresholdDiff =
        pConfig->nOpportunisticThresholdDiff;
    smeConfig->csrConfig.neighborRoamConfig.nRoamRescanRssiDiff =
@@ -5978,6 +5684,7 @@ VOS_STATUS hdd_set_sme_config( hdd_context_t *pHddCtx )
    /* Update PNO offload status */
    smeConfig->pnoOffload = pHddCtx->cfg_ini->PnoOffload;
 #endif
+
    /* Update maximum interfaces information */
    smeConfig->max_intf_count = pHddCtx->max_intf_count;
 
@@ -5990,20 +5697,6 @@ VOS_STATUS hdd_set_sme_config( hdd_context_t *pHddCtx )
    smeConfig->csrConfig.isRoamOffloadEnabled =
                         pHddCtx->cfg_ini->isRoamOffloadEnabled;
 #endif
-   smeConfig->csrConfig.conc_custom_rule1 =
-                        pHddCtx->cfg_ini->conc_custom_rule1;
-   smeConfig->csrConfig.conc_custom_rule2 =
-                        pHddCtx->cfg_ini->conc_custom_rule2;
-   smeConfig->csrConfig.is_sta_connection_in_5gz_enabled =
-                        pHddCtx->cfg_ini->is_sta_connection_in_5gz_enabled;
-#ifdef FEATURE_BUS_AUTO_SUSPEND
-   smeConfig->enable_bus_auto_suspend =
-       pHddCtx->cfg_ini->enable_bus_auto_suspend;
-#endif
-
-   /* Update 802.11p config */
-   smeConfig->csrConfig.enable_dot11p = (pHddCtx->cfg_ini->dot11p_mode !=
-                                             WLAN_HDD_11P_DISABLED);
 
    halStatus = sme_UpdateConfig( pHddCtx->hHal, smeConfig);
    if ( !HAL_STATUS_SUCCESS( halStatus ) )

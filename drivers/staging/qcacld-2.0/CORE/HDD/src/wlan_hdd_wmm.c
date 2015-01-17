@@ -1468,13 +1468,18 @@ VOS_STATUS hdd_wmm_init ( hdd_adapter_t *pAdapter )
    VOS_TRACE(VOS_MODULE_ID_HDD, WMM_TRACE_LEVEL_INFO_LOW,
              "%s: Entered", __func__);
 
-   /*
-    * DSCP to User Priority Lookup Table
-    * By default use the 3 Precedence bits of DSCP as the User Priority
-    */
-   for (dscp = 0; dscp <= WLAN_HDD_MAX_DSCP; dscp++) {
-      hddWmmDscpToUpMap[dscp] = dscp >> 3;
+   // DSCP to User Priority Lookup Table
+   for (dscp = 0; dscp <= WLAN_HDD_MAX_DSCP; dscp++)
+   {
+      hddWmmDscpToUpMap[dscp] = SME_QOS_WMM_UP_BE;
    }
+   hddWmmDscpToUpMap[8]  = SME_QOS_WMM_UP_BK;
+   hddWmmDscpToUpMap[16] = SME_QOS_WMM_UP_RESV;
+   hddWmmDscpToUpMap[24] = SME_QOS_WMM_UP_EE;
+   hddWmmDscpToUpMap[32] = SME_QOS_WMM_UP_CL;
+   hddWmmDscpToUpMap[40] = SME_QOS_WMM_UP_VI;
+   hddWmmDscpToUpMap[48] = SME_QOS_WMM_UP_VO;
+   hddWmmDscpToUpMap[56] = SME_QOS_WMM_UP_NC;
 
    return VOS_STATUS_SUCCESS;
 }
@@ -1610,9 +1615,10 @@ v_BOOL_t is_dhcp_packet(struct sk_buff *skb)
 
   @return         : None
   ===========================================================================*/
-static v_VOID_t
-hdd_wmm_classify_pkt(hdd_adapter_t* pAdapter, struct sk_buff *skb,
-                     WLANTL_ACEnumType* pAcType, sme_QosWmmUpType *pUserPri)
+v_VOID_t hdd_wmm_classify_pkt ( hdd_adapter_t* pAdapter,
+                                struct sk_buff *skb,
+                                WLANTL_ACEnumType* pAcType,
+                                sme_QosWmmUpType *pUserPri)
 {
    unsigned char * pPkt;
    union generic_ethhdr *pHdr;
@@ -1796,14 +1802,7 @@ hdd_wmm_classify_pkt(hdd_adapter_t* pAdapter, struct sk_buff *skb,
 
   @return         : Qdisc queue index
   ===========================================================================*/
-v_U16_t hdd_hostapd_select_queue(struct net_device * dev, struct sk_buff *skb
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,13,0))
-                                 , void *accel_priv
-#endif
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,14,0))
-                                 , select_queue_fallback_t fallback
-#endif
-)
+v_U16_t hdd_hostapd_select_queue(struct net_device * dev, struct sk_buff *skb)
 {
    WLANTL_ACEnumType ac;
    sme_QosWmmUpType up = SME_QOS_WMM_UP_BE;

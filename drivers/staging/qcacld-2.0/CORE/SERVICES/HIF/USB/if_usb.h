@@ -77,9 +77,9 @@ struct hif_usb_softc {
 	struct hostdef_s *hostdef;
 	struct usb_interface *interface;
 	struct notifier_block reboot_notifier;  /* default mode before reboot */
-	u8 suspend_state;
-	atomic_t hdd_removed;
-	atomic_t hdd_removed_processing;
+	pm_message_t local_state;
+	int hdd_removed;
+	int hdd_removed_processing;
 	int hdd_removed_wait_cnt;
 	u8 *fw_data;
 	u32 fw_data_len;
@@ -100,7 +100,7 @@ extern void pktlogmod_exit(void *context);
 /*These functions are exposed to HDD*/
 int hif_register_driver(void);
 void hif_unregister_driver(void);
-int hif_init_adf_ctx(void *ol_sc);
+void hif_init_adf_ctx(adf_os_device_t adf_dev, void *ol_sc);
 void hif_init_pdev_txrx_handle(void *ol_sc, void *txrx_handle);
 void hif_disable_isr(void *ol_sc);
 void hif_reset_soc(void *ol_sc);

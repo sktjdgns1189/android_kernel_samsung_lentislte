@@ -34,7 +34,6 @@
 #include <hif_msg_based.h> /* HIFFlushSurpriseRemove */
 #include <vos_getBin.h>
 #include "epping_main.h"
-#include "htc_api.h"
 
 #ifdef DEBUG
 static ATH_DEBUG_MASK_DESCRIPTION g_HTCDebugDescription[] = {
@@ -161,14 +160,7 @@ static void HTCCleanup(HTC_TARGET *target)
         A_FREE(pPacket);
     }
 
-    pPacket = target->pBundleFreeTxList;
-    while (pPacket) {
-        HTC_PACKET *pPacketTmp = (HTC_PACKET *)pPacket->ListLink.pNext;
-        A_FREE(pPacket);
-        pPacket = pPacketTmp;
-    }
-
-    pPacket = target->pBundleFreeRxList;
+    pPacket = target->pBundleFreeList;
     while (pPacket) {
         HTC_PACKET *pPacketTmp = (HTC_PACKET *)pPacket->ListLink.pNext;
         A_FREE(pPacket);
@@ -321,6 +313,9 @@ A_STATUS HTCSetupTargetBufferAssignments(HTC_TARGET *target)
 
     credits = target->TotalTransmitCredits;
     pEntry = &target->ServiceTxAllocTable[0];
+#if defined(HIF_USB)
+    target->avail_tx_credits = target->TotalTransmitCredits - 1 ;
+#endif
 #if !(defined(HIF_PCI) || defined(HIF_SIM) || defined(CONFIG_HL_SUPPORT) || (defined(HIF_USB)))
     status = A_NO_RESOURCE;
 #endif
@@ -543,11 +538,8 @@ A_STATUS HTCWaitTarget(HTC_HANDLE HTCHandle)
         }
 
         target->TotalTransmitCredits = HTC_GET_FIELD(rdy_msg, HTC_READY_MSG, CREDITCOUNT);
-        target->TargetCreditSize     = (int)HTC_GET_FIELD(rdy_msg, HTC_READY_MSG, CREDITSIZE);
-
-        target->MaxMsgsPerHTCBundle  = (A_UINT8) HTC_GET_FIELD(pReadyMsg, HTC_READY_EX_MSG, MAXMSGSPERHTCBUNDLE);
-        target->AltDataCreditSize    = (A_UINT16)HTC_GET_FIELD(pReadyMsg, HTC_READY_EX_MSG, ALTDATACREDITSIZE);
-
+        target->TargetCreditSize = (int)HTC_GET_FIELD(rdy_msg, HTC_READY_MSG, CREDITSIZE);
+        target->MaxMsgsPerHTCBundle = (A_UINT8)pReadyMsg->MaxMsgsPerHTCBundle;
         /* for old fw this value is set to 0. But the minimum value should be 1,
          * i.e., no bundling */
         if (target->MaxMsgsPerHTCBundle < 1)
@@ -654,18 +646,13 @@ A_STATUS HTCStart(HTC_HANDLE HTCHandle)
             AR_DEBUG_PRINTF(ATH_DEBUG_INIT, ("HTC using TX credit flow control\n"));
         }
 
-#if defined(HIF_SDIO) || defined(HIF_USB)
+#ifdef HIF_SDIO
 #if ENABLE_BUNDLE_RX
-        if (HTC_ENABLE_BUNDLE(target)) {
+        if (HTC_ENABLE_BUNDLE(target))
             pSetupComp->SetupFlags |=
                 HTC_SETUP_COMPLETE_FLAGS_ENABLE_BUNDLE_RECV;
-
-            HIFSetBundleMode(target->hif_dev, true, HTC_MAX_MSG_PER_BUNDLE_RX);
-        }
 #endif /* ENABLE_BUNDLE_RX */
-#endif
-
-        pSetupComp->MaxMsgsPerBundledRecv = HTC_MAX_MSG_PER_BUNDLE_RX;
+#endif /* HIF_SDIO */
 
         SET_HTC_PACKET_INFO_TX(pSendPacket,
                                NULL,
@@ -791,53 +778,6 @@ void HTCDumpCreditStates(HTC_HANDLE HTCHandle)
     }
 }
 
-void HTCEndpointDumpCreditStats(HTC_HANDLE HTCHandle, HTC_ENDPOINT_ID Endpoint)
-{
-#ifdef HTC_EP_STAT_PROFILING
-    HTC_TARGET    *target;
-    AR_DEBUG_PRINTF(ATH_DEBUG_ANY, ("+%s \n", __func__));
-
-    target = GET_HTC_TARGET_FROM_HANDLE(HTCHandle);
-
-    AR_DEBUG_PRINTF(ATH_DEBUG_ANY, (" ******* HTC Stats for EP %d ******* \n", Endpoint));
-
-    AR_DEBUG_PRINTF(ATH_DEBUG_ANY, ("HIFDSRCount=%d \t RxAllocThreshBytes=%d \t RxAllocThreshHit=%d \n"
-                                    "RxBundleIndFromHdr=%d \t RxBundleLookAheads=%d \t RxLookAheads=%d \n"
-                                    "RxPacketsBundled=%d \t RxReceived=%d \t TxBundles=%d \n"
-                                    "TxCreditLowIndications=%d \t TxCreditRpts=%d \t TxCreditRptsFromEp0=%d \n"
-                                    "TxCreditRptsFromOther=%d \t TxCreditRptsFromRx=%d \t TxCreditsConsummed=%d \n"
-                                    "TxCreditsFromEp0=%d \t TxCreditsFromOther=%d \t TxCreditsFromRx=%d \n"
-                                    "TxCreditsReturned=%d \t TxDropped=%d \t TxIssued=%d \n"
-                                    "TxPacketsBundled=%d \t TxPosted=%d \n",
-                                    target->EndPoint->EndPointStats.HIFDSRCount,
-                                    target->EndPoint->EndPointStats.RxAllocThreshBytes,
-                                    target->EndPoint->EndPointStats.RxAllocThreshHit,
-                                    target->EndPoint->EndPointStats.RxBundleIndFromHdr,
-                                    target->EndPoint->EndPointStats.RxBundleLookAheads,
-                                    target->EndPoint->EndPointStats.RxLookAheads,
-                                    target->EndPoint->EndPointStats.RxPacketsBundled,
-                                    target->EndPoint->EndPointStats.RxReceived,
-                                    target->EndPoint->EndPointStats.TxBundles,
-                                    target->EndPoint->EndPointStats.TxCreditLowIndications,
-                                    target->EndPoint->EndPointStats.TxCreditRpts,
-                                    target->EndPoint->EndPointStats.TxCreditRptsFromEp0,
-                                    target->EndPoint->EndPointStats.TxCreditRptsFromOther,
-                                    target->EndPoint->EndPointStats.TxCreditRptsFromRx,
-                                    target->EndPoint->EndPointStats.TxCreditsConsummed,
-                                    target->EndPoint->EndPointStats.TxCreditsFromEp0,
-                                    target->EndPoint->EndPointStats.TxCreditsFromOther,
-                                    target->EndPoint->EndPointStats.TxCreditsFromRx,
-                                    target->EndPoint->EndPointStats.TxCreditsReturned,
-                                    target->EndPoint->EndPointStats.TxDropped,
-                                    target->EndPoint->EndPointStats.TxIssued,
-                                    target->EndPoint->EndPointStats.TxPacketsBundled,
-                                    target->EndPoint->EndPointStats.TxPosted));
-
-    AR_DEBUG_PRINTF(ATH_DEBUG_ANY, (" ******* End Stats ******* \n"));
-#else
-    AR_DEBUG_PRINTF(ATH_DEBUG_ANY, ("%s not implemented\n", __func__));
-#endif
-}
 
 A_BOOL HTCGetEndpointStatistics(HTC_HANDLE               HTCHandle,
                                 HTC_ENDPOINT_ID          Endpoint,

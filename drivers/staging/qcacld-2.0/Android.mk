@@ -4,8 +4,8 @@
 WLAN_CHIPSET :=
 
 ifeq ($(BOARD_HAS_QCOM_WLAN), true)
-# Build/Package options for 8084/8092/8960/8992/8994 target
-ifeq ($(call is-board-platform-in-list, apq8084 mpq8092 msm8960 msm8992  msm8994),true)
+# Build/Package options for 8084/8092/8960/8994 target
+ifeq ($(call is-board-platform-in-list, apq8084 mpq8092 msm8960 msm8994),true)
 	WLAN_CHIPSET     := qca_cld
 	WLAN_SELECT      := CONFIG_QCA_CLD_WLAN=m
 endif
@@ -67,11 +67,6 @@ LOCAL_MODULE_TAGS         := debug
 LOCAL_MODULE_DEBUG_ENABLE := true
 LOCAL_MODULE_PATH         := $(TARGET_OUT)/lib/modules/$(WLAN_CHIPSET)
 include $(DLKM_DIR)/AndroidKernelModule.mk
-ifeq ($(WLAN_OPEN_SOURCE),1)
-include $(WLAN_BLD_DIR)/qcacld-2.0/tools/athdiag/Android.mk
-include $(WLAN_BLD_DIR)/qcacld-2.0/tools/fwdebuglog/Android.mk
-include $(WLAN_BLD_DIR)/qcacld-2.0/tools/pktlog/Android.mk
-endif
 ###########################################################
 
 # Create Symbolic link for built <WLAN_CHIPSET>_wlan.ko driver from
