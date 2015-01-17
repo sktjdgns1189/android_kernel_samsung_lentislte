@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2015 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2014 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -221,9 +221,9 @@ static inline tSirRFBand limGetRFBand(tANI_U8 channel)
 static inline tSirRetStatus
 limGetMgmtStaid(tpAniSirGlobal pMac, tANI_U16 *staid, tpPESession psessionEntry)
 {
-    if (LIM_IS_AP_ROLE(psessionEntry))
+    if (psessionEntry->limSystemRole == eLIM_AP_ROLE)
         *staid = 1;
-    else if (LIM_IS_STA_ROLE(psessionEntry))
+    else if (psessionEntry->limSystemRole == eLIM_STA_ROLE)
         *staid = 0;
     else
         return eSIR_FAILURE;
@@ -437,16 +437,17 @@ v_U8_t* limGetIEPtr(tpAniSirGlobal pMac, v_U8_t *pIes, int length, v_U8_t eid,eS
 tANI_U8 limUnmapChannel(tANI_U8 mapChannel);
 
 #define limGetWscIEPtr(pMac, ie, ie_len) \
-    cfg_get_vendor_ie_ptr_from_oui(pMac, SIR_MAC_WSC_OUI, SIR_MAC_WSC_OUI_SIZE, ie, ie_len)
+    limGetVendorIEOuiPtr(pMac, SIR_MAC_WSC_OUI, SIR_MAC_WSC_OUI_SIZE, ie, ie_len)
 
 #define limGetP2pIEPtr(pMac, ie, ie_len) \
-    cfg_get_vendor_ie_ptr_from_oui(pMac, SIR_MAC_P2P_OUI, SIR_MAC_P2P_OUI_SIZE, ie, ie_len)
+    limGetVendorIEOuiPtr(pMac, SIR_MAC_P2P_OUI, SIR_MAC_P2P_OUI_SIZE, ie, ie_len)
 
 v_U8_t limGetNoaAttrStreamInMultP2pIes(tpAniSirGlobal pMac,v_U8_t* noaStream,v_U8_t noaLen,v_U8_t overFlowLen);
 v_U8_t limGetNoaAttrStream(tpAniSirGlobal pMac, v_U8_t*pNoaStream,tpPESession psessionEntry);
 
 v_U8_t limBuildP2pIe(tpAniSirGlobal pMac, tANI_U8 *ie, tANI_U8 *data, tANI_U8 ie_len);
 tANI_BOOLEAN limIsNOAInsertReqd(tpAniSirGlobal pMac);
+v_U8_t* limGetVendorIEOuiPtr(tpAniSirGlobal pMac, tANI_U8 *oui, tANI_U8 oui_size, tANI_U8 *ie, tANI_U16 ie_len);
 tANI_BOOLEAN limIsconnectedOnDFSChannel(tANI_U8 currentChannel);
 tANI_U8 limGetCurrentOperatingChannel(tpAniSirGlobal pMac);
 
@@ -581,23 +582,4 @@ tANI_U8* lim_get_ie_ptr(tANI_U8 *pIes, int length, tANI_U8 eid);
 #ifdef WLAN_FEATURE_11W
 void limPmfComebackTimerCallback(void *context);
 #endif /* WLAN_FEATURE_11W */
-
-void lim_set_ht_caps(tpAniSirGlobal p_mac,
-			tpPESession p_session_entry,
-			tANI_U8 *p_ie_start,
-			tANI_U32 num_bytes);
-#ifdef WLAN_FEATURE_11AC
-void lim_set_vht_caps(tpAniSirGlobal p_mac,
-			tpPESession p_session_entry,
-			tANI_U8 *p_ie_start,
-			tANI_U32 num_bytes);
-#endif /* WLAN_FEATURE_11AC */
-
-#ifdef SAP_AUTH_OFFLOAD
-void lim_sap_offload_add_sta(tpAniSirGlobal pmac,
-                            tpSirMsgQ lim_msgq);
-void lim_sap_offload_del_sta(tpAniSirGlobal pmac,
-                            tpSirMsgQ lim_msgq);
-#endif /* SAP_AUTH_OFFLOAD */
-
 #endif /* __LIM_UTILS_H */

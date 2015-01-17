@@ -111,11 +111,6 @@
 #define CSR_ROAMING_DFS_CHANNEL_ENABLED_NORMAL     (1)
 #define CSR_ROAMING_DFS_CHANNEL_ENABLED_ACTIVE     (2)
 
-/* The MAX BSSID Count should be lower than the command timeout
- * value and it can be of a fraction of 3/4 of the total command
- * timeout value  */
-#define CSR_ACTIVE_LIST_CMD_TIMEOUT_VALUE 1000*30*4  //120s
-#define CSR_MAX_BSSID_COUNT     ((CSR_ACTIVE_LIST_CMD_TIMEOUT_VALUE/4000) * 3)
 typedef enum
 {
     eCsrNextScanNothing,
@@ -949,12 +944,14 @@ eHalStatus csrRoamIssueDisassociateStaCmd( tpAniSirGlobal pMac,
     \fn csrRoamIssueDeauthSta
     \brief csr function that HDD calls to delete a associated station
     \param sessionId    - session Id for Soft AP
-    \param pDelStaParams- Pointer to parameters of the station to deauthenticate
+    \param pPeerMacAddr - MAC of associated station to delete
+    \param reason - reason code, be one of the tSirMacReasonCodes
     \return eHalStatus
   ---------------------------------------------------------------------------*/
 eHalStatus csrRoamIssueDeauthStaCmd( tpAniSirGlobal pMac,
                                      tANI_U32 sessionId,
-                                     struct tagCsrDelStaParams *pDelStaParams);
+                                     tANI_U8 *pPeerMacAddr,
+                                     tANI_U32 reason);
 
 /* ---------------------------------------------------------------------------
     \fn csrRoamIssueTkipCounterMeasures
@@ -1059,6 +1056,3 @@ void csrClearVotesForCountryInfo(tpAniSirGlobal pMac);
 eHalStatus csrSetHT2040Mode(tpAniSirGlobal pMac, tANI_U32 sessionId,
                      ePhyChanBondState cbMode, tANI_BOOLEAN obssEnabled);
 #endif
-tSirBssDescription*
-csr_get_bssdescr_from_scan_handle(tScanResultHandle result_handle,
-                                  tSirBssDescription *bss_descr);

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2015 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2014 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -50,29 +50,6 @@
 #include "rrmApi.h"
 #endif
 
-#define DOT11F_RSN_VERSION 1    /* current supported version */
-#define DOT11F_RSN_OUI_SIZE 4
-#define DOT11F_RSN_CSE_NULL 0x00
-#define DOT11F_RSN_CSE_WEP40 0x01
-#define DOT11F_RSN_CSE_TKIP 0x02
-#define DOT11F_RSN_CSE_WRAP 0x03
-#define DOT11F_RSN_CSE_CCMP 0x04
-#define DOT11F_RSN_CSE_WEP104 0x05
-#define DOT11F_RSN_CSE_AES_CMAC 0x06
-
-static const tANI_U8 sirRSNOui[][ DOT11F_RSN_OUI_SIZE ] = {
-    { 0x00, 0x0F, 0xAC, 0x00 }, /* group cipher */
-    { 0x00, 0x0F, 0xAC, 0x01 }, /* WEP-40 or RSN */
-    { 0x00, 0x0F, 0xAC, 0x02 }, /* TKIP or RSN-PSK */
-    { 0x00, 0x0F, 0xAC, 0x03 }, /* Reserved */
-    { 0x00, 0x0F, 0xAC, 0x04 }, /* AES-CCMP */
-    { 0x00, 0x0F, 0xAC, 0x05 }, /* WEP-104 */
-    { 0x00, 0x40, 0x96, 0x00 }, /* CCKM */
-    /* BIP (encryption type) or RSN-PSK-SHA256 (authentication type) */
-    { 0x00, 0x0F, 0xAC, 0x06 },
-    /* RSN-8021X-SHA256 (authentication type) */
-    { 0x00, 0x0F, 0xAC, 0x05 }
-};
 
 
 ////////////////////////////////////////////////////////////////////////
@@ -271,73 +248,6 @@ PopulateDot11fChanSwitchAnn(tpAniSirGlobal          pMac,
 
     pDot11f->present = 1;
 } // End PopulateDot11fChanSwitchAnn.
-
-#ifdef FEATURE_AP_MCC_CH_AVOIDANCE
-void
-populate_dot11f_avoid_channels_ie(tpAniSirGlobal mac_ctx,
-                              tDot11fIEQComVendorIE *dot11f,
-                              tpPESession pe_session)
-{
-	dot11f->present = pe_session->sap_advertise_avoid_ch_ie;
-
-	if (!dot11f->present)
-		return;
-
-	dot11f->type = QCOM_VENDOR_IE_MCC_AVOID_CH;
-
-	if(pe_session->htSecondaryChannelOffset ==
-		PHY_DOUBLE_CHANNEL_LOW_PRIMARY &&
-		pe_session->htSupportedChannelWidthSet == 1) {
-		dot11f->num_data = 2;
-		dot11f->data[0] = pe_session->currentOperChannel;
-		dot11f->data[1] = dot11f->data[0] + 4;
-	}
-
-	if(pe_session->htSecondaryChannelOffset ==
-		PHY_DOUBLE_CHANNEL_HIGH_PRIMARY &&
-		pe_session->htSupportedChannelWidthSet == 1) {
-		dot11f->num_data = 2;
-		dot11f->data[0] = pe_session->currentOperChannel;
-		dot11f->data[1] = dot11f->data[0] - 4;
-	}
-
-	if(pe_session->htSecondaryChannelOffset ==
-		PHY_SINGLE_CHANNEL_CENTERED ||
-		pe_session->htSupportedChannelWidthSet == 0) {
-		dot11f->num_data = 1;
-		dot11f->data[0] = pe_session->currentOperChannel;
-	}
-
-	if (pe_session->vhtCapability) {
-		if (pe_session->vhtTxChannelWidthSet ==
-			WNI_CFG_VHT_CHANNEL_WIDTH_80MHZ) {
-			dot11f->num_data = 4;
-			if(pe_session->currentOperChannel >= 36 &&
-				pe_session->currentOperChannel <= 48) {
-				dot11f->data[0] = 36;
-			} else if(pe_session->currentOperChannel >= 52
-				&& pe_session->currentOperChannel <= 64) {
-				dot11f->data[0] = 52;
-			} else if(pe_session->currentOperChannel >= 100 &&
-				pe_session->currentOperChannel <= 112) {
-				dot11f->data[0] = 100;
-			} else if(pe_session->currentOperChannel >= 116 &&
-				pe_session->currentOperChannel <= 128) {
-				dot11f->data[0] = 116;
-			} else if(pe_session->currentOperChannel >= 132 &&
-				pe_session->currentOperChannel <= 144) {
-				dot11f->data[0] = 132;
-			} else if(pe_session->currentOperChannel >= 149 &&
-				pe_session->currentOperChannel <= 161) {
-				dot11f->data[0] = 149;
-			}
-			dot11f->data[1] = dot11f->data[0] + 4;
-			dot11f->data[2] = dot11f->data[0] + 8;
-			dot11f->data[3] = dot11f->data[0] + 12;
-		}
-	}
-}
-#endif /* FEATURE_AP_MCC_CH_AVOIDANCE */
 
 void
 PopulateDot11fChanSwitchWrapper(tpAniSirGlobal pMac,
@@ -722,7 +632,8 @@ PopulateDot11fHTCaps(tpAniSirGlobal           pMac,
             if(!(IS_2X2_CHAIN(psessionEntry->chainMask)))
             {
                 pDot11f->supportedMCSSet[1] = 0;
-                if (LIM_IS_STA_ROLE(psessionEntry)) {
+                if (psessionEntry->limSystemRole == eLIM_STA_ROLE)
+                {
                     pDot11f->mimoPowerSave = psessionEntry->smpsMode;
                 }
             }
@@ -1051,13 +962,10 @@ PopulateDot11fVHTOperation(tpAniSirGlobal   pMac,
 
     pDot11f->present = 1;
 
-    if (psessionEntry->htSupportedChannelWidthSet) {
-        pDot11f->chanWidth = psessionEntry->vhtTxChannelWidthSet;
-        pDot11f->chanCenterFreqSeg1 = psessionEntry->apCenterChan;
-    } else {
-        pDot11f->chanWidth = 0;
-    }
+    CFG_GET_INT( nStatus, pMac, WNI_CFG_VHT_CHANNEL_WIDTH, nCfgValue );
+    pDot11f->chanWidth = (tANI_U8)nCfgValue;
 
+    pDot11f->chanCenterFreqSeg1 = psessionEntry->apCenterChan;
 
     nCfgValue = 0;
     CFG_GET_INT( nStatus, pMac, WNI_CFG_VHT_CHANNEL_CENTER_FREQ_SEGMENT2,
@@ -1210,21 +1118,18 @@ PopulateDot11fHTInfo(tpAniSirGlobal   pMac,
         pHTInfoField1->recommendedTxWidthSet      = psessionEntry->htRecommendedTxWidthSet;
     }
 
-    if (psessionEntry && LIM_IS_AP_ROLE(psessionEntry)) {
-        CFG_GET_INT( nSirStatus, pMac, WNI_CFG_HT_INFO_FIELD2, nCfgValue );
+    if((psessionEntry) && (psessionEntry->limSystemRole == eLIM_AP_ROLE)){
+    CFG_GET_INT( nSirStatus, pMac, WNI_CFG_HT_INFO_FIELD2, nCfgValue );
 
-        /* This is added for fixing CRs on MDM9K platform - 257951, 259577 */
-        uHTInfoField2.nCfgValue16 = nCfgValue & 0xFFFF;
+    uHTInfoField2.nCfgValue16 = nCfgValue & 0xFFFF; // this is added for fixing CRs on MDM9K platform - 257951, 259577
 
-        uHTInfoField2.infoField2.opMode   =  psessionEntry->htOperMode;
-        uHTInfoField2.infoField2.nonGFDevicesPresent =
-                                    psessionEntry->beaconParams.llnNonGFCoexist;
-        /* Added for Obss */
-        uHTInfoField2.infoField2.obssNonHTStaPresent =
-                                    psessionEntry->beaconParams.gHTObssMode;
+    uHTInfoField2.infoField2.opMode   =  psessionEntry->htOperMode;
+    uHTInfoField2.infoField2.nonGFDevicesPresent = psessionEntry->beaconParams.llnNonGFCoexist;
+    uHTInfoField2.infoField2.obssNonHTStaPresent = psessionEntry->beaconParams.gHTObssMode;   /*added for Obss  */
 
-        uHTInfoField2.infoField2.reserved = 0;
-    } else {
+    uHTInfoField2.infoField2.reserved = 0;
+
+   }else{
         CFG_GET_INT( nSirStatus, pMac, WNI_CFG_HT_INFO_FIELD2, nCfgValue );
 
         htInfoField2 = ( tANI_U16 ) nCfgValue;
@@ -1232,9 +1137,7 @@ PopulateDot11fHTInfo(tpAniSirGlobal   pMac,
         pHTInfoField2 = ( tSirMacHTInfoField2* ) &htInfoField2;
         pHTInfoField2->opMode   = pMac->lim.gHTOperMode;
         pHTInfoField2->nonGFDevicesPresent = pMac->lim.gHTNonGFDevicesPresent;
-
-        /* Added for Obss */
-        pHTInfoField2->obssNonHTStaPresent = pMac->lim.gHTObssMode;
+        pHTInfoField2->obssNonHTStaPresent = pMac->lim.gHTObssMode;   /*added for Obss  */
 
         pHTInfoField2->reserved = 0;
     }
@@ -1288,7 +1191,8 @@ PopulateDot11fIBSSParams(tpAniSirGlobal       pMac,
        tDot11fIEIBSSParams *pDot11f, tpPESession psessionEntry)
 {
     tANI_U32  val = 0;
-    if (LIM_IS_IBSS_ROLE(psessionEntry)) {
+    if ( eLIM_STA_IN_IBSS_ROLE == psessionEntry->limSystemRole )
+    {
         if(wlan_cfgGetInt(pMac,
                           WNI_CFG_IBSS_ATIM_WIN_SIZE, &val) != eSIR_SUCCESS)
         {
@@ -1662,12 +1566,21 @@ void PopulateDot11fWMM(tpAniSirGlobal      pMac,
 {
     if ( psessionEntry->limWmeEnabled )
     {
-        if (LIM_IS_IBSS_ROLE(psessionEntry)) {
-            PopulateDot11fWMMInfoAp( pMac, pInfo, psessionEntry );
-        } else {
-            PopulateDot11fWMMParams( pMac, pParams, psessionEntry);
+        if ( eLIM_STA_IN_IBSS_ROLE == psessionEntry->limSystemRole )
+        {
+            //if ( ! sirIsPropCapabilityEnabled( pMac, SIR_MAC_PROP_CAPABILITY_WME ) )
+            {
+                PopulateDot11fWMMInfoAp( pMac, pInfo, psessionEntry );
+            }
+        }
+        else
+        {
+            {
+                PopulateDot11fWMMParams( pMac, pParams, psessionEntry);
+            }
 
-            if (psessionEntry->limWsmEnabled) {
+           if ( psessionEntry->limWsmEnabled )
+            {
                 PopulateDot11fWMMCaps( pCaps );
             }
         }
@@ -1710,14 +1623,18 @@ void PopulateDot11fWMMInfoAp(tpAniSirGlobal pMac, tDot11fIEWMMInfoAp *pInfo,
     /* WMM Specification 3.1.3, 3.2.3
      * An IBSS staion shall always use its default WMM parameters.
      */
-    if (LIM_IS_IBSS_ROLE(psessionEntry)) {
+    if ( eLIM_STA_IN_IBSS_ROLE == psessionEntry->limSystemRole )
+    {
         pInfo->param_set_count = 0;
         pInfo->uapsd = 0;
-    } else {
+    }
+    else
+    {
         pInfo->param_set_count = ( 0xf & psessionEntry->gLimEdcaParamSetCount );
-        if (LIM_IS_AP_ROLE(psessionEntry)) {
+        if(psessionEntry->limSystemRole == eLIM_AP_ROLE ){
             pInfo->uapsd = ( 0x1 & psessionEntry->apUapsdEnable );
-        } else
+        }
+        else
             pInfo->uapsd = ( 0x1 & pMac->lim.gUapsdEnable );
     }
     pInfo->present = 1;
@@ -1765,7 +1682,7 @@ void PopulateDot11fWMMParams(tpAniSirGlobal      pMac,
 {
     pParams->version = SIR_MAC_OUI_VERSION_1;
 
-    if (LIM_IS_AP_ROLE(psessionEntry))
+    if(psessionEntry->limSystemRole == eLIM_AP_ROLE)
        pParams->qosInfo =
            (psessionEntry->apUapsdEnable << 7) | ((tANI_U8)(0x0f & psessionEntry->gLimEdcaParamSetCount));
     else
@@ -1787,7 +1704,7 @@ void PopulateDot11fWMMParams(tpAniSirGlobal      pMac,
     pParams->acbk_acwmax    = ( 0xf & psessionEntry->gLimEdcaParamsBC[1].cw.max );
     pParams->acbk_txoplimit = psessionEntry->gLimEdcaParamsBC[1].txoplimit;
 
-    if (LIM_IS_AP_ROLE(psessionEntry))
+    if(psessionEntry->limSystemRole == eLIM_AP_ROLE )
         pParams->acvi_aifsn     = ( 0xf & psessionEntry->gLimEdcaParamsBC[2].aci.aifsn );
     else
         pParams->acvi_aifsn     = ( 0xf & SET_AIFSN(psessionEntry->gLimEdcaParamsBC[2].aci.aifsn) );
@@ -1800,7 +1717,7 @@ void PopulateDot11fWMMParams(tpAniSirGlobal      pMac,
     pParams->acvi_acwmax    = ( 0xf & psessionEntry->gLimEdcaParamsBC[2].cw.max );
     pParams->acvi_txoplimit = psessionEntry->gLimEdcaParamsBC[2].txoplimit;
 
-    if (LIM_IS_AP_ROLE(psessionEntry))
+    if(psessionEntry->limSystemRole == eLIM_AP_ROLE )
         pParams->acvo_aifsn     = ( 0xf & psessionEntry->gLimEdcaParamsBC[3].aci.aifsn );
     else
         pParams->acvo_aifsn     = ( 0xf & SET_AIFSN(psessionEntry->gLimEdcaParamsBC[3].aci.aifsn) );
@@ -3685,20 +3602,6 @@ sirConvertBeaconFrame2Struct(tpAniSirGlobal       pMac,
     pBeaconStruct->Vendor2IEPresent = pBeacon->Vendor2IE.present;
     pBeaconStruct->Vendor3IEPresent = pBeacon->Vendor3IE.present;
 
-#ifdef FEATURE_AP_MCC_CH_AVOIDANCE
-    if(pBeacon->QComVendorIE.present) {
-        pBeaconStruct->AvoidChannelIE.present =
-            pBeacon->QComVendorIE.present;
-        pBeaconStruct->AvoidChannelIE.num_data =
-            pBeacon->QComVendorIE.num_data;
-        pBeaconStruct->AvoidChannelIE.type =
-            pBeacon->QComVendorIE.type;
-        vos_mem_copy(pBeaconStruct->AvoidChannelIE.data,
-                     pBeacon->QComVendorIE.data,
-                     sizeof(pBeacon->QComVendorIE.data));
-    }
-#endif /* FEATURE_AP_MCC_CH_AVOIDANCE */
-
     vos_mem_free(pBeacon);
     return eSIR_SUCCESS;
 
@@ -5238,108 +5141,4 @@ void PopulateDot11fTimeoutInterval( tpAniSirGlobal pMac,
    pDot11f->timeoutType = type;
    pDot11f->timeoutValue = value;
 }
-
-#ifdef SAP_AUTH_OFFLOAD
-tSirRetStatus
-sap_auth_offload_construct_rsn_opaque( tDot11fIERSN *pdot11f_rsn,
-                                    tDot11fIERSNOpaque *pdot11f)
-{
-    tANI_U32 data_len=0;
-    tANI_U8 *ptr;
-    tANI_U32 element_len=0;
-    tANI_U32 count=0;
-    ptr = (tANI_U8 *)pdot11f->data;
-    if (pdot11f_rsn->present) {
-        pdot11f->present = pdot11f_rsn->present;
-        element_len = sizeof(pdot11f_rsn->version);
-        vos_mem_copy(ptr, &pdot11f_rsn->version, element_len);
-        ptr += element_len;
-        data_len += element_len;
-        element_len = sizeof(pdot11f_rsn->gp_cipher_suite);
-        vos_mem_copy(ptr, pdot11f_rsn->gp_cipher_suite, element_len);
-        ptr += element_len;
-        data_len += element_len;
-
-        if (pdot11f_rsn->pwise_cipher_suite_count) {
-            element_len = sizeof(pdot11f_rsn->pwise_cipher_suite_count);
-            vos_mem_copy(ptr,
-                         &pdot11f_rsn->pwise_cipher_suite_count,
-                         element_len);
-            ptr += element_len;
-            data_len += element_len;
-            for (count = 0; count < pdot11f_rsn->pwise_cipher_suite_count;
-                 count++) {
-                element_len = DOT11F_RSN_OUI_SIZE;
-                vos_mem_copy(ptr,
-                             &pdot11f_rsn->pwise_cipher_suites[count][0],
-                             element_len);
-                ptr += element_len;
-                data_len += element_len;
-            }
-        }
-
-        if (pdot11f_rsn->akm_suite_count) {
-            element_len = sizeof(pdot11f_rsn->akm_suite_count);
-            vos_mem_copy(ptr, &pdot11f_rsn->akm_suite_count, element_len);
-            ptr += element_len;
-            data_len += element_len;
-            for (count = 0; count < pdot11f_rsn->akm_suite_count; count++) {
-                element_len = DOT11F_RSN_OUI_SIZE;
-                vos_mem_copy(ptr,
-                             &pdot11f_rsn->akm_suites[count][0],
-                             element_len);
-                ptr += element_len;
-                data_len += element_len;
-            }
-        }
-
-        element_len = sizeof(pdot11f_rsn->RSN_Cap);
-        vos_mem_copy(ptr, pdot11f_rsn->RSN_Cap, element_len);
-        ptr += element_len;
-        data_len += element_len;
-    }
-    pdot11f->num_data = data_len;
-    return eSIR_SUCCESS;
-}
-
-void
-sap_auth_offload_update_rsn_ie( tpAniSirGlobal pmac,
-                             tDot11fIERSNOpaque *pdot11f)
-{
-    tDot11fIERSN *pdot11f_rsn;
-    pdot11f_rsn = vos_mem_malloc(sizeof(tDot11fIERSN));
-    vos_mem_set(pdot11f_rsn, sizeof(tDot11fIERSN), 0);
-    /* Assign RSN IE for Software AP Authentication offload security */
-    if (pmac->sap_auth_offload && pmac->sap_auth_offload_sec_type) {
-        switch (pmac->sap_auth_offload_sec_type) {
-        case eSIR_OFFLOAD_WPA2PSK_CCMP:
-            /* Only Support one kind of Cipher Suit for
-             * Software AP authentication offload
-             */
-            pdot11f_rsn->present = 1;
-            pdot11f_rsn->version = 1;
-            vos_mem_copy(pdot11f_rsn->gp_cipher_suite,
-                         &sirRSNOui[DOT11F_RSN_CSE_CCMP][0],
-                         DOT11F_RSN_OUI_SIZE);
-            pdot11f_rsn->pwise_cipher_suite_count = 1;
-            vos_mem_copy(&(pdot11f_rsn->pwise_cipher_suites[0][0]),
-                         &sirRSNOui[DOT11F_RSN_CSE_CCMP][0],
-                         DOT11F_RSN_OUI_SIZE);
-            pdot11f_rsn->akm_suite_count = 1;
-            vos_mem_copy(&(pdot11f_rsn->akm_suites[0][0]),
-                         &sirRSNOui[DOT11F_RSN_CSE_TKIP][0],
-                         DOT11F_RSN_OUI_SIZE);
-            pdot11f_rsn->pmkid_count = 0;
-            /* Construct RSN IE into RSNOpaque*/
-            sap_auth_offload_construct_rsn_opaque(pdot11f_rsn, pdot11f);
-            break;
-        default:
-            dot11fLog( pmac, LOGE,
-                       FL("The security type is not definied for "
-                       "Software AP authentication offload!\n"));
-        break;
-        }
-    }
-}
-#endif /* SAP_AUTH_OFFLOAD */
 // parserApi.c ends here.

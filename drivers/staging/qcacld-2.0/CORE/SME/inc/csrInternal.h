@@ -342,7 +342,6 @@ typedef struct tagCsrRoamStartBssParams
     tSirMacRateSet      operationalRateSet;
     tSirMacRateSet      extendedRateSet;
     tANI_U8             operationChn;
-    tANI_U8             vht_channel_width;
     eCsrCfgDot11Mode    uCfgDot11Mode;
     tANI_U8             privacy;
     tANI_BOOLEAN        fwdWPSPBCProbeReq;
@@ -504,7 +503,6 @@ typedef struct tagCsrNeighborRoamConfig
     tANI_U8        nRoamBmissFirstBcnt;
     tANI_U8        nRoamBmissFinalBcnt;
     tANI_U8        nRoamBeaconRssiWeight;
-    tANI_U8        delay_before_vdev_stop;
 }tCsrNeighborRoamConfig;
 #endif
 
@@ -570,7 +568,6 @@ typedef struct tagCsrConfig
     tANI_U32  nActiveMaxChnTime;     //in units of milliseconds
 
     tANI_U32  nInitialDwellTime;     //in units of milliseconds
-    bool      initial_scan_no_dfs_chnl;
 
     tANI_U32  nActiveMinChnTimeBtc;     //in units of milliseconds
     tANI_U32  nActiveMaxChnTimeBtc;     //in units of milliseconds
@@ -671,9 +668,6 @@ typedef struct tagCsrConfig
     tANI_BOOLEAN  isRoamOffloadEnabled;
 #endif
     tANI_BOOLEAN obssEnabled;
-    v_U8_t conc_custom_rule1;
-    v_U8_t conc_custom_rule2;
-    v_U8_t is_sta_connection_in_5gz_enabled;
 }tCsrConfig;
 
 typedef struct tagCsrChannelPowerInfo
@@ -902,17 +896,6 @@ typedef struct tagCsrRoamOffloadSynchStruct
 } tCsrRoamOffloadSynchStruct;
 #endif
 
-typedef struct tagCsrRoamStoredProfile
-{
-    tANI_U32 session_id;
-    tCsrRoamProfile profile;
-    tScanResultHandle bsslist_handle;
-    eCsrRoamReason reason;
-    tANI_U32 roam_id;
-    tANI_BOOLEAN imediate_flag;
-    tANI_BOOLEAN clear_flag;
-} tCsrRoamStoredProfile;
-
 typedef struct tagCsrRoamSession
 {
     tANI_U8 sessionId;             // Session ID
@@ -1003,10 +986,6 @@ typedef struct tagCsrRoamSession
 #if defined WLAN_FEATURE_VOWIFI_11R
     tftSMEContext ftSmeContext;
 #endif
-    uint8_t join_bssid_count; /* This count represents the number of
-                               * bssid's we are trying to join.
-                               */
-    tCsrRoamStoredProfile stored_roam_profile;
 } tCsrRoamSession;
 
 typedef struct tagCsrRoamStruct
@@ -1102,7 +1081,8 @@ typedef struct tagCsrRoamStruct
         (eCSR_DOT11_MODE_11g == (pMac)->roam.configParam.phyMode || eCSR_DOT11_MODE_11g_ONLY == (pMac)->roam.configParam.phyMode)
 
 #define CSR_IS_PHY_MODE_A_ONLY(pMac) \
-        (eCSR_DOT11_MODE_11a == (pMac)->roam.configParam.phyMode)
+        ((eCSR_DOT11_MODE_11a == (pMac)->roam.configParam.phyMode) ||\
+        (eCSR_DOT11_MODE_11a_ONLY == (pMac)->roam.configParam.phyMode))
 
 #ifdef WLAN_FEATURE_11AC
 #define CSR_IS_PHY_MODE_DUAL_BAND(phyMode) \
@@ -1325,6 +1305,15 @@ eHalStatus csrGetRssi(tpAniSirGlobal pMac,tCsrRssiCallback callback,
 eHalStatus csrGetSnr(tpAniSirGlobal pMac, tCsrSnrCallback callback,
                      tANI_U8 staId, tCsrBssid bssId, void *pContext);
 
+#if defined WLAN_FEATURE_VOWIFI_11R || defined FEATURE_WLAN_ESE || defined(FEATURE_WLAN_LFR)
+eHalStatus csrGetRoamRssi(tpAniSirGlobal pMac,
+                          tCsrRssiCallback callback,
+                          tANI_U8 staId,
+                          tCsrBssid bssId,
+                          void * pContext,
+                          void * pVosContext);
+#endif
+
 #if defined(FEATURE_WLAN_ESE) && defined(FEATURE_WLAN_ESE_UPLOAD)
 eHalStatus csrGetTsmStats(tpAniSirGlobal pMac,
                           tCsrTsmStatsCallback callback,
@@ -1487,10 +1476,10 @@ eHalStatus csrHandoffRequest(tpAniSirGlobal pMac, tANI_U8 sessionId,
 tANI_BOOLEAN csrRoamIsStaMode(tpAniSirGlobal pMac, tANI_U32 sessionId);
 #endif
 
+
 /* Post Channel Change Indication */
 eHalStatus csrRoamChannelChangeReq(tpAniSirGlobal pMac, tCsrBssid bssid,
-                        tANI_U8 targetChannel, tANI_U8 cbMode,
-                        tANI_U8 vhtChannelWidth);
+                        tANI_U8 targetChannel, tANI_U8 cbMode);
 
 /* Post Beacon Tx Start Indication */
 eHalStatus csrRoamStartBeaconReq( tpAniSirGlobal pMac,
@@ -1534,15 +1523,5 @@ eHalStatus csrScanSaveRoamOffloadApToScanCache(tpAniSirGlobal pMac,
             tSirRoamOffloadSynchInd *pRoamOffloadSynchInd);
 void csrProcessHOFailInd(tpAniSirGlobal pMac, void *pMsgBuf);
 #endif
-bool csr_store_joinreq_param(tpAniSirGlobal mac_ctx,
-                             tCsrRoamProfile *profile,
-                             tScanResultHandle scan_cache,
-                             uint32_t *roam_id,
-                             uint32_t session_id);
-bool csr_clear_joinreq_param(tpAniSirGlobal mac_ctx,
-                             tANI_U32 session_id);
-eHalStatus csr_issue_stored_joinreq(tpAniSirGlobal mac_ctx,
-                                    uint32_t *roam_id,
-                                    uint32_t session_id);
 #endif
 

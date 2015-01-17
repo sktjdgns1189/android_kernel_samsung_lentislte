@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2015 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2011-2014 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -69,6 +69,7 @@
 #if defined WLAN_FEATURE_VOWIFI_11R
 #include "limFT.h"
 #endif
+
 
 #include "vos_types.h"
 #include "vos_packet.h"
@@ -431,7 +432,7 @@ static void limHandleUnknownA2IndexFrames(tpAniSirGlobal pMac, void *pRxPacketIn
        //limSendDisassocMgmtFrame(pMac, eSIR_MAC_CLASS3_FRAME_FROM_NON_ASSOC_STA_REASON,(tANI_U8 *) pRxPacketInfo);
     //TODO: verify this
     //This could be a public action frame.
-    if (LIM_IS_P2P_DEVICE_ROLE(psessionEntry))
+    if( psessionEntry->limSystemRole == eLIM_P2P_DEVICE_ROLE )
         limProcessActionFrameNoSession(pMac, (tANI_U8 *) pRxPacketInfo);
 
 #ifdef FEATURE_WLAN_TDLS
@@ -448,7 +449,7 @@ static void limHandleUnknownA2IndexFrames(tpAniSirGlobal pMac, void *pRxPacketIn
         }
         /* TDLS_hklee: move down here to reject Addr2 == Group (first checking above)
            and also checking if SystemRole == STA */
-        if (LIM_IS_STA_ROLE(psessionEntry))
+        if (psessionEntry->limSystemRole == eLIM_STA_ROLE)
         {
             /* ADD handling of Public Action Frame */
             LIM_LOG_TDLS(VOS_TRACE(VOS_MODULE_ID_PE, VOS_TRACE_LEVEL_ERROR, \
@@ -785,10 +786,13 @@ limHandle80211Frames(tpAniSirGlobal pMac, tpSirMsgQ limMsg, tANI_U8 *pDeferMsg)
             {
                 case SIR_MAC_MGMT_ASSOC_REQ:
                     // Make sure the role supports Association
-                    if (LIM_IS_BT_AMP_AP_ROLE(psessionEntry) ||
-                        LIM_IS_AP_ROLE(psessionEntry))
+                    if ((psessionEntry->limSystemRole == eLIM_BT_AMP_AP_ROLE)
+                    || (psessionEntry->limSystemRole == eLIM_AP_ROLE)
+                    )
                         limProcessAssocReqFrame(pMac, pRxPacketInfo, LIM_ASSOC, psessionEntry);
-                    else {
+
+                    else
+                    {
                         // Unwanted messages - Log error
                         limLog(pMac, LOGE, FL("unexpected message received %X"),limMsg->type);
                     }
@@ -800,10 +804,13 @@ limHandle80211Frames(tpAniSirGlobal pMac, tpSirMsgQ limMsg, tANI_U8 *pDeferMsg)
 
                 case SIR_MAC_MGMT_REASSOC_REQ:
                     // Make sure the role supports Reassociation
-                    if (LIM_IS_BT_AMP_AP_ROLE(psessionEntry) ||
-                        LIM_IS_AP_ROLE(psessionEntry)) {
+                    if ((psessionEntry->limSystemRole == eLIM_BT_AMP_AP_ROLE)
+                      || (psessionEntry->limSystemRole == eLIM_AP_ROLE)
+                    ){
                         limProcessAssocReqFrame(pMac, pRxPacketInfo, LIM_REASSOC, psessionEntry);
-                    } else {
+                    }
+                    else
+                    {
                         // Unwanted messages - Log error
                         limLog(pMac, LOGE, FL("unexpected message received %X"),limMsg->type);
                     }
@@ -1096,19 +1103,13 @@ void limProcessOemDataRsp(tpAniSirGlobal pMac, tANI_U32* body)
 void
 limProcessMessages(tpAniSirGlobal pMac, tpSirMsgQ  limMsg)
 {
-#ifdef FEATURE_AP_MCC_CH_AVOIDANCE
-    uint8_t vdev_id = 0;
-    uint8_t i;
-    tpPESession session_entry = NULL;
-    tUpdateBeaconParams beacon_params;
-#endif /* FEATURE_AP_MCC_CH_AVOIDANCE */
-
     tANI_U8  deferMsg = false;
     tLinkStateParams *linkStateParams;
 #if defined WLAN_FEATURE_VOWIFI_11R
     tpPESession pSession;
 #endif
-    if (ANI_DRIVER_TYPE(pMac) == eDRIVER_TYPE_MFG) {
+    if(pMac->gDriverType == eDRIVER_TYPE_MFG)
+    {
         vos_mem_free(limMsg->bodyptr);
         limMsg->bodyptr = NULL;
         return;
@@ -1337,6 +1338,9 @@ limProcessMessages(tpAniSirGlobal pMac, tpSirMsgQ  limMsg)
         case eWNI_SME_GLOBAL_STAT_REQ:
         case eWNI_SME_STAT_SUMM_REQ:
         case eWNI_SME_GET_STATISTICS_REQ:
+#if defined WLAN_FEATURE_VOWIFI_11R || defined FEATURE_WLAN_ESE || defined(FEATURE_WLAN_LFR)
+        case eWNI_SME_GET_ROAM_RSSI_REQ:
+#endif
 #if defined(FEATURE_WLAN_ESE) && defined(FEATURE_WLAN_ESE_UPLOAD)
         case eWNI_SME_GET_TSM_STATS_REQ:
 #endif /* FEATURE_WLAN_ESE && FEATURE_WLAN_ESE_UPLOAD */
@@ -1787,37 +1791,7 @@ limProcessMessages(tpAniSirGlobal pMac, tpSirMsgQ  limMsg)
         case WDA_DEL_STA_SELF_RSP:
             limProcessDelStaSelfRsp(pMac, limMsg);
             break;
-#ifdef FEATURE_AP_MCC_CH_AVOIDANCE
-        case WDA_UPDATE_Q2Q_IE_IND:
-            /*
-             * this device is operating AP in MCC mode, update Q2Q IE in
-             * beacon template
-             */
-             vos_mem_zero(&beacon_params, sizeof(tUpdateBeaconParams));
-             beacon_params.paramChangeBitmap = 0;
-             for ( i = 0; i < pMac->lim.maxBssId; i++) {
-                 vdev_id = ((tANI_U8*)limMsg->bodyptr)[i];
-                 session_entry = pe_find_session_by_sme_session_id(pMac,
-                                                                vdev_id);
-                 if(session_entry == NULL)
-                     continue;
-                 session_entry->sap_advertise_avoid_ch_ie =
-                                            (tANI_U8)limMsg->bodyval;
 
-                 beacon_params.bssIdx = session_entry->bssIdx;
-                 schSetFixedBeaconFields(pMac, session_entry);
-
-                 beacon_params.beaconInterval =
-                 session_entry->beaconParams.beaconInterval;
-                 beacon_params.paramChangeBitmap |=
-                                         PARAM_BCN_INTERVAL_CHANGED;
-                 limSendBeaconParams(pMac,
-                                     &beacon_params,
-                                     session_entry);
-             }
-             vos_mem_free(limMsg->bodyptr);
-             break;
-#endif /* FEATURE_AP_MCC_CH_AVOIDANCE */
         case WDA_DELETE_BSS_RSP:
             limHandleDeleteBssRsp(pMac,limMsg); //wrapper routine to handle delete bss response
             break;
@@ -1851,6 +1825,12 @@ limProcessMessages(tpAniSirGlobal pMac, tpSirMsgQ  limMsg)
         case WDA_GET_STATISTICS_RSP:
             limSendSmePEStatisticsRsp ( pMac, limMsg->type, (void *)limMsg->bodyptr);
             break;
+#if defined WLAN_FEATURE_VOWIFI_11R || defined FEATURE_WLAN_ESE || defined(FEATURE_WLAN_LFR)
+        case WDA_GET_ROAM_RSSI_RSP:
+            limSendSmePEGetRoamRssiRsp ( pMac, limMsg->type, (void *)limMsg->bodyptr);
+            break;
+#endif
+
 
         case WDA_SET_MIMOPS_RSP:
         case WDA_SET_TX_POWER_RSP:
@@ -2048,15 +2028,6 @@ limProcessMessages(tpAniSirGlobal pMac, tpSirMsgQ  limMsg)
         limMsg->bodyptr = NULL;
         break;
 #endif
-
-#ifdef SAP_AUTH_OFFLOAD
-    case WDA_SAP_OFL_ADD_STA:
-        lim_sap_offload_add_sta(pMac, limMsg);
-        break;
-    case WDA_SAP_OFL_DEL_STA:
-        lim_sap_offload_del_sta(pMac, limMsg);
-        break;
-#endif /* SAP_AUTH_OFFLOAD */
     default:
         vos_mem_free((v_VOID_t*)limMsg->bodyptr);
         limMsg->bodyptr = NULL;

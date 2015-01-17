@@ -76,7 +76,7 @@ hdd_TranslateWPAToCsrAuthType(u_int8_t auth_suite[4]);
 eCsrEncryptionType
 hdd_TranslateWPAToCsrEncryptionType(u_int8_t cipher_suite[4]);
 
-VOS_STATUS hdd_softap_sta_deauth(hdd_adapter_t*, struct tagCsrDelStaParams*);
+VOS_STATUS hdd_softap_sta_deauth(hdd_adapter_t*,v_U8_t*);
 void hdd_softap_sta_disassoc(hdd_adapter_t*,v_U8_t*);
 void hdd_softap_tkip_mic_fail_counter_measure(hdd_adapter_t*,v_BOOL_t);
 int hdd_softap_unpackIE( tHalHandle halHandle,
@@ -101,91 +101,4 @@ void hdd_restart_softap (hdd_context_t *pHddCtx, hdd_adapter_t *pAdapter);
 VOS_STATUS hdd_set_sap_ht2040_mode(hdd_adapter_t *pHostapdAdapter,
                                    tANI_U8 channel_type);
 #endif
-
-#ifdef SAP_AUTH_OFFLOAD
-void hdd_set_sap_auth_offload(hdd_adapter_t *pHostapdAdapter,
-                              bool enabled);
-#else
-static inline void
-hdd_set_sap_auth_offload(hdd_adapter_t *pHostapdAdapter, bool enabled)
-{
-}
-#endif /* SAP_AUTH_OFFLOAD */
-
-/**
- * hdd_is_sta_connection_pending() - This function will check if sta connection
- *                                   is pending or not.
- * @hdd_ctx: pointer to hdd context
- *
- * This function will return the status of flag is_sta_connection_pending
- *
- * Return: true or false
- */
-static inline bool
-hdd_is_sta_connection_pending(hdd_context_t *hdd_ctx)
-{
-    bool status;
-    spin_lock(&hdd_ctx->sta_update_info_lock);
-    status = hdd_ctx->is_sta_connection_pending;
-    spin_unlock(&hdd_ctx->sta_update_info_lock);
-    return status;
-}
-
-/**
- * hdd_change_sta_conn_pending_status() - This function will change the value
- *                                        of is_sta_connection_pending
- * @hdd_ctx: pointer to hdd context
- * @value: value to set
- *
- * This function will change the value of is_sta_connection_pending
- *
- * Return: none
- */
-static inline void
-hdd_change_sta_conn_pending_status(hdd_context_t *hdd_ctx,
-                                   bool value)
-{
-    spin_lock(&hdd_ctx->sta_update_info_lock);
-    hdd_ctx->is_sta_connection_pending = value;
-    spin_unlock(&hdd_ctx->sta_update_info_lock);
-}
-
-/**
- * hdd_is_sap_restart_required() - This function will check if sap restart
- *                                 is pending or not.
- * @hdd_ctx: pointer to hdd context.
- *
- * This function will return the status of flag is_sap_restart_required.
- *
- * Return: true or false
- */
-static inline bool
-hdd_is_sap_restart_required(hdd_context_t *hdd_ctx)
-{
-    bool status;
-    spin_lock(&hdd_ctx->sap_update_info_lock);
-    status = hdd_ctx->is_sap_restart_required;
-    spin_unlock(&hdd_ctx->sap_update_info_lock);
-    return status;
-}
-
-/**
- * hdd_change_sap_restart_required_status() - This function will change the
- *                                            value of is_sap_restart_required
- * @hdd_ctx: pointer to hdd context
- * @value: value to set
- *
- * This function will change the value of is_sap_restart_required
- *
- * Return: none
- */
-static inline void
-hdd_change_sap_restart_required_status(hdd_context_t *hdd_ctx,
-                                       bool value)
-{
-    spin_lock(&hdd_ctx->sap_update_info_lock);
-    hdd_ctx->is_sap_restart_required = value;
-    spin_unlock(&hdd_ctx->sap_update_info_lock);
-}
-
 #endif    // end #if !defined( WLAN_HDD_HOSTAPD_H )

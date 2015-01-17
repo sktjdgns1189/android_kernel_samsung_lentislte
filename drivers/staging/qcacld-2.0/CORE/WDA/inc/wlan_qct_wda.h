@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2015 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2014 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -758,6 +758,7 @@ tSirRetStatus uMacPostCtrlMsg(void* pSirGlobal, tSirMbMsg* pMb);
 #define WDA_BTC_SET_CFG                SIR_HAL_BTC_SET_CFG
 #define WDA_SIGNAL_BT_EVENT            SIR_HAL_SIGNAL_BT_EVENT
 #define WDA_HANDLE_FW_MBOX_RSP         SIR_HAL_HANDLE_FW_MBOX_RSP
+#define WDA_SIGNAL_BTAMP_EVENT         SIR_HAL_SIGNAL_BTAMP_EVENT
 
 #ifdef FEATURE_OEM_DATA_SUPPORT
 /* PE <-> HAL OEM_DATA RELATED MESSAGES */
@@ -815,6 +816,7 @@ tSirRetStatus uMacPostCtrlMsg(void* pSirGlobal, tSirMbMsg* pMb);
 #ifdef FEATURE_WLAN_SCAN_PNO
 /*Requests sent to lower driver*/
 #define WDA_SET_PNO_REQ             SIR_HAL_SET_PNO_REQ
+#define WDA_SET_RSSI_FILTER_REQ     SIR_HAL_SET_RSSI_FILTER_REQ
 #define WDA_UPDATE_SCAN_PARAMS_REQ  SIR_HAL_UPDATE_SCAN_PARAMS
 
 /*Indication comming from lower driver*/
@@ -869,6 +871,9 @@ tSirRetStatus uMacPostCtrlMsg(void* pSirGlobal, tSirMbMsg* pMb);
 #define WDA_UPDATE_USERPOS         SIR_HAL_UPDATE_USERPOS
 #endif
 
+#define WDA_GET_ROAM_RSSI_REQ      SIR_HAL_GET_ROAM_RSSI_REQ
+#define WDA_GET_ROAM_RSSI_RSP      SIR_HAL_GET_ROAM_RSSI_RSP
+
 #ifdef WLAN_FEATURE_NAN
 #define WDA_NAN_REQUEST            SIR_HAL_NAN_REQUEST
 #endif
@@ -914,7 +919,6 @@ tSirRetStatus uMacPostCtrlMsg(void* pSirGlobal, tSirMbMsg* pMb);
 
 #define WDA_INIT_THERMAL_INFO_CMD   SIR_HAL_INIT_THERMAL_INFO_CMD
 #define WDA_SET_THERMAL_LEVEL       SIR_HAL_SET_THERMAL_LEVEL
-
 #ifdef FEATURE_WLAN_BATCH_SCAN
 #define WDA_SET_BATCH_SCAN_REQ            SIR_HAL_SET_BATCH_SCAN_REQ
 #define WDA_SET_BATCH_SCAN_RSP            SIR_HAL_SET_BATCH_SCAN_RSP
@@ -953,7 +957,6 @@ tSirRetStatus uMacPostCtrlMsg(void* pSirGlobal, tSirMbMsg* pMb);
 #endif
 
 #define WDA_VDEV_START_RSP_IND      SIR_HAL_VDEV_START_RSP_IND
-#define WDA_IPA_OFFLOAD_ENABLE_DISABLE        SIR_HAL_IPA_OFFLOAD_ENABLE_DISABLE
 
 #define WDA_ROAM_PREAUTH_IND        SIR_HAL_ROAM_PREAUTH_IND
 
@@ -998,33 +1001,6 @@ tSirRetStatus uMacPostCtrlMsg(void* pSirGlobal, tSirMbMsg* pMb);
 #ifdef WLAN_FEATURE_GPIO_LED_FLASHING
 #define WDA_LED_FLASHING_REQ   SIR_HAL_LED_FLASHING_REQ
 #endif
-
-#ifdef MDNS_OFFLOAD
-#define WDA_SET_MDNS_OFFLOAD_CMD              SIR_HAL_SET_MDNS_OFFLOAD
-#define WDA_SET_MDNS_FQDN_CMD                 SIR_HAL_SET_MDNS_FQDN
-#define WDA_SET_MDNS_RESPONSE_CMD             SIR_HAL_SET_MDNS_RESPONSE
-#define WDA_GET_MDNS_STATUS_CMD               SIR_HAL_GET_MDNS_STATUS
-#endif /* MDNS_OFFLOAD */
-
-#ifdef SAP_AUTH_OFFLOAD
-#define WDA_SAP_OFL_ADD_STA                   SIR_HAL_SAP_OFL_ADD_STA
-#define WDA_SAP_OFL_DEL_STA                   SIR_HAL_SAP_OFL_DEL_STA
-#define WDA_SET_SAP_AUTH_OFL                  SIR_HAL_SET_SAP_AUTH_OFL
-#endif /* SAP_AUTH_OFFLOAD */
-
-#ifdef WLAN_FEATURE_APFIND
-#define WDA_APFIND_SET_CMD                    SIR_HAL_APFIND_SET_CMD
-#endif /* WLAN_FEATURE_APFIND */
-
-#define WDA_OCB_SET_SCHED_REQUEST             SIR_HAL_OCB_SET_SCHED_REQUEST
-#ifdef FEATURE_BUS_AUTO_SUSPEND
-#define WDA_WLAN_AUTO_SUSPEND_IND             SIR_HAL_WLAN_AUTO_SUSPEND_IND
-#define WDA_WLAN_AUTO_RESUME_IND              SIR_HAL_WLAN_AUTO_RESUME_IND
-#endif
-
-#ifdef FEATURE_AP_MCC_CH_AVOIDANCE
-#define WDA_UPDATE_Q2Q_IE_IND                 SIR_HAL_UPDATE_Q2Q_IE_IND
-#endif /* FEATURE_AP_MCC_CH_AVOIDANCE */
 
 tSirRetStatus wdaPostCtrlMsg(tpAniSirGlobal pMac, tSirMsgQ *pMsg);
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013-2015 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2014 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -576,16 +576,6 @@ HIFPostInit(HIF_DEVICE *hif_device, void *unused, MSG_BASED_HIF_CALLBACKS *callb
     AR_DEBUG_PRINTF(ATH_DEBUG_TRC, ("-%s\n",__FUNCTION__));
 }
 
-static void hif_pci_free_complete_state(struct HIF_CE_pipe_info *pipe_info)
-{
-    struct HIF_CE_completion_state_list *tmp_list;
-
-    while (pipe_info->completion_space_list) {
-        tmp_list = pipe_info->completion_space_list;
-        pipe_info->completion_space_list = tmp_list->next;
-        vos_mem_free(tmp_list);
-    }
-}
 int
 hif_completion_thread_startup(struct HIF_CE_state *hif_state)
 {
@@ -626,61 +616,29 @@ hif_completion_thread_startup(struct HIF_CE_state *hif_state)
         pipe_info->completion_freeq_head = pipe_info->completion_freeq_tail = NULL;
         if (completions_needed > 0) {
             struct HIF_CE_completion_state *compl_state;
-            struct HIF_CE_completion_state_list *tmp_list;
             int i;
-            int idx;
-            int num_list;
-            int allocated_node;
-            int num_in_batch;
-            size_t len;
 
-            allocated_node = 0;
-            num_list = (completions_needed + HIF_CE_COMPLETE_STATE_NUM -1);
-            num_list /= HIF_CE_COMPLETE_STATE_NUM;
-
-            for (idx = 0; idx < num_list; idx++) {
-                if (completions_needed - allocated_node >=
-                    HIF_CE_COMPLETE_STATE_NUM)
-                    num_in_batch = HIF_CE_COMPLETE_STATE_NUM;
-                else
-                    num_in_batch = completions_needed - allocated_node;
-                if (num_in_batch <= 0)
-                    break;
-                len = num_in_batch *
-                    sizeof(struct HIF_CE_completion_state) +
-                    sizeof(struct HIF_CE_completion_state_list);
-                /* Allocate structures to track pending send/recv completions */
-                tmp_list =
-                    (struct HIF_CE_completion_state_list *)vos_mem_malloc(len);
-                if (!tmp_list) {
-                    AR_DEBUG_PRINTF(ATH_DEBUG_ERR,
-                        ("ath ERROR: compl_state has no mem\n"));
-                    hif_pci_free_complete_state(pipe_info);
-                    return -1;
-                }
-                compl_state = (struct HIF_CE_completion_state *)
-                    ((uint8_t *)tmp_list +
-                     sizeof(struct HIF_CE_completion_state_list));
-                for (i = 0; i < num_in_batch; i++) {
-                    compl_state->send_or_recv = HIF_CE_COMPLETE_FREE;
-                    compl_state->next = NULL;
-                    if (pipe_info->completion_freeq_head)
-                        pipe_info->completion_freeq_tail->next = compl_state;
-                    else
-                        pipe_info->completion_freeq_head = compl_state;
-                    pipe_info->completion_freeq_tail = compl_state;
-                    compl_state++;
-                    allocated_node++;
-                }
-                if (pipe_info->completion_space_list == NULL) {
-                    pipe_info->completion_space_list = tmp_list;
-                    tmp_list->next = NULL;
-                } else {
-                    tmp_list->next = pipe_info->completion_space_list;
-                    pipe_info->completion_space_list = tmp_list;
-                }
+            /* Allocate structures to track pending send/recv completions */
+            compl_state = (struct HIF_CE_completion_state *)
+                    A_MALLOC(completions_needed * sizeof(struct HIF_CE_completion_state));
+            if (!compl_state) {
+                AR_DEBUG_PRINTF(ATH_DEBUG_ERR, ("ath ERROR: compl_state has no mem\n"));
+                return -1;
             }
+            pipe_info->completion_space = compl_state;
+
             adf_os_spinlock_init(&pipe_info->completion_freeq_lock);
+            for (i=0; i<completions_needed; i++) {
+                compl_state->send_or_recv = HIF_CE_COMPLETE_FREE;
+                compl_state->next = NULL;
+                if (pipe_info->completion_freeq_head) {
+                    pipe_info->completion_freeq_tail->next = compl_state;
+                } else {
+                    pipe_info->completion_freeq_head = compl_state;
+                }
+                pipe_info->completion_freeq_tail = compl_state;
+                compl_state++;
+            }
         }
 
     }
@@ -718,8 +676,11 @@ hif_completion_thread_shutdown(struct HIF_CE_state *hif_state)
 
     for (pipe_num=0; pipe_num < sc->ce_count; pipe_num++) {
         pipe_info = &hif_state->pipe_info[pipe_num];
-        hif_pci_free_complete_state(pipe_info);
+        if (pipe_info->completion_space) {
+            A_FREE(pipe_info->completion_space);
+        }
         adf_os_spinlock_destroy(&pipe_info->completion_freeq_lock);
+        pipe_info->completion_space = NULL; /* sanity */
     }
 
     //hif_state->compl_thread = NULL;
@@ -1715,17 +1676,12 @@ HIFStop(HIF_DEVICE *hif_device)
         return; /* already stopped or stopping */
     }
 
-    if (sc->hdd_startup_reinit_flag == TRUE)
-        return; /* If still in wlan_hdd_startup or wlan_hdd_reinit nop. */
-
     sc->hif_init_done = FALSE;
 
     if (hif_state->started) {
        /* sync shutdown */
        hif_completion_thread_shutdown(hif_state);
        hif_completion_thread(hif_state);
-    } else {
-        hif_completion_thread_shutdown(hif_state);
     }
 
     /*
@@ -2614,11 +2570,6 @@ HIFTargetSleepStateAdjust(A_target_id_t targid,
 
     if (sc->recovery)
         return -EACCES;
-
-    if  (adf_os_atomic_read(&sc->pci_link_suspended)) {
-        pr_err("invalid access, PCIe link is suspended");
-        VOS_BUG(0);
-    }
 
     if (sleep_ok) {
         adf_os_spin_lock_irqsave(&hif_state->keep_awake_lock);

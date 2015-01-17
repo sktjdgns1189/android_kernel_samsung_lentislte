@@ -38,8 +38,6 @@
 #include <wlan_nlink_srv.h>
 #include "vos_diag_core_event.h"
 #include "qwlan_version.h"
-#include <wlan_hdd_main.h>
-#include <wlan_hdd_wext.h>
 #include <net/sock.h>
 #include <linux/netlink.h>
 
@@ -60,7 +58,7 @@
 static bool appstarted = FALSE;
 static bool senddriverstatus = FALSE;
 static bool kd_nl_init = FALSE;
-static int cnss_diag_pid = INVALID_PID;
+static int cnss_diag_pid = 0;
 static int get_version = 0;
 static int gprint_limiter = 0;
 
@@ -1647,7 +1645,13 @@ send_fw_diag_nl_data(wmi_unified_t wmi_handle, const u_int8_t *buffer,
     if (WARN_ON(len > ATH6KL_FWLOG_PAYLOAD_SIZE))
         return -ENODEV;
 
-    if (cnss_diag_pid != INVALID_PID)
+    /* NL is not ready yet, WLAN KO started first */
+    if ((kd_nl_init) && (!cnss_diag_pid))
+    {
+        nl_srv_nl_ready_indication();
+    }
+
+    if (cnss_diag_pid)
     {
         skb_out = nlmsg_new(len, 0);
         if (!skb_out)
@@ -1664,7 +1668,6 @@ send_fw_diag_nl_data(wmi_unified_t wmi_handle, const u_int8_t *buffer,
         {
             AR_DEBUG_PRINTF(ATH_DEBUG_INFO,
                             ("nl_srv_ucast failed 0x%x \n", res));
-            cnss_diag_pid = INVALID_PID;
             return res;
         }
     }
@@ -1684,7 +1687,12 @@ send_diag_netlink_data(const u_int8_t *buffer,
     if (WARN_ON(len > ATH6KL_FWLOG_PAYLOAD_SIZE))
         return -ENODEV;
 
-    if (cnss_diag_pid != INVALID_PID) {
+    /* NL is not ready yet, WLAN KO started first */
+    if ((kd_nl_init) && (!cnss_diag_pid)) {
+        nl_srv_nl_ready_indication();
+    }
+
+    if (cnss_diag_pid) {
         slot_len = sizeof(*slot) + ATH6KL_FWLOG_PAYLOAD_SIZE;
 
         skb_out = nlmsg_new(slot_len, 0);
@@ -1708,7 +1716,6 @@ send_diag_netlink_data(const u_int8_t *buffer,
         if (res < 0) {
             AR_DEBUG_PRINTF(ATH_DEBUG_INFO,
                             ("nl_srv_ucast failed 0x%x \n", res));
-            cnss_diag_pid = INVALID_PID;
             return res;
         }
     }
@@ -1729,7 +1736,13 @@ dbglog_process_netlink_data(wmi_unified_t wmi_handle, const u_int8_t *buffer,
     if (WARN_ON(len > ATH6KL_FWLOG_PAYLOAD_SIZE))
         return -ENODEV;
 
-    if (cnss_diag_pid != INVALID_PID)
+    /* NL is not ready yet, WLAN KO started first */
+    if ((kd_nl_init) && (!cnss_diag_pid))
+    {
+        nl_srv_nl_ready_indication();
+    }
+
+    if (cnss_diag_pid)
     {
         slot_len = sizeof(*slot) + ATH6KL_FWLOG_PAYLOAD_SIZE;
 
@@ -1754,7 +1767,6 @@ dbglog_process_netlink_data(wmi_unified_t wmi_handle, const u_int8_t *buffer,
         {
             AR_DEBUG_PRINTF(ATH_DEBUG_INFO,
                             ("nl_srv_ucast failed 0x%x \n", res));
-            cnss_diag_pid = INVALID_PID;
             return res;
         }
     }
@@ -4008,17 +4020,7 @@ int cnss_diag_msg_callback(struct sk_buff *skb)
        slot = (struct dbglog_slot *)msg;
     switch (slot->diag_type) {
     case DIAG_TYPE_CRASH_INJECT:
-        if (slot->length == 2) {
-            AR_DEBUG_PRINTF(ATH_DEBUG_INFO,
-                           ("%s : DIAG_TYPE_CRASH_INJECT: %d %d\n", __func__,
-                           slot->payload[0], slot->payload[1]));
-            process_wma_set_command_twoargs(0,
-                                           (int)GEN_PARAM_CRASH_INJECT,
-                                           slot->payload[0],
-                                           slot->payload[1], GEN_CMD);
-        }
-        else
-            AR_DEBUG_PRINTF(ATH_DEBUG_ERR, ("crash_inject cmd error\n"));
+         process_wma_set_command(0,(int)GEN_PARAM_CRASH_INJECT, 0, GEN_CMD);
     break;
     default:
     break;
@@ -4042,6 +4044,7 @@ int cnss_diag_notify_wlan_close()
     if (0 != cnss_diag_pid)
     {
         cnss_diag_send_driver_unloaded();
+        nl_srv_nl_close_indication(cnss_diag_pid);
         cnss_diag_pid = 0;
     }
     return 0;

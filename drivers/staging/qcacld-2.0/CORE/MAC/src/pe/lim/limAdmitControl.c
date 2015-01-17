@@ -949,7 +949,6 @@ limSendHalMsgAddTs(
     pAddTsParam->tspecIdx = tspecIdx;
     vos_mem_copy(&pAddTsParam->tspec, &tspecIE, sizeof(tSirMacTspecIE));
     pAddTsParam->sessionId = sessionId;
-    pAddTsParam->sme_session_id = psessionEntry->smeSessionId;
 
 #ifdef FEATURE_WLAN_ESE
     pAddTsParam->tsm_interval = tsm_interval;
@@ -1030,8 +1029,7 @@ limSendHalMsgDelTs(
      goto err;
   }
   pDelTsParam->sessionId = psessionEntry->smeSessionId;
-  pDelTsParam->userPrio = delts.wmeTspecPresent?
-      delts.tspec.tsinfo.traffic.userPrio: delts.tsinfo.traffic.userPrio;
+  pDelTsParam->userPrio = delts.tsinfo.traffic.userPrio;
 
 #ifdef WLAN_FEATURE_ROAM_OFFLOAD
   if (pMac->roam.configParam.isRoamOffloadEnabled &&

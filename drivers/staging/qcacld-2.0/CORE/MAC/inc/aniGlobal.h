@@ -846,8 +846,6 @@ tLimMlmOemDataRsp       *gpLimMlmOemDataRsp;
     tANI_U8 fOffloadScanPending; /*Flag to track offload scan */
     tANI_U8 fOffloadScanP2PSearch; /*Flag to track the p2p search */
     tANI_U8 fOffloadScanP2PListen; /*Flag to track the p2p listen */
-    /*Filter out P2P result if not P2P scan/listen */
-    tANI_U8 offload_scan_filter_p2p_result;
     tANI_U8 probeCounter;
     tANI_U8 maxProbe;
 } tAniSirLim, *tpAniSirLim;
@@ -1041,14 +1039,6 @@ typedef struct sAniSirGlobal
     csrReadyToExtWoWCallback readyToExtWoWCallback;
     void *readyToExtWoWContext;
 #endif
-
-#ifdef SAP_AUTH_OFFLOAD
-    bool sap_auth_offload;
-    uint32_t sap_auth_offload_sec_type;
-#endif /* SAP_AUTH_OFFLOAD */
-
-    /* 802.11p enable */
-    bool enable_dot11p;
 } tAniSirGlobal;
 
 typedef enum

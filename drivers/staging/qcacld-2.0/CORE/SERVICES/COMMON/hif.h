@@ -406,11 +406,7 @@ typedef int ( *HIF_MASK_UNMASK_RECV_EVENT)(HIF_DEVICE  *device,
                                                 bool    Mask,
                                                 void   *AsyncContext);
 
-#ifdef HIF_MBOX_SLEEP_WAR
-/* This API is used to update the target sleep state */
-void
-HIFSetMboxSleep(HIF_DEVICE *device, bool sleep, bool wait, bool cache);
-#endif
+
 /*
  * This API is used to perform any global initialization of the HIF layer
  * and to set OS driver callbacks (i.e. insertion/removal) to the HIF layer
@@ -429,14 +425,6 @@ void HIFReleaseDevice(HIF_DEVICE *device);
 int HIFAttachHTC(HIF_DEVICE *device, HTC_CALLBACKS *callbacks);
 /* This API detaches the HTC layer from the HIF device */
 void     HIFDetachHTC(HIF_DEVICE *device);
-
-A_STATUS
-HIFSyncRead(HIF_DEVICE *device,
-               A_UINT32 address,
-               A_UCHAR *buffer,
-               A_UINT32 length,
-               A_UINT32 request,
-               void *context);
 
 /*
  * This API is used to provide the read/write interface over the specific bus
@@ -826,14 +814,8 @@ void HIFIpaGetCEResource(HIF_DEVICE *hif_device,
 #endif /* IPA_UC_OFFLOAD */
 
 void HIFSetMailboxSwap(HIF_DEVICE  *device);
-
-/* runtime power management API of HIF to prevent suspending */
-int hif_pm_runtime_get(void);
-int hif_pm_runtime_put(void);
 #ifdef __cplusplus
 }
 #endif
-
-A_BOOL HIFIsMailBoxSwapped(HIF_DEVICE *hd);
 
 #endif /* _HIF_H_ */

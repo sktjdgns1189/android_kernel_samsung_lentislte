@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013-2015 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2014 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -226,46 +226,20 @@ bool hif_max_num_receives_reached(unsigned int count)
         return (count > MAX_NUM_OF_RECEIVES);
 }
 
-int hif_init_adf_ctx(void *ol_sc)
+void hif_init_adf_ctx(adf_os_device_t adf_dev, void *ol_sc)
 {
-    v_CONTEXT_t pVosContext = NULL;
-    adf_os_device_t adf_ctx;
-    struct ol_softc *sc = (struct ol_softc *)ol_sc;
-    struct hif_pci_softc *hif_sc = sc->hif_sc;
-
-    pVosContext = vos_get_global_context(VOS_MODULE_ID_SYS, NULL);
-
-    if(pVosContext == NULL) {
-       return -EFAULT;
-    }
-    adf_ctx = vos_mem_malloc(sizeof(*adf_ctx));
-    if (!adf_ctx) {
-        return -ENOMEM;
-    }
-    vos_mem_zero(adf_ctx, sizeof(*adf_ctx));
-    adf_ctx->drv = &hif_sc->aps_osdev;
-    adf_ctx->drv_hdl = hif_sc->aps_osdev.bdev;
-    adf_ctx->dev = hif_sc->aps_osdev.device;
-    sc->adf_dev = adf_ctx;
-    ((VosContextType*)(pVosContext))->adf_ctx = adf_ctx;
-    return 0;
+	struct ol_softc *sc = (struct ol_softc *)ol_sc;
+	struct hif_pci_softc *hif_sc = sc->hif_sc;
+	adf_dev->drv = &hif_sc->aps_osdev;
+	adf_dev->drv_hdl = hif_sc->aps_osdev.bdev;
+	adf_dev->dev = hif_sc->aps_osdev.device;
+	sc->adf_dev = adf_dev;
 }
 
 void hif_deinit_adf_ctx(void *ol_sc)
 {
-    struct ol_softc *sc = (struct ol_softc *)ol_sc;
-
-    if (sc == NULL)
-        return;
-    if (sc->adf_dev) {
-        v_CONTEXT_t pVosContext = NULL;
-
-        pVosContext = vos_get_global_context(VOS_MODULE_ID_SYS, NULL);
-        vos_mem_free(sc->adf_dev);
-        sc->adf_dev = NULL;
-        if (pVosContext)
-            ((VosContextType*)(pVosContext))->adf_ctx = NULL;
-    }
+	struct ol_softc *sc = (struct ol_softc *)ol_sc;
+	sc->adf_dev = NULL;
 }
 
 #define A_PCIE_LOCAL_REG_READ(mem, addr) \
@@ -961,11 +935,16 @@ again:
 
 #ifdef CONFIG_CNSS
     /* Get RAM dump memory address and size */
-    ol_sc->ramdump_base = cnss_get_virt_ramdump_mem(&ol_sc->ramdump_size);
-
-    if (ol_sc->ramdump_base == NULL || !ol_sc->ramdump_size) {
+    if (!cnss_get_ramdump_mem(&ol_sc->ramdump_address, &ol_sc->ramdump_size)) {
+        ol_sc->ramdump_base = ioremap(ol_sc->ramdump_address,
+            ol_sc->ramdump_size);
+        if (!ol_sc->ramdump_base) {
+            pr_err("%s: Cannot map ramdump_address 0x%lx!\n",
+                __func__, ol_sc->ramdump_address);
+        }
+    } else {
         pr_info("%s: Failed to get RAM dump memory address or size!\n",
-                __func__);
+            __func__);
     }
 #endif
 
@@ -975,15 +954,10 @@ again:
     adf_os_atomic_init(&sc->pci_link_suspended);
     init_waitqueue_head(&ol_sc->sc_osdev->event_queue);
 
-    ret = hif_init_adf_ctx(ol_sc);
-    if (ret == 0) {
-        sc->hdd_startup_reinit_flag = true;
-        ret = hdd_wlan_startup(&pdev->dev, ol_sc);
-        sc->hdd_startup_reinit_flag = false;
-    }
+    ret = hdd_wlan_startup(&pdev->dev, ol_sc);
 
     if (ret) {
-        hif_disable_isr(ol_sc);
+        hif_nointrs(sc);
         HIFShutDownDevice(ol_sc->hif_hdl);
         goto err_config;
     }
@@ -1008,7 +982,6 @@ again:
     return 0;
 
 err_config:
-    hif_deinit_adf_ctx(ol_sc);
     A_FREE(ol_sc);
 err_attach:
     ret = -EIO;
@@ -1302,11 +1275,16 @@ again:
 
 #ifdef CONFIG_CNSS
     /* Get RAM dump memory address and size */
-    ol_sc->ramdump_base = cnss_get_virt_ramdump_mem(&ol_sc->ramdump_size);
-
-    if (ol_sc->ramdump_base == NULL || !ol_sc->ramdump_size) {
+    if (!cnss_get_ramdump_mem(&ol_sc->ramdump_address, &ol_sc->ramdump_size)) {
+        ol_sc->ramdump_base = ioremap(ol_sc->ramdump_address,
+            ol_sc->ramdump_size);
+        if (!ol_sc->ramdump_base) {
+            pr_err("%s: Cannot map ramdump_address 0x%lx!\n",
+                __func__, ol_sc->ramdump_address);
+        }
+    } else {
         pr_info("%s: Failed to get RAM dump memory address or size!\n",
-                __func__);
+            __func__);
     }
 #endif
 
@@ -1317,20 +1295,15 @@ again:
 
     init_waitqueue_head(&ol_sc->sc_osdev->event_queue);
 
-    ret = hif_init_adf_ctx(ol_sc);
-    if (ret == 0) {
-        sc->hdd_startup_reinit_flag = true;
-        if (VOS_STATUS_SUCCESS == hdd_wlan_re_init(ol_sc))
-            ret = 0;
-        sc->hdd_startup_reinit_flag = false;
+    if (VOS_STATUS_SUCCESS == hdd_wlan_re_init(ol_sc)) {
+        ret = 0;
     }
 
     /* Re-enable ASPM after firmware/OTP download is complete */
     pci_write_config_dword(pdev, 0x80, lcr_val);
 
     if (ret) {
-        hif_disable_isr(ol_sc);
-        HIFShutDownDevice(ol_sc->hif_hdl);
+        hif_nointrs(sc);
         goto err_config;
     }
 
@@ -1352,7 +1325,6 @@ again:
     return 0;
 
 err_config:
-    hif_deinit_adf_ctx(ol_sc);
     A_FREE(ol_sc);
 err_attach:
     ret = -EIO;
@@ -1409,15 +1381,6 @@ hif_nointrs(struct hif_pci_softc *sc)
 {
     int i;
 
-    if (sc->hdd_startup_reinit_flag) {
-        pr_err("%s: WARN: In HDD startup or reinit\n", __func__);
-        return;
-    }
-
-    if (!sc->pdev) {
-        pr_err("%s: pdev is NULL\n", __func__);
-        return;
-    }
     if (sc->num_msi_intrs > 0) {
         /* MSI interrupt(s) */
         for (i = 0; i < sc->num_msi_intrs; i++) {
@@ -1671,7 +1634,11 @@ hif_pci_remove(struct pci_dev *pdev)
 
     pci_disable_msi(pdev);
 
-    hif_deinit_adf_ctx(scn);
+#ifdef CONFIG_CNSS
+    if (scn->ramdump_base)
+        iounmap(scn->ramdump_base);
+#endif
+
     A_FREE(scn);
     A_FREE(sc->hif_device);
     A_FREE(sc);
@@ -1726,7 +1693,11 @@ void hif_pci_shutdown(struct pci_dev *pdev)
 
     pci_disable_msi(pdev);
 
-    hif_deinit_adf_ctx(scn);
+#ifdef CONFIG_CNSS
+    if (scn->ramdump_base)
+        iounmap(scn->ramdump_base);
+#endif
+
     A_FREE(scn);
     A_FREE(sc->hif_device);
     A_FREE(sc);
@@ -2148,11 +2119,7 @@ void hif_disable_isr(void *ol_sc)
 	struct ol_softc *sc = (struct ol_softc *)ol_sc;
 	struct hif_pci_softc *hif_sc = sc->hif_sc;
 	struct ol_softc *scn;
-	if (hif_sc->hdd_startup_reinit_flag) {
-		pr_err("%s: WARN: in HDD starrtup or reinit function\n",
-			__func__);
-		return;
-	}
+
 	scn = hif_sc->ol_sc;
 	hif_nointrs(hif_sc);
 #if CONFIG_PCIE_64BIT_MSI
@@ -2229,16 +2196,6 @@ void hif_get_hw_info(void *ol_sc, u32 *version, u32 *revision)
 void hif_set_fw_info(void *ol_sc, u32 target_fw_version)
 {
     ((struct ol_softc *)ol_sc)->target_fw_version = target_fw_version;
-}
-
-int hif_pm_runtime_get(void)
-{
-    return 0;
-}
-
-int hif_pm_runtime_put(void)
-{
-    return 0;
 }
 
 #ifdef IPA_UC_OFFLOAD

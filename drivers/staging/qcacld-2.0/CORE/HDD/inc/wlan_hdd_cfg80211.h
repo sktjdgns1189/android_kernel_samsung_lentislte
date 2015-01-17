@@ -174,22 +174,6 @@ enum qca_nl80211_vendor_subcmds {
 
     /* Get Concurrency Matrix */
     QCA_NL80211_VENDOR_SUBCMD_GET_CONCURRENCY_MATRIX = 42,
-
-    /* Get the security keys for key management offload */
-    QCA_NL80211_VENDOR_SUBCMD_KEY_MGMT_SET_KEY = 50,
-
-    /* Send the roaming and authentication info after roaming */
-    QCA_NL80211_VENDOR_SUBCMD_KEY_MGMT_ROAM_AUTH = 51,
-
-    QCA_NL80211_VENDOR_SUBCMD_APFIND = 52,
-
-    /* OCB Set Schedule */
-    QCA_NL80211_VENDOR_SUBCMD_OCB_SET_SCHED = 53,
-
-    QCA_NL80211_VENDOR_SUBCMD_DO_ACS = 54,
-
-    /* Get the supported features by the driver */
-    QCA_NL80211_VENDOR_SUBCMD_GET_FEATURES = 55,
 };
 
 enum qca_nl80211_vendor_subcmds_index {
@@ -231,11 +215,6 @@ enum qca_nl80211_vendor_subcmds_index {
 #endif /* WLAN_FEATURE_LINK_LAYER_STATS */
     /* EXT TDLS */
     QCA_NL80211_VENDOR_SUBCMD_TDLS_STATE_CHANGE_INDEX,
-    /* ACS OBSS Coex*/
-    QCA_NL80211_VENDOR_SUBCMD_DO_ACS_INDEX,
-#ifdef WLAN_FEATURE_ROAM_OFFLOAD
-    QCA_NL80211_VENDOR_SUBCMD_KEY_MGMT_ROAM_AUTH_INDEX,
-#endif
 };
 
 /* EXT TDLS */
@@ -299,8 +278,6 @@ enum qca_wlan_vendor_attr {
     /* used by QCA_NL80211_VENDOR_SUBCMD_STATS_EXT */
     QCA_WLAN_VENDOR_ATTR_STATS_EXT = 3,
     QCA_WLAN_VENDOR_ATTR_IFINDEX = 4,
-    /* used by QCA_NL80211_VENDOR_SUBCMD_GET_FEATURES */
-    QCA_WLAN_VENDOR_ATTR_FEATURE_FLAGS = 7,
     /* keep last */
     QCA_WLAN_VENDOR_ATTR_AFTER_LAST,
     QCA_WLAN_VENDOR_ATTR_MAX =
@@ -853,30 +830,6 @@ enum qca_wlan_vendor_attr_set_no_dfs_flag
     QCA_WLAN_VENDOR_ATTR_SET_NO_DFS_FLAG_AFTER_LAST - 1,
 };
 
-/**
- * enum qca_wlan_vendor_attr_roam_auth - vendor event for roaming
- * @QCA_WLAN_VENDOR_ATTR_ROAM_AUTH_BSSID: BSSID of the roamed AP
- * @QCA_WLAN_VENDOR_ATTR_ROAM_AUTH_REQ_IE: Request IE
- * @QCA_WLAN_VENDOR_ATTR_ROAM_AUTH_RESP_IE: Response IE
- * @QCA_WLAN_VENDOR_ATTR_ROAM_AUTH_AUTHORIZED: Authorization Status
- * @QCA_WLAN_VENDOR_ATTR_ROAM_AUTH_KEY_REPLAY_CTR: Replay Counter
- * @QCA_WLAN_VENDOR_ATTR_ROAM_AUTH_PTK_KCK: KCK of the PTK
- * @QCA_WLAN_VENDOR_ATTR_ROAM_AUTH_PTK_KEK: KEK of the PTK
- */
-enum qca_wlan_vendor_attr_roam_auth {
-	QCA_WLAN_VENDOR_ATTR_ROAM_AUTH_INVALID = 0,
-	QCA_WLAN_VENDOR_ATTR_ROAM_AUTH_BSSID,
-	QCA_WLAN_VENDOR_ATTR_ROAM_AUTH_REQ_IE,
-	QCA_WLAN_VENDOR_ATTR_ROAM_AUTH_RESP_IE,
-	QCA_WLAN_VENDOR_ATTR_ROAM_AUTH_AUTHORIZED,
-	QCA_WLAN_VENDOR_ATTR_ROAM_AUTH_KEY_REPLAY_CTR,
-	QCA_WLAN_VENDOR_ATTR_ROAM_AUTH_PTK_KCK,
-	QCA_WLAN_VENDOR_ATTR_ROAM_AUTH_PTK_KEK,
-	QCA_WLAN_VENDOR_ATTR_ROAM_AUTH_AFTER_LAST,
-	QCA_WLAN_VENDOR_ATTR_ROAM_AUTH_MAX =
-		QCA_WLAN_VENDOR_ATTR_ROAM_AUTH_AFTER_LAST - 1
-};
-
 /* NL attributes for data used by
  * QCA_NL80211_VENDOR_SUBCMD_GET_CONCURRENCY_MATRIX sub command.
  */
@@ -894,55 +847,6 @@ enum qca_wlan_vendor_attr_get_concurrency_matrix {
     QCA_WLAN_VENDOR_ATTR_GET_CONCURRENCY_MATRIX_AFTER_LAST,
     QCA_WLAN_VENDOR_ATTR_GET_CONCURRENCY_MATRIX_MAX =
         QCA_WLAN_VENDOR_ATTR_GET_CONCURRENCY_MATRIX_AFTER_LAST - 1,
-};
-
-/* OCB Commands */
-enum qca_wlan_vendor_attr_ocb_set_sched
-{
-    QCA_WLAN_VENDOR_ATTR_OCB_SET_SCHED_INVALID = 0,
-
-    /* Number of channels in schedule */
-    QCA_WLAN_VENDOR_ATTR_OCB_SET_SCHED_NUM_CHANS,
-
-    /* Attribute for nested array of channel attributes */
-    QCA_WLAN_VENDOR_ATTR_OCB_SET_SCHED_CHAN,
-
-    /* Attributes for each channel */
-    QCA_WLAN_VENDOR_ATTR_OCB_SET_SCHED_CHAN_IDX,
-    QCA_WLAN_VENDOR_ATTR_OCB_SET_SCHED_CHAN_FREQ,
-    QCA_WLAN_VENDOR_ATTR_OCB_SET_SCHED_CHAN_TX_PWR,
-    QCA_WLAN_VENDOR_ATTR_OCB_SET_SCHED_CHAN_TX_RATE,
-    QCA_WLAN_VENDOR_ATTR_OCB_SET_SCHED_CHAN_DUR,
-    QCA_WLAN_VENDOR_ATTR_OCB_SET_SCHED_CHAN_START_GUARD_INT,
-    QCA_WLAN_VENDOR_ATTR_OCB_SET_SCHED_CHAN_END_GUARD_INT,
-    QCA_WLAN_VENDOR_ATTR_OCB_SET_SCHED_CHAN_NUM_QOS,
-
-    /* Attribute for nested array of QoS params*/
-    QCA_WLAN_VENDOR_ATTR_OCB_SET_SCHED_CHAN_QOS_PARAM,
-
-    /* Attributes for each QoS Access Category */
-    QCA_WLAN_VENDOR_ATTR_OCB_SET_SCHED_CHAN_QOS_PARAM_AC,
-    QCA_WLAN_VENDOR_ATTR_OCB_SET_SCHED_CHAN_QOS_PARAM_AIFSN,
-    QCA_WLAN_VENDOR_ATTR_OCB_SET_SCHED_CHAN_QOS_PARAM_CWMIN,
-    QCA_WLAN_VENDOR_ATTR_OCB_SET_SCHED_CHAN_QOS_PARAM_CWMAX,
-
-    /* keep last */
-    QCA_WLAN_VENDOR_ATTR_OCB_SET_SCHED_AFTER_LAST,
-    QCA_WLAN_VENDOR_ATTR_OCB_SET_SCHED_MAX =
-        QCA_WLAN_VENDOR_ATTR_OCB_SET_SCHED_AFTER_LAST - 1,
-};
-
-/**
- * enum qca_wlan_vendor_features - vendor device/driver features
- * @QCA_WLAN_VENDOR_FEATURE_KEY_MGMT_OFFLOAD: Device supports key
- * management offload, a mechanism where the station's firmware
- * does the exchange with the AP to establish the temporal keys
- * after roaming, rather than having the supplicant do it.
- */
-enum qca_wlan_vendor_features {
-	QCA_WLAN_VENDOR_FEATURE_KEY_MGMT_OFFLOAD = 0,
-	/* Additional features need to be added above this */
-        NUM_QCA_WLAN_VENDOR_FEATURES
 };
 
 /* Feature defines */
@@ -983,26 +887,6 @@ typedef struct sHddAvoidFreqList
    tHddAvoidFreqRange avoidFreqRange[HDD_MAX_AVOID_FREQ_RANGES];
 } tHddAvoidFreqList;
 #endif /* FEATURE_WLAN_CH_AVOID || FEATURE_WLAN_FORCE_SAP_SCC */
-
-enum qca_wlan_vendor_attr_acs_offload {
-       QCA_WLAN_VENDOR_ATTR_ACS_CHANNEL_INVALID = 0,
-       QCA_WLAN_VENDOR_ATTR_ACS_PRIMARY_CHANNEL,
-       QCA_WLAN_VENDOR_ATTR_ACS_SECONDARY_CHANNEL,
-       QCA_WLAN_VENDOR_ATTR_ACS_HW_MODE,
-       QCA_WLAN_VENDOR_ATTR_ACS_HT_ENABLED,
-       QCA_WLAN_VENDOR_ATTR_ACS_HT40_ENABLED,
-       /* keep last */
-       QCA_WLAN_VENDOR_ATTR_ACS_AFTER_LAST,
-       QCA_WLAN_VENDOR_ATTR_ACS_MAX =
-       QCA_WLAN_VENDOR_ATTR_ACS_AFTER_LAST - 1
-};
-
-enum qca_wlan_vendor_acs_hw_mode {
-        QCA_ACS_MODE_IEEE80211B,
-        QCA_ACS_MODE_IEEE80211G,
-        QCA_ACS_MODE_IEEE80211A,
-        QCA_ACS_MODE_IEEE80211AD,
-};
 
 struct cfg80211_bss* wlan_hdd_cfg80211_update_bss_db( hdd_adapter_t *pAdapter,
                                       tCsrRoamInfo *pRoamInfo
@@ -1068,18 +952,12 @@ extern void wlan_hdd_cfg80211_update_replayCounterCallback(void *callbackContext
                             tpSirGtkOffloadGetInfoRspParams pGtkOffloadGetInfoRsp);
 #endif
 void* wlan_hdd_change_country_code_cb(void *pAdapter);
-void hdd_select_cbmode(hdd_adapter_t *pAdapter, v_U8_t operationChannel);
+void hdd_select_cbmode( hdd_adapter_t *pAdapter,v_U8_t operationChannel);
 
 v_U8_t* wlan_hdd_cfg80211_get_ie_ptr(v_U8_t *pIes, int length, v_U8_t eid);
 
-#ifdef CFG80211_DEL_STA_V2
 int wlan_hdd_cfg80211_del_station(struct wiphy *wiphy,
-                                  struct net_device *dev,
-                                  struct station_del_parameters *param);
-#else
-int wlan_hdd_cfg80211_del_station(struct wiphy *wiphy,
-                                  struct net_device *dev, u8 *mac);
-#endif
+                                         struct net_device *dev, u8 *mac);
 
 #if  defined(QCA_WIFI_FTM)     && defined(CONFIG_NL80211_TESTMODE)
 void wlan_hdd_testmode_rx_event(void *buf, size_t buf_len);
@@ -1088,10 +966,6 @@ void wlan_hdd_testmode_rx_event(void *buf, size_t buf_len);
 void hdd_suspend_wlan(void (*callback)(void *callbackContext, boolean suspended),
                       void *callbackContext);
 void hdd_resume_wlan(void);
-#ifdef FEATURE_BUS_AUTO_SUSPEND
-void hdd_auto_suspend_wlan(csrReadyToSuspendCallback ready_to_suspend_cb,
-               void *cb_context, void (auto_resumed_cb)(void *cb_parameter));
-#endif
 
 #if defined(FEATURE_WLAN_CH_AVOID) || defined(FEATURE_WLAN_FORCE_SAP_SCC)
 int wlan_hdd_send_avoid_freq_event(hdd_context_t *pHddCtx,
@@ -1110,12 +984,4 @@ struct cfg80211_bss* wlan_hdd_cfg80211_update_bss_list(
 int wlan_hdd_cfg80211_suspend_wlan(struct wiphy *wiphy,
                                    struct cfg80211_wowlan *wow);
 
-void wlan_hdd_cfg80211_acs_ch_select_evt(hdd_context_t *pHddCtx,
-                                        v_U8_t priChannel, v_U8_t secChannel);
-#ifdef WLAN_FEATURE_ROAM_OFFLOAD
-int wlan_hdd_send_roam_auth_event(hdd_context_t *hdd_ctx_ptr, uint8_t *bssid,
-		uint8_t *req_rsn_ie, uint32_t req_rsn_length,
-		uint8_t *rsp_rsn_ie, uint32_t rsp_rsn_length,
-		tCsrRoamInfo *roam_info_ptr);
-#endif
 #endif

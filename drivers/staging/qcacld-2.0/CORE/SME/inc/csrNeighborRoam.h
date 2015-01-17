@@ -76,7 +76,6 @@ typedef struct sCsrNeighborRoamCfgParams
     tANI_U8         nRoamBmissFirstBcnt;
     tANI_U8         nRoamBmissFinalBcnt;
     tANI_U8         nRoamBeaconRssiWeight;
-    tANI_U8         delay_before_vdev_stop;
 } tCsrNeighborRoamCfgParams, *tpCsrNeighborRoamCfgParams;
 
 #define CSR_NEIGHBOR_ROAM_INVALID_CHANNEL_INDEX    255

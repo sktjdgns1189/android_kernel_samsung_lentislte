@@ -239,7 +239,6 @@ limProcessAssocReqFrame(tpAniSirGlobal pMac, tANI_U8 *pRxPacketInfo,
     tHalBitVal qosMode;
     tHalBitVal wsmMode, wmeMode;
     tANI_U8    *wpsIe = NULL;
-    tANI_U8    *ht_cap_ie = NULL;
     tSirMacRateSet  basicRates;
     tANI_U8 i = 0, j = 0;
     tANI_BOOLEAN pmfConnection = eANI_BOOLEAN_FALSE;
@@ -259,15 +258,15 @@ limProcessAssocReqFrame(tpAniSirGlobal pMac, tANI_U8 *pRxPacketInfo,
    limLog(pMac, LOG1, FL("Received %s Req Frame on sessionid: %d systemrole %d"
           " limMlmState %d from: "MAC_ADDRESS_STR),
           (LIM_ASSOC == subType) ? "Assoc" : "ReAssoc",
-          psessionEntry->peSessionId, GET_LIM_SYSTEM_ROLE(psessionEntry),
+          psessionEntry->peSessionId, psessionEntry->limSystemRole,
           psessionEntry->limMlmState, MAC_ADDR_ARRAY(pHdr->sa));
 
-   if (LIM_IS_STA_ROLE(psessionEntry) ||
-       LIM_IS_BT_AMP_STA_ROLE(psessionEntry)) {
+   if (psessionEntry->limSystemRole == eLIM_STA_ROLE || psessionEntry->limSystemRole == eLIM_BT_AMP_STA_ROLE )
+   {
         limLog(pMac, LOGE, FL("received unexpected ASSOC REQ on sessionid: %d "
               "sys subType=%d for role=%d from: "MAC_ADDRESS_STR),
               psessionEntry->peSessionId,
-              subType, GET_LIM_SYSTEM_ROLE(psessionEntry), MAC_ADDR_ARRAY(pHdr->sa));
+              subType, psessionEntry->limSystemRole, MAC_ADDR_ARRAY(pHdr->sa));
         sirDumpBuf(pMac, SIR_LIM_MODULE_ID, LOG3,
         WDA_GET_RX_MPDU_DATA(pRxPacketInfo), framelen);
         return;
@@ -290,7 +289,7 @@ limProcessAssocReqFrame(tpAniSirGlobal pMac, tANI_U8 *pRxPacketInfo,
            FL("STA is initiating Assoc Req after ACK lost.So, do not Process"
            "sessionid: %d sys subType=%d for role=%d from: "MAC_ADDRESS_STR),
            psessionEntry->peSessionId,
-           subType, GET_LIM_SYSTEM_ROLE(psessionEntry), MAC_ADDR_ARRAY(pHdr->sa));
+           subType, psessionEntry->limSystemRole, MAC_ADDR_ARRAY(pHdr->sa));
 
         return;
     }
@@ -328,7 +327,8 @@ limProcessAssocReqFrame(tpAniSirGlobal pMac, tANI_U8 *pRxPacketInfo,
     }
 
     // If TKIP counter measures active send Assoc Rsp frame to station with eSIR_MAC_MIC_FAILURE_REASON
-    if ((psessionEntry->bTkipCntrMeasActive) && LIM_IS_AP_ROLE(psessionEntry)) {
+    if ((psessionEntry->bTkipCntrMeasActive) && (psessionEntry->limSystemRole == eLIM_AP_ROLE))
+    {
         limLog(pMac, LOGE, FL("TKIP counter measure is active"));
         limSendAssocRspMgmtFrame(pMac,
                                     eSIR_MAC_MIC_FAILURE_REASON,
@@ -469,9 +469,10 @@ limProcessAssocReqFrame(tpAniSirGlobal pMac, tANI_U8 *pRxPacketInfo,
     }
 
 
-    if (LIM_IS_AP_ROLE(psessionEntry) &&
+    if((psessionEntry->limSystemRole == eLIM_AP_ROLE ) &&
        (psessionEntry->dot11mode == WNI_CFG_DOT11_MODE_11G_ONLY) &&
-       (pAssocReq->HTCaps.present)) {
+       ((!pAssocReq->extendedRatesPresent ) || (pAssocReq->HTCaps.present)))
+    {
         limLog(pMac, LOGE, FL("SOFTAP was in 11G only mode, rejecting legacy "
                               "STA : "MAC_ADDRESS_STR),MAC_ADDR_ARRAY(pHdr->sa));
         limSendAssocRspMgmtFrame( pMac, eSIR_MAC_CAPABILITIES_NOT_SUPPORTED_STATUS,
@@ -480,9 +481,10 @@ limProcessAssocReqFrame(tpAniSirGlobal pMac, tANI_U8 *pRxPacketInfo,
 
     }//end if phyMode == 11G_only
 
-    if (LIM_IS_AP_ROLE(psessionEntry) &&
+    if((psessionEntry->limSystemRole == eLIM_AP_ROLE) &&
        (psessionEntry->dot11mode == WNI_CFG_DOT11_MODE_11N_ONLY) &&
-       (!pAssocReq->HTCaps.present)) {
+       (!pAssocReq->HTCaps.present))
+    {
         limLog(pMac, LOGE, FL("SOFTAP was in 11N only mode, rejecting legacy "
                               "STA : "MAC_ADDRESS_STR),MAC_ADDR_ARRAY(pHdr->sa));
         limSendAssocRspMgmtFrame( pMac, eSIR_MAC_CAPABILITIES_NOT_SUPPORTED_STATUS,
@@ -490,9 +492,10 @@ limProcessAssocReqFrame(tpAniSirGlobal pMac, tANI_U8 *pRxPacketInfo,
         goto error;
     }//end if PhyMode == 11N_only
 
-    if (LIM_IS_AP_ROLE(psessionEntry) &&
+    if((psessionEntry->limSystemRole == eLIM_AP_ROLE) &&
        (psessionEntry->dot11mode == WNI_CFG_DOT11_MODE_11AC_ONLY) &&
-       (!pAssocReq->VHTCaps.present)) {
+       (!pAssocReq->VHTCaps.present))
+    {
         limSendAssocRspMgmtFrame( pMac, eSIR_MAC_CAPABILITIES_NOT_SUPPORTED_STATUS,
                                   1, pHdr->sa, subType, 0, psessionEntry );
         limLog(pMac, LOGE, FL("SOFTAP was in 11AC only mode, reject"));
@@ -675,9 +678,10 @@ limProcessAssocReqFrame(tpAniSirGlobal pMac, tANI_U8 *pRxPacketInfo,
     if( wpsIe == NULL )
     {
         /** check whether as RSN IE is present */
-        if (LIM_IS_AP_ROLE(psessionEntry) &&
-            psessionEntry->pLimStartBssReq->privacy &&
-            psessionEntry->pLimStartBssReq->rsnIE.length) {
+        if(psessionEntry->limSystemRole == eLIM_AP_ROLE
+            && psessionEntry->pLimStartBssReq->privacy
+            && psessionEntry->pLimStartBssReq->rsnIE.length)
+        {
             limLog(pMac, LOGE,
                    FL("RSN enabled auth, Re/Assoc req from STA: "MAC_ADDRESS_STR),
                        MAC_ADDR_ARRAY(pHdr->sa));
@@ -1155,39 +1159,8 @@ sendIndToSme:
         pStaDs->htMaxAmsduLength = (tANI_U8)pAssocReq->HTCaps.maximalAMSDUsize;
         pStaDs->htMaxRxAMpduFactor = pAssocReq->HTCaps.maxRxAMPDUFactor;
         pStaDs->htMIMOPSState = pAssocReq->HTCaps.mimoPowerSave;
-
-        /* pAssocReq will be copied to psessionEntry->parsedAssocReq later */
-        ht_cap_ie = ((tANI_U8 *) &pAssocReq->HTCaps) + 1;
-
-        /* check whether AP is enabled with shortGI */
-        if (wlan_cfgGetInt(pMac, WNI_CFG_SHORT_GI_20MHZ, &val) !=
-                           eSIR_SUCCESS) {
-           PELOGE(limLog(pMac, LOGE,
-                         FL("could not retrieve shortGI 20Mhz CFG"));)
-           goto error;
-        }
-        if (val) {
-            pStaDs->htShortGI20Mhz = (tANI_U8)pAssocReq->HTCaps.shortGI20MHz;
-        } else {
-            /* Unset htShortGI20Mhz in ht_caps*/
-            *ht_cap_ie &= ~(1 << SIR_MAC_HT_CAP_SHORTGI20MHZ_S);
-            pStaDs->htShortGI20Mhz = 0;
-        }
-
-        if (wlan_cfgGetInt(pMac, WNI_CFG_SHORT_GI_40MHZ, &val) !=
-                           eSIR_SUCCESS) {
-           PELOGE(limLog(pMac, LOGE,
-                         FL("could not retrieve shortGI 40Mhz CFG"));)
-           goto error;
-        }
-        if (val) {
-            pStaDs->htShortGI40Mhz = (tANI_U8)pAssocReq->HTCaps.shortGI40MHz;
-        } else {
-            /* Unset htShortGI40Mhz in ht_caps */
-            *ht_cap_ie &= ~(1 << SIR_MAC_HT_CAP_SHORTGI40MHZ_S);
-            pStaDs->htShortGI40Mhz = 0;
-        }
-
+        pStaDs->htShortGI20Mhz = (tANI_U8)pAssocReq->HTCaps.shortGI20MHz;
+        pStaDs->htShortGI40Mhz = (tANI_U8)pAssocReq->HTCaps.shortGI40MHz;
         pStaDs->htSupportedChannelWidthSet = (tANI_U8)pAssocReq->HTCaps.supportedChannelWidthSet;
         /* peer just follows AP; so when we are softAP/GO, we just store our session entry's secondary channel offset here in peer INFRA STA
          * However, if peer's 40MHz channel width support is disabled then secondary channel will be zero
@@ -1302,7 +1275,7 @@ if (limPopulateMatchingRateSet(pMac,
         if( pAssocReq->WMMInfoStation.present)
         {
             /* check whether AP supports or not */
-            if (LIM_IS_AP_ROLE(psessionEntry)
+            if ((psessionEntry->limSystemRole == eLIM_AP_ROLE)
                  && (psessionEntry->apUapsdEnable == 0) && (pAssocReq->WMMInfoStation.acbe_uapsd
                     || pAssocReq->WMMInfoStation.acbk_uapsd
                     || pAssocReq->WMMInfoStation.acvo_uapsd
@@ -1470,9 +1443,11 @@ if (limPopulateMatchingRateSet(pMac,
     }
 
     /* AddSta is sucess here */
-    if (LIM_IS_AP_ROLE(psessionEntry) &&
+    if((psessionEntry->limSystemRole == eLIM_AP_ROLE) &&
          IS_DOT11_MODE_HT(psessionEntry->dot11mode) &&
-       pAssocReq->HTCaps.present && pAssocReq->wmeInfoPresent) {
+       pAssocReq->HTCaps.present && pAssocReq->wmeInfoPresent)
+    {
+
         /** Update in the HAL Station Table for the Update of the Protection Mode */
         limPostSMStateUpdate(pMac,pStaDs->staIndex,
                     pStaDs->htMIMOPSState,
@@ -1495,10 +1470,8 @@ error:
 
     /* If it is not duplicate Assoc request then only make to Null */
     if ((pStaDs != NULL) &&
-          (pStaDs->mlmStaContext.mlmState != eLIM_MLM_WT_ADD_STA_RSP_STATE)) {
-            if (psessionEntry->parsedAssocReq != NULL)
-                psessionEntry->parsedAssocReq[pStaDs->assocId] = NULL;
-    }
+          (pStaDs->mlmStaContext.mlmState != eLIM_MLM_WT_ADD_STA_RSP_STATE))
+        psessionEntry->parsedAssocReq[pStaDs->assocId] = NULL;
 
     return;
 

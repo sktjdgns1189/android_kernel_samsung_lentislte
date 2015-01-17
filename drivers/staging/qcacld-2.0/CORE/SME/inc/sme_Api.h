@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2015 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2014 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -118,9 +118,6 @@ typedef struct _smeConfigParams
     tANI_U8       max_intf_count;
     tANI_BOOLEAN  enable5gEBT;
     tANI_BOOLEAN  enableSelfRecovery;
-#ifdef FEATURE_BUS_AUTO_SUSPEND
-    bool  enable_bus_auto_suspend;
-#endif
 } tSmeConfigParams, *tpSmeConfigParams;
 
 typedef enum
@@ -171,6 +168,10 @@ typedef struct _smeTdlsPeerStateParams
 
 #define ENABLE_CHANSWITCH  1
 #define DISABLE_CHANSWITCH 2
+#define BW_20              20
+#define BW_40              40
+#define BW_80              80
+#define BW_160             160
 #define BW_20_OFFSET_BIT   0
 #define BW_40_OFFSET_BIT   1
 #define BW_80_OFFSET_BIT   2
@@ -202,13 +203,6 @@ typedef struct {
     u_int8_t smeThermalMgmtEnabled;
     u_int32_t smeThrottlePeriod;
 } tSmeThermalParams;
-
-#ifdef WLAN_FEATURE_APFIND
-struct sme_ap_find_request_req{
-    u_int16_t request_data_len;
-    u_int8_t* request_data;
-};
-#endif /* WLAN_FEATURE_APFIND */
 
 /*-------------------------------------------------------------------------
   Function declarations and documentation
@@ -578,20 +572,6 @@ eHalStatus sme_ScanSetBGScanparams(tHalHandle hHal, tANI_U8 sessionId, tCsrBGSca
 eHalStatus sme_ScanGetResult(tHalHandle hHal, tANI_U8 sessionId, tCsrScanResultFilter *pFilter,
                             tScanResultHandle *phResult);
 
-VOS_STATUS sme_get_ap_channel_from_scan_cache(tHalHandle hHal,
-                                              tCsrRoamProfile *profile,
-                                              tScanResultHandle *scan_cache,
-                                              tANI_U8 *ap_chnl_id);
-bool sme_store_joinreq_param(tHalHandle hal_handle,
-                             tCsrRoamProfile *profile,
-                             tScanResultHandle scan_cache,
-                             uint32_t *roam_id,
-                             uint32_t session_id);
-bool sme_clear_joinreq_param(tHalHandle hal_handle,
-                             uint32_t session_id);
-VOS_STATUS sme_issue_stored_joinreq(tHalHandle hal_handle,
-                                    uint32_t *roam_id,
-                                    uint32_t session_id);
 
 /* ---------------------------------------------------------------------------
     \fn sme_ScanFlushResult
@@ -773,11 +753,11 @@ eHalStatus sme_RoamDisconnectSta(tHalHandle hHal, tANI_U8 sessionId, tANI_U8 *pP
     \brief To disassociate a station. This is an asynchronous API.
     \param hHal - Global structure
     \param sessionId - sessionId of SoftAP
-    \param pDelStaParams- Pointer to parameters of the station to deauthenticate
+    \param pPeerMacAddr - Caller allocated memory filled with peer MAC address (6 bytes)
     \return eHalStatus  SUCCESS  Roam callback will be called to indicate actual results
   -------------------------------------------------------------------------------*/
 eHalStatus sme_RoamDeauthSta(tHalHandle hHal, tANI_U8 sessionId,
-                             struct tagCsrDelStaParams *pDelStaParams);
+                                tANI_U8 *pPeerMacAddr);
 
 /* ---------------------------------------------------------------------------
     \fn sme_RoamTKIPCounterMeasures
@@ -1011,6 +991,14 @@ eHalStatus sme_GetSnr(tHalHandle hHal,
                        tCsrSnrCallback callback,
                        tANI_U8 staId, tCsrBssid bssId,
                        void *pContext);
+#if defined WLAN_FEATURE_VOWIFI_11R || defined FEATURE_WLAN_ESE || defined(FEATURE_WLAN_LFR)
+eHalStatus sme_GetRoamRssi(tHalHandle hHal,
+                           tCsrRssiCallback callback,
+                           tANI_U8 staId,
+                           tCsrBssid bssId,
+                           void *pContext,
+                           void* pVosContext);
+#endif
 
 #if defined(FEATURE_WLAN_ESE) && defined(FEATURE_WLAN_ESE_UPLOAD)
 /* ---------------------------------------------------------------------------
@@ -1951,6 +1939,21 @@ eHalStatus sme_RoamUpdateAPWPARSNIEs(tHalHandle hHal, tANI_U8 sessionId, tSirRSN
 eHalStatus sme_ChangeMCCBeaconInterval(tHalHandle hHal, tANI_U8 sessionId);
 
 
+
+/* ---------------------------------------------------------------------------
+  \fn sme_sendBTAmpEvent
+  \brief API to send the btAMPstate to FW
+  \param  hHal - The handle returned by macOpen.
+  \param  btAmpEvent -- btAMP event
+  \return eHalStatus  SUCCESS
+                         FAILURE or RESOURCES  The API finished and failed.
+
+--------------------------------------------------------------------------- */
+
+eHalStatus sme_sendBTAmpEvent(tHalHandle hHal, tSmeBtAmpEvent btAmpEvent);
+
+
+
 /* ---------------------------------------------------------------------------
     \fn sme_SetHostOffload
     \brief  API to set the host offload feature.
@@ -2253,6 +2256,15 @@ eHalStatus sme_GetCfgValidChannels(tHalHandle hHal, tANI_U8 *aValidChannels, tAN
     \return eHalStatus
   ---------------------------------------------------------------------------*/
 eHalStatus sme_SetPreferredNetworkList (tHalHandle hHal, tpSirPNOScanReq pRequest, tANI_U8 sessionId, preferredNetworkFoundIndCallback callbackRoutine, void *callbackContext );
+
+/* ---------------------------------------------------------------------------
+    \fn sme_SetRSSIFilter
+    \brief  API to set RSSI Filter feature.
+    \param  hHal - The handle returned by macOpen.
+    \param  pRequest -  Pointer to the offload request.
+    \return eHalStatus
+  ---------------------------------------------------------------------------*/
+eHalStatus sme_SetRSSIFilter(tHalHandle hHal, v_U8_t rssiThreshold);
 
 /******************************************************************************
 *
@@ -2902,19 +2914,6 @@ eHalStatus sme_setNeighborLookupRssiThreshold(tHalHandle hHal,
                                            v_U8_t neighborLookupRssiThreshold);
 
 /*--------------------------------------------------------------------------
-  \brief sme_set_delay_before_vdev_stop() - update delay before vdev stop
-  This is a synchronous call
-  \param hHal - The handle returned by macOpen.
-  \param  sessionId - Session identifier
-  \return eHAL_STATUS_SUCCESS - SME update config successful.
-          Other status means SME is failed to update
-  \sa
-  --------------------------------------------------------------------------*/
-eHalStatus sme_set_delay_before_vdev_stop(tHalHandle hHal,
-                                         tANI_U8 sessionId,
-                                         v_U8_t delay_before_vdev_stop);
-
-/*--------------------------------------------------------------------------
   \brief sme_setNeighborReassocRssiThreshold() - update neighbor reassoc rssi threshold
   This is a synchronous call
   \param hHal - The handle returned by macOpen.
@@ -3467,8 +3466,7 @@ eCsrPhyMode sme_GetPhyMode(tHalHandle hHal);
 /*
  * SME API to determine the channel bonding mode
  */
-VOS_STATUS sme_SelectCBMode(tHalHandle hHal, eCsrPhyMode eCsrPhyMode,
-                            tANI_U8 channel, tANI_U32 *vht_channel_width);
+VOS_STATUS sme_SelectCBMode(tHalHandle hHal, eCsrPhyMode eCsrPhyMode, tANI_U8 channel);
 
 #ifdef WLAN_FEATURE_ROAM_SCAN_OFFLOAD
 /*--------------------------------------------------------------------------
@@ -3716,9 +3714,8 @@ eHalStatus sme_set_auto_shutdown_cb(tHalHandle hHal,
 eHalStatus sme_set_auto_shutdown_timer(tHalHandle hHal, tANI_U32 timer_value);
 #endif
 
-eHalStatus sme_RoamChannelChangeReq(tHalHandle hHal, tCsrBssid bssid,
-                                    tANI_U8 targetChannel, eCsrPhyMode phyMode,
-                                    tANI_U32 cbMode, tANI_U32 vhtChannelWidth);
+eHalStatus sme_RoamChannelChangeReq( tHalHandle hHal, tCsrBssid bssid,
+                                tANI_U8 targetChannel, eCsrPhyMode phyMode );
 
 eHalStatus sme_RoamStartBeaconReq( tHalHandle hHal,
                    tCsrBssid bssid, tANI_U8 dfsCacWaitStatus);
@@ -3815,24 +3812,6 @@ eHalStatus sme_StatsExtRequest(tANI_U8 session_id, tpStatsExtRequestReq input);
 eHalStatus sme_StatsExtEvent (tHalHandle hHal, void* pMsg);
 
 #endif
-
-/* -------------------------------------------------------------------------
-   \fn sme_set_dot11p_config
-   \brief API to Set 802.11p config
-   \param hal - The handle returned by macOpen
-   \param enable_dot11p - 802.11p config param
-   \return eHalStatus
----------------------------------------------------------------------------*/
-void sme_set_dot11p_config(tHalHandle hal, bool enable_dot11p);
-
-/* -------------------------------------------------------------------------
-   \fn sme_ocb_set_sched_req
-   \brief API to Indicate OCB Set Schedule Request
-   \param sched_req - Schedule Request
-   \return eHalStatus
----------------------------------------------------------------------------*/
-eHalStatus sme_ocb_set_sched_req(sir_ocb_set_sched_request_t *sched_req);
-
 /* ---------------------------------------------------------------------------
     \fn sme_UpdateDFSScanMode
     \brief  Update DFS roam scan mode
@@ -4120,19 +4099,6 @@ eHalStatus sme_GetTemperature(tHalHandle hHal,
     -------------------------------------------------------------------------*/
 eHalStatus sme_SetScanningMacOui(tHalHandle hHal, tSirScanMacOui *pScanMacOui);
 
-#ifdef IPA_UC_OFFLOAD
-/* ---------------------------------------------------------------------------
-    \fn sme_ipa_offload_enable_disable
-    \brief  API to enable/disable IPA offload
-    \param  hHal - The handle returned by macOpen.
-    \param  sessionId - Session Identifier
-    \param  pRequest -  Pointer to the offload request.
-    \return eHalStatus
-  ---------------------------------------------------------------------------*/
-eHalStatus sme_ipa_offload_enable_disable(tHalHandle hal, tANI_U8 session_id,
-                               struct sir_ipa_offload_enable_disable *request);
-#endif
-
 #ifdef DHCP_SERVER_OFFLOAD
 /* ---------------------------------------------------------------------------
     \fn sme_setDhcpSrvOffload
@@ -4164,77 +4130,5 @@ eHalStatus sme_SetLedFlashing (tHalHandle hHal, tANI_U8 type,
     \return eHalStatus
     -------------------------------------------------------------------------*/
 eHalStatus sme_handle_dfs_chan_scan(tHalHandle hHal, tANI_U8 dfs_flag);
-
-#ifdef MDNS_OFFLOAD
-/* ---------------------------------------------------------------------------
-    \fn sme_setMDNSOffload
-    \brief  SME API to set mDNS offload info
-    \param  hHal
-    \param  pMDNSInfo : mDNS offload info struct
-    \- return eHalStatus
-    -------------------------------------------------------------------------*/
-eHalStatus sme_setMDNSOffload(tHalHandle hHal,
-                                tSirMDNSOffloadInfo *pMDNSInfo);
-
-/* ---------------------------------------------------------------------------
-    \fn sme_setMDNSFqdn
-    \brief  SME API to set mDNS Fqdn info
-    \param  hHal
-    \param  pMDNSFqdnInfo : mDNS Fqdn info struct
-    \- return eHalStatus
-    -------------------------------------------------------------------------*/
-eHalStatus sme_setMDNSFqdn(tHalHandle hHal,
-                                tSirMDNSFqdnInfo *pMDNSFqdnInfo);
-
-/* ---------------------------------------------------------------------------
-    \fn sme_setMDNSResponse
-    \brief  SME API to set mDNS response info
-    \param  hHal
-    \param  pMDNSRespInfo : mDNS response info struct
-    \- return eHalStatus
-    -------------------------------------------------------------------------*/
-eHalStatus sme_setMDNSResponse(tHalHandle hHal,
-                                tSirMDNSResponseInfo *pMDNSRespInfo);
-#endif /* MDNS_OFFLOAD */
-
-#ifdef SAP_AUTH_OFFLOAD
-/**
- * sme_set_sap_auth_offload() enable/disable Software AP Auth Offload
- * @hHal: hal layer handler
- * @sap_auth_offload_info: the information of Software AP Auth Offload
- *
- * This function provide enable/disable Software AP authenticaiton offload
- * feature on target firmware
- *
- * Return: Return eHalStatus.
- */
-eHalStatus sme_set_sap_auth_offload(tHalHandle hHal,
-                      struct tSirSapOffloadInfo *sap_auth_offload_info);
-#endif /* SAP_AUTH_OFFLOAD */
-
-#ifdef WLAN_FEATURE_APFIND
-VOS_STATUS sme_apfind_set_cmd(struct sme_ap_find_request_req *input);
-#endif /* WLAN_FEATURE_APFIND */
-
-#ifdef FEATURE_BUS_AUTO_SUSPEND
-/**
- * sme_configure_bus_auto_suspend_ind() - Auto suspend request to lower MAC
- *
- * @hHal: The handle returned by macOpen.
- * @suspend_param: Callback to be called when ready to auto suspend event is
- *                 received.
- * @callback: The callback API that should be invoked when auto suspended.
- * @context: Context associated with csrReadyToSuspendCallback.
- *
- *  SME will pass this request to lower mac to Indicate that the wlan needs
- *  to be auto suspended.
- *
- * Return: HAL status success or failure
- */
-eHalStatus sme_configure_bus_auto_suspend_ind(tHalHandle hHal,
-                          tSirWlanSuspendParam  *suspend_param,
-                          csrReadyToSuspendCallback callback,
-                          void *context);
-#endif
 
 #endif //#if !defined( __SME_API_H )

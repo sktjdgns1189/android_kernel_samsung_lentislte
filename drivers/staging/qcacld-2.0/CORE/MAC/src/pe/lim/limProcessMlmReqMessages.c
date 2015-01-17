@@ -124,7 +124,6 @@ limSetChannel(tpAniSirGlobal pMac, tANI_U8 channel, tANI_U8 secChannelOffset, tP
 void
 limProcessMlmReqMessages(tpAniSirGlobal pMac, tpSirMsgQ Msg)
 {
-    MTRACE(macTraceMsgRx(pMac, NO_SESSION, Msg->type));
     switch (Msg->type)
     {
         case LIM_MLM_START_REQ:             limProcessMlmStartReq(pMac, Msg->bodyptr);   break;
@@ -2081,14 +2080,14 @@ limProcessMlmPostJoinSuspendLink(tpAniSirGlobal pMac, eHalStatus status, tANI_U3
     limLog(pMac, LOG1, FL("Sessionid %d prev lim state %d new lim state %d "
     "systemrole = %d"), psessionEntry->peSessionId,
     psessionEntry->limPrevMlmState,
-    psessionEntry->limMlmState, GET_LIM_SYSTEM_ROLE(psessionEntry));
+    psessionEntry->limMlmState,psessionEntry->limSystemRole);
 
     limDeactivateAndChangeTimer(pMac, eLIM_JOIN_FAIL_TIMER);
 
     //assign appropriate sessionId to the timer object
     pMac->lim.limTimers.gLimJoinFailureTimer.sessionId = psessionEntry->peSessionId;
 
-    linkState = LIM_IS_BT_AMP_STA_ROLE(psessionEntry) ? eSIR_LINK_BTAMP_PREASSOC_STATE : eSIR_LINK_PREASSOC_STATE;
+    linkState = ((psessionEntry->limSystemRole == eLIM_BT_AMP_STA_ROLE) ? eSIR_LINK_BTAMP_PREASSOC_STATE : eSIR_LINK_PREASSOC_STATE);
     limLog(pMac, LOG1, FL("[limProcessMlmJoinReq]: linkState:%d"),linkState);
 
     if (limSetLinkState(pMac, linkState,
@@ -2178,12 +2177,11 @@ limProcessMlmJoinReq(tpAniSirGlobal pMac, tANI_U32 *pMsgBuf)
         goto error;
     }
 
-    if ((!LIM_IS_AP_ROLE(psessionEntry) &&
-         !LIM_IS_BT_AMP_AP_ROLE(psessionEntry)) &&
-        ((psessionEntry->limMlmState == eLIM_MLM_IDLE_STATE) ||
-         (psessionEntry->limMlmState == eLIM_MLM_JOINED_STATE))  &&
-         (SIR_MAC_GET_ESS(((tpLimMlmJoinReq) pMsgBuf)->bssDescription.capabilityInfo) !=
-          SIR_MAC_GET_IBSS( ((tpLimMlmJoinReq) pMsgBuf)->bssDescription.capabilityInfo)))
+    if (( (psessionEntry->limSystemRole != eLIM_AP_ROLE ) && (psessionEntry->limSystemRole != eLIM_BT_AMP_AP_ROLE )) &&
+          ( (psessionEntry->limMlmState == eLIM_MLM_IDLE_STATE) ||
+            (psessionEntry->limMlmState == eLIM_MLM_JOINED_STATE))  &&
+        (SIR_MAC_GET_ESS( ((tpLimMlmJoinReq) pMsgBuf)->bssDescription.capabilityInfo) !=
+             SIR_MAC_GET_IBSS( ((tpLimMlmJoinReq) pMsgBuf)->bssDescription.capabilityInfo)))
     {
         /// Hold onto Join request parameters
 
@@ -2223,12 +2221,12 @@ limProcessMlmJoinReq(tpAniSirGlobal pMac, tANI_U32 *pMsgBuf)
               */
         PELOGE(limLog(pMac, LOGE,
                FL("Unexpected Join request for role %d state %X"),
-               GET_LIM_SYSTEM_ROLE(psessionEntry),
+               psessionEntry->limSystemRole,
                psessionEntry->limMlmState);)
         limPrintMlmState(pMac, LOGE, psessionEntry->limMlmState);
         limLog(pMac, LOGE,
                FL("SessionId:%d Unexpected Join request for role %d state %X "),
-               psessionEntry->peSessionId, GET_LIM_SYSTEM_ROLE(psessionEntry),
+               psessionEntry->peSessionId,psessionEntry->limSystemRole,
                psessionEntry->limMlmState);
      }
 
@@ -2290,9 +2288,9 @@ limProcessMlmAuthReq(tpAniSirGlobal pMac, tANI_U32 *pMsgBuf)
         return;
     }
 
-    limLog(pMac, LOG1,FL("Process Auth Req on sessionID %d Systemrole %d "
+    limLog(pMac, LOG1,FL("Process Auth Req on sessionID %d Systemrole %d"
     "mlmstate %d from: "MAC_ADDRESS_STR" with authtype %d"), sessionId,
-     GET_LIM_SYSTEM_ROLE(psessionEntry), psessionEntry->limMlmState,
+     psessionEntry->limSystemRole,psessionEntry->limMlmState,
      MAC_ADDR_ARRAY(pMac->lim.gpLimMlmAuthReq->peerMacAddr),
      pMac->lim.gpLimMlmAuthReq->authType);
 
@@ -2307,12 +2305,11 @@ limProcessMlmAuthReq(tpAniSirGlobal pMac, tANI_U32 *pMsgBuf)
      */
     sirCopyMacAddr(currentBssId,psessionEntry->bssId);
 
-    if ((((LIM_IS_STA_ROLE(psessionEntry) ||
-           LIM_IS_BT_AMP_STA_ROLE(psessionEntry)) &&
+    if (((((psessionEntry->limSystemRole== eLIM_STA_ROLE) || (psessionEntry->limSystemRole == eLIM_BT_AMP_STA_ROLE)) &&
           ((psessionEntry->limMlmState == eLIM_MLM_JOINED_STATE) ||
            (psessionEntry->limMlmState ==
                                   eLIM_MLM_LINK_ESTABLISHED_STATE))) ||
-         (LIM_IS_IBSS_ROLE(psessionEntry) &&
+         ((psessionEntry->limSystemRole == eLIM_STA_IN_IBSS_ROLE) &&
           (psessionEntry->limMlmState == eLIM_MLM_BSS_STARTED_STATE))) &&
         (limIsGroupAddr(pMac->lim.gpLimMlmAuthReq->peerMacAddr)
                                                    == false) &&
@@ -2331,8 +2328,7 @@ limProcessMlmAuthReq(tpAniSirGlobal pMac, tANI_U32 *pMsgBuf)
          * If yes, return auth confirm immediately when
          * requested auth type is same as the one used before.
          */
-        if (((LIM_IS_STA_ROLE(psessionEntry) ||
-              LIM_IS_BT_AMP_STA_ROLE(psessionEntry)) &&
+        if ((((psessionEntry->limSystemRole == eLIM_STA_ROLE) ||(psessionEntry->limSystemRole == eLIM_BT_AMP_STA_ROLE) )&&
              (psessionEntry->limMlmState ==
                                   eLIM_MLM_LINK_ESTABLISHED_STATE) &&
              (((pStaDs = dphGetHashEntry(pMac, DPH_STA_HASH_INDEX_PEER, &psessionEntry->dph.dphHashTable)) != NULL) &&
@@ -2489,12 +2485,11 @@ limProcessMlmAssocReq(tpAniSirGlobal pMac, tANI_U32 *pMsgBuf)
 
     sirCopyMacAddr(currentBssId,psessionEntry->bssId);
 
-    if ((!LIM_IS_AP_ROLE(psessionEntry) &&
-         !LIM_IS_BT_AMP_AP_ROLE(psessionEntry)) &&
-         (psessionEntry->limMlmState == eLIM_MLM_AUTHENTICATED_STATE ||
-          psessionEntry->limMlmState == eLIM_MLM_JOINED_STATE) &&
-         (vos_mem_compare(pMlmAssocReq->peerMacAddr, currentBssId,
-             sizeof(tSirMacAddr)))) {
+    if ( (psessionEntry->limSystemRole != eLIM_AP_ROLE && psessionEntry->limSystemRole != eLIM_BT_AMP_AP_ROLE) &&
+         (psessionEntry->limMlmState == eLIM_MLM_AUTHENTICATED_STATE || psessionEntry->limMlmState == eLIM_MLM_JOINED_STATE) &&
+         (vos_mem_compare(pMlmAssocReq->peerMacAddr, currentBssId, sizeof(tSirMacAddr))) )
+    {
+
         /// map the session entry pointer to the AssocFailureTimer
         pMac->lim.limTimers.gLimAssocFailureTimer.sessionId = pMlmAssocReq->sessionId;
 
@@ -2521,9 +2516,9 @@ limProcessMlmAssocReq(tpAniSirGlobal pMac, tANI_U32 *pMsgBuf)
         limSendAssocReqMgmtFrame(pMac, pMlmAssocReq,psessionEntry);
 
   //Set the link state to postAssoc, so HW can start receiving frames from AP.
-    if ((psessionEntry->bssType == eSIR_BTAMP_STA_MODE) ||
-        ((psessionEntry->bssType == eSIR_BTAMP_AP_MODE) &&
-        LIM_IS_BT_AMP_STA_ROLE(psessionEntry))) {
+    if ((psessionEntry->bssType == eSIR_BTAMP_STA_MODE)||
+        ((psessionEntry->bssType == eSIR_BTAMP_AP_MODE) && (psessionEntry->limSystemRole == eLIM_BT_AMP_STA_ROLE)))
+    {
        if(limSetLinkState(pMac, eSIR_LINK_BTAMP_POSTASSOC_STATE, currentBssId,
            psessionEntry->selfMacAddr, NULL, NULL) != eSIR_SUCCESS)
             PELOGE(limLog(pMac, LOGE,  FL("Failed to set the LinkState"));)
@@ -2558,7 +2553,7 @@ limProcessMlmAssocReq(tpAniSirGlobal pMac, tANI_U32 *pMsgBuf)
         PELOGW(limLog(pMac, LOGW,
            FL("received unexpected MLM_ASSOC_CNF in state %X for role=%d, MAC addr= "
            MAC_ADDRESS_STR), psessionEntry->limMlmState,
-           GET_LIM_SYSTEM_ROLE(psessionEntry), MAC_ADDR_ARRAY(pMlmAssocReq->peerMacAddr));)
+           psessionEntry->limSystemRole, MAC_ADDR_ARRAY(pMlmAssocReq->peerMacAddr));)
         limPrintMlmState(pMac, LOGW, psessionEntry->limMlmState);
 
         mlmAssocCnf.resultCode = eSIR_SME_INVALID_PARAMETERS;
@@ -2622,14 +2617,14 @@ limProcessMlmReassocReq(tpAniSirGlobal pMac, tANI_U32 *pMsgBuf)
         return;
     }
 
-    limLog(pMac, LOG1,FL("Process ReAssoc Req on sessionID %d Systemrole %d "
+    limLog(pMac, LOG1,FL("Process ReAssoc Req on sessionID %d Systemrole %d"
     "mlmstate %d from: "MAC_ADDRESS_STR), pMlmReassocReq->sessionId,
-    GET_LIM_SYSTEM_ROLE(psessionEntry), psessionEntry->limMlmState,
+    psessionEntry->limSystemRole, psessionEntry->limMlmState,
     MAC_ADDR_ARRAY(pMlmReassocReq->peerMacAddr));
 
-    if ((!LIM_IS_AP_ROLE(psessionEntry) &&
-         !LIM_IS_BT_AMP_AP_ROLE(psessionEntry)) &&
-         (psessionEntry->limMlmState == eLIM_MLM_LINK_ESTABLISHED_STATE)) {
+    if (((psessionEntry->limSystemRole != eLIM_AP_ROLE) && (psessionEntry->limSystemRole != eLIM_BT_AMP_AP_ROLE)) &&
+         (psessionEntry->limMlmState == eLIM_MLM_LINK_ESTABLISHED_STATE))
+    {
         if (psessionEntry->pLimMlmReassocReq)
             vos_mem_free(psessionEntry->pLimMlmReassocReq);
 
@@ -2694,7 +2689,7 @@ limProcessMlmReassocReq(tpAniSirGlobal pMac, tANI_U32 *pMsgBuf)
            FL("received unexpected MLM_REASSOC_CNF in state %X for role=%d, "
            "MAC addr= "
            MAC_ADDRESS_STR), psessionEntry->limMlmState,
-           GET_LIM_SYSTEM_ROLE(psessionEntry),
+           psessionEntry->limSystemRole,
            MAC_ADDR_ARRAY(pMlmReassocReq->peerMacAddr));
         limPrintMlmState(pMac, LOGW, psessionEntry->limMlmState);
 
@@ -2744,14 +2739,14 @@ limProcessMlmDisassocReqNtf(tpAniSirGlobal pMac, eHalStatus suspendStatus, tANI_
         mlmDisassocCnf.resultCode = eSIR_SME_INVALID_PARAMETERS;
         goto end;
     }
-    limLog(pMac, LOG1,FL("Process DisAssoc Req on sessionID %d Systemrole %d "
+    limLog(pMac, LOG1,FL("Process DisAssoc Req on sessionID %d Systemrole %d"
     "mlmstate %d from: "MAC_ADDRESS_STR), pMlmDisassocReq->sessionId,
-    GET_LIM_SYSTEM_ROLE(psessionEntry), psessionEntry->limMlmState,
+    psessionEntry->limSystemRole, psessionEntry->limMlmState,
     MAC_ADDR_ARRAY(pMlmDisassocReq->peerMacAddr));
 
     sirCopyMacAddr(currentBssId,psessionEntry->bssId);
 
-    switch (GET_LIM_SYSTEM_ROLE(psessionEntry))
+    switch (psessionEntry->limSystemRole)
     {
         case eLIM_STA_ROLE:
         case eLIM_BT_AMP_STA_ROLE:
@@ -2832,7 +2827,7 @@ limProcessMlmDisassocReqNtf(tpAniSirGlobal pMac, eHalStatus suspendStatus, tANI_
         /* If the reason for disassociation is inactivity of STA, then
            dont wait for acknowledgement */
         if ((pMlmDisassocReq->reasonCode == eSIR_MAC_DISASSOC_DUE_TO_INACTIVITY_REASON) &&
-            LIM_IS_AP_ROLE(psessionEntry))
+            (psessionEntry->limSystemRole == eLIM_AP_ROLE))
         {
 
              limSendDisassocMgmtFrame(pMac,
@@ -2853,7 +2848,7 @@ limProcessMlmDisassocReqNtf(tpAniSirGlobal pMac, eHalStatus suspendStatus, tANI_
               * Abort Tx so that data frames won't be sent to the AP
               * after sending Disassoc.
               */
-             if (LIM_IS_STA_ROLE(psessionEntry))
+             if (eLIM_STA_ROLE == psessionEntry->limSystemRole)
                   WDA_TxAbort(psessionEntry->smeSessionId);
         }
     }
@@ -3049,13 +3044,13 @@ limProcessMlmDeauthReqNtf(tpAniSirGlobal pMac, eHalStatus suspendStatus, tANI_U3
         vos_mem_free(pMlmDeauthReq);
         return;
     }
-    limLog(pMac, LOG1,FL("Process Deauth Req on sessionID %d Systemrole %d "
+    limLog(pMac, LOG1,FL("Process Deauth Req on sessionID %d Systemrole %d"
     "mlmstate %d from: "MAC_ADDRESS_STR), pMlmDeauthReq->sessionId,
-    GET_LIM_SYSTEM_ROLE(psessionEntry), psessionEntry->limMlmState,
+    psessionEntry->limSystemRole, psessionEntry->limMlmState,
     MAC_ADDR_ARRAY(pMlmDeauthReq->peerMacAddr));
     sirCopyMacAddr(currentBssId,psessionEntry->bssId);
 
-    switch (GET_LIM_SYSTEM_ROLE(psessionEntry))
+    switch (psessionEntry->limSystemRole)
     {
         case eLIM_STA_ROLE:
         case eLIM_BT_AMP_STA_ROLE:
@@ -3353,7 +3348,7 @@ tpPESession        psessionEntry;
 
     sirCopyMacAddr(currentBssId,psessionEntry->bssId);
 
-    switch (GET_LIM_SYSTEM_ROLE(psessionEntry)) {
+    switch( psessionEntry->limSystemRole ) {
     case eLIM_STA_ROLE:
     case eLIM_BT_AMP_STA_ROLE:
       //In case of TDLS, peerMac address need not be BssId. Skip this check
@@ -3416,8 +3411,7 @@ tpPESession        psessionEntry;
     pStaDs = dphLookupHashEntry( pMac, pMlmSetKeysReq->peerMacAddr, &aid , &psessionEntry->dph.dphHashTable);
 
     if ((pStaDs == NULL) ||
-        ((pStaDs->mlmStaContext.mlmState != eLIM_MLM_LINK_ESTABLISHED_STATE) &&
-        !LIM_IS_AP_ROLE(psessionEntry))) {
+           ((pStaDs->mlmStaContext.mlmState != eLIM_MLM_LINK_ESTABLISHED_STATE) && (psessionEntry->limSystemRole != eLIM_AP_ROLE))) {
         /**
          * Received LIM_MLM_SETKEYS_REQ for STA
          * that does not have context or in some
@@ -3538,13 +3532,15 @@ tLimMlmRemoveKeyCnf  mlmRemoveKeyCnf;
 
     sirCopyMacAddr(currentBssId,psessionEntry->bssId);
 
-    switch (GET_LIM_SYSTEM_ROLE(psessionEntry)) {
-    case eLIM_STA_ROLE:
-    case eLIM_BT_AMP_STA_ROLE:
+    switch( psessionEntry->limSystemRole )
+    {
+        case eLIM_STA_ROLE:
+        case eLIM_BT_AMP_STA_ROLE:
         if (( limIsAddrBC( pMlmRemoveKeyReq->peerMacAddr ) != true ) &&
            (!vos_mem_compare(pMlmRemoveKeyReq->peerMacAddr,
                             currentBssId,
-                            sizeof(tSirMacAddr)))) {
+                            sizeof(tSirMacAddr))))
+        {
             limLog( pMac, LOGW,
             FL("Received MLM_REMOVEKEY_REQ with invalid BSSID"));
             limPrintMacAddr( pMac, pMlmRemoveKeyReq->peerMacAddr, LOGW );
@@ -3555,11 +3551,12 @@ tLimMlmRemoveKeyCnf  mlmRemoveKeyCnf;
         }
         break;
 
-     case eLIM_STA_IN_IBSS_ROLE:
-     default: // eLIM_AP_ROLE
-              // Fall thru...
-        break;
+        case eLIM_STA_IN_IBSS_ROLE:
+        default: // eLIM_AP_ROLE
+                 // Fall thru...
+                break;
     }
+
 
     psessionEntry->limPrevMlmState = psessionEntry->limMlmState;
     if(limIsAddrBC( pMlmRemoveKeyReq->peerMacAddr )) //Second condition for IBSS or AP role.
@@ -4123,7 +4120,9 @@ limProcessAuthRspTimeout(tpAniSirGlobal pMac, tANI_U32 authIndex)
         return;
     }
 
-    if (LIM_IS_AP_ROLE(psessionEntry) || LIM_IS_IBSS_ROLE(psessionEntry)) {
+    if (psessionEntry->limSystemRole == eLIM_AP_ROLE ||
+        psessionEntry->limSystemRole == eLIM_STA_IN_IBSS_ROLE)
+    {
         if (pAuthNode->mlmState != eLIM_MLM_WT_AUTH_FRAME3_STATE)
         {
             /**
@@ -4226,11 +4225,11 @@ limProcessAssocFailureTimeout(tpAniSirGlobal pMac, tANI_U32 MsgType)
     PELOG1(limLog(pMac, LOG1,
        FL("Re/Association Response not received before timeout "));)
 
-    if ((LIM_IS_AP_ROLE(psessionEntry) ||
-         LIM_IS_BT_AMP_AP_ROLE(psessionEntry)) ||
-        ((psessionEntry->limMlmState != eLIM_MLM_WT_ASSOC_RSP_STATE) &&
-         (psessionEntry->limMlmState != eLIM_MLM_WT_REASSOC_RSP_STATE)  &&
-         (psessionEntry->limMlmState != eLIM_MLM_WT_FT_REASSOC_RSP_STATE))) {
+    if (( (psessionEntry->limSystemRole == eLIM_AP_ROLE) || (psessionEntry->limSystemRole == eLIM_BT_AMP_AP_ROLE) )||
+        ( (psessionEntry->limMlmState != eLIM_MLM_WT_ASSOC_RSP_STATE) &&
+          (psessionEntry->limMlmState != eLIM_MLM_WT_REASSOC_RSP_STATE)  &&
+          (psessionEntry->limMlmState != eLIM_MLM_WT_FT_REASSOC_RSP_STATE)))
+    {
         /**
          * Re/Assoc failure timer should not have timedout on AP
          * or in a state other than wt_re/assoc_response.
@@ -4239,9 +4238,12 @@ limProcessAssocFailureTimeout(tpAniSirGlobal pMac, tANI_U32 MsgType)
         // Log error
         limLog(pMac, LOGW,
            FL("received unexpected REASSOC failure timeout in state %X for role %d"),
-           psessionEntry->limMlmState, GET_LIM_SYSTEM_ROLE(psessionEntry));
+           psessionEntry->limMlmState, psessionEntry->limSystemRole);
         limPrintMlmState(pMac, LOGW, psessionEntry->limMlmState);
-    } else {
+    }
+    else
+    {
+
         if ((MsgType == LIM_ASSOC) ||
             ((MsgType == LIM_REASSOC) && (psessionEntry->limMlmState == eLIM_MLM_WT_FT_REASSOC_RSP_STATE)))
         {
