@@ -72,6 +72,7 @@ void limFTCleanupPreAuthInfo(tpAniSirGlobal pMac, tpPESession psessionEntry)
 {
    tpPESession pReAssocSessionEntry = NULL;
    tANI_U8 sessionId = 0;
+
    if (!psessionEntry) {
 #if defined WLAN_FEATURE_VOWIFI_11R_DEBUG
       PELOGE(limLog(pMac, LOGE, "%s: psessionEntry is NULL", __func__);)
@@ -80,7 +81,7 @@ void limFTCleanupPreAuthInfo(tpAniSirGlobal pMac, tpPESession psessionEntry)
    }
 
    /* Nothing to be done if the session is not in STA mode */
-   if (!LIM_IS_STA_ROLE(psessionEntry)) {
+   if (eLIM_STA_ROLE != psessionEntry->limSystemRole) {
 #if defined WLAN_FEATURE_VOWIFI_11R_DEBUG
       PELOGE(limLog(pMac, LOGE, FL("psessionEntry is not in STA mode"));)
 #endif
@@ -126,8 +127,8 @@ void limFTCleanupPreAuthInfo(tpAniSirGlobal pMac, tpPESession psessionEntry)
        */
       if (pReAssocSessionEntry->valid &&
             pReAssocSessionEntry->limSmeState == eLIM_SME_WT_REASSOC_STATE) {
-         limLog( pMac, LOG1, FL("Deleting Preauth Session %d"),
-                pReAssocSessionEntry->peSessionId);
+         PELOGW(limLog( pMac, LOGW, FL("Deleting Preauth Session %d"),
+                pReAssocSessionEntry->peSessionId);)
          peDeleteSession(pMac, pReAssocSessionEntry);
       }
    }
@@ -156,7 +157,7 @@ void limFTCleanup(tpAniSirGlobal pMac, tpPESession psessionEntry)
    }
 
    /* Nothing to be done if the session is not in STA mode */
-   if (!LIM_IS_STA_ROLE(psessionEntry)) {
+   if (eLIM_STA_ROLE != psessionEntry->limSystemRole) {
 #if defined WLAN_FEATURE_VOWIFI_11R_DEBUG
       PELOGE(limLog(pMac, LOGE, FL("psessionEntry is not in STA mode"));)
 #endif
@@ -266,7 +267,7 @@ int limProcessFTPreAuthReq(tpAniSirGlobal pMac, tpSirMsgQ pMsg)
     }
 
     /* Nothing to be done if the session is not in STA mode */
-    if (!LIM_IS_STA_ROLE(psessionEntry)) {
+    if (eLIM_STA_ROLE != psessionEntry->limSystemRole) {
 #if defined WLAN_FEATURE_VOWIFI_11R_DEBUG
        PELOGE(limLog(pMac, LOGE, FL("psessionEntry is not in STA mode"));)
 #endif
@@ -357,7 +358,7 @@ void limPerformFTPreAuth(tpAniSirGlobal pMac, eHalStatus status,
     }
 
     /* Nothing to be done if the session is not in STA mode */
-    if (!LIM_IS_STA_ROLE(psessionEntry)) {
+    if (eLIM_STA_ROLE != psessionEntry->limSystemRole) {
 #if defined WLAN_FEATURE_VOWIFI_11R_DEBUG
        PELOGE(limLog(pMac, LOGE, FL("psessionEntry is not in STA mode"));)
 #endif
@@ -430,7 +431,7 @@ tSirRetStatus limFTPrepareAddBssReq( tpAniSirGlobal pMac,
     tSchBeaconStruct *pBeaconStruct;
 
     /* Nothing to be done if the session is not in STA mode */
-    if (!LIM_IS_STA_ROLE(pftSessionEntry)) {
+    if (eLIM_STA_ROLE != pftSessionEntry->limSystemRole) {
 #if defined WLAN_FEATURE_VOWIFI_11R_DEBUG
        PELOGE(limLog(pMac, LOGE, FL("psessionEntry is not in STA mode"));)
 #endif
@@ -659,7 +660,7 @@ tSirRetStatus limFTPrepareAddBssReq( tpAniSirGlobal pMac,
             }
 #ifdef WLAN_FEATURE_11AC
             if (pftSessionEntry->vhtCapability &&
-                IS_BSS_VHT_CAPABLE(pBeaconStruct->VHTCaps))
+                pBeaconStruct->VHTCaps.present)
             {
                 pAddBssParams->staContext.vhtCapable = 1;
                 if ((pBeaconStruct->VHTCaps.suBeamFormerCap ||
@@ -865,11 +866,11 @@ void limFillFTSession(tpAniSirGlobal pMac,
    pftSessionEntry->dot11mode = selfDot11Mode;
    pftSessionEntry->vhtCapability =
          (IS_DOT11_MODE_VHT(pftSessionEntry->dot11mode)
-         && IS_BSS_VHT_CAPABLE(pBeaconStruct->VHTCaps));
+         && pBeaconStruct->VHTCaps.present);
    pftSessionEntry->htCapability = (IS_DOT11_MODE_HT(pftSessionEntry->dot11mode)
          && pBeaconStruct->HTCaps.present);
 #ifdef WLAN_FEATURE_11AC
-   if (IS_BSS_VHT_CAPABLE(pBeaconStruct->VHTCaps) && pBeaconStruct->VHTOperation.present)
+   if (pBeaconStruct->VHTCaps.present && pBeaconStruct->VHTOperation.present)
    {
       pftSessionEntry->vhtCapabilityPresentInBeacon = 1;
       pftSessionEntry->apCenterChan =
@@ -883,7 +884,6 @@ void limFillFTSession(tpAniSirGlobal pMac,
 #endif
    sirCopyMacAddr(pftSessionEntry->selfMacAddr, psessionEntry->selfMacAddr);
    sirCopyMacAddr(pftSessionEntry->limReAssocbssId, pbssDescription->bssId);
-   sirCopyMacAddr(pftSessionEntry->prev_ap_bssid, psessionEntry->bssId);
 #if defined WLAN_FEATURE_VOWIFI_11R_DEBUG || defined FEATURE_WLAN_ESE || defined(FEATURE_WLAN_LFR)
    limPrintMacAddr(pMac, pftSessionEntry->limReAssocbssId, LOG1);
 #endif
@@ -1018,7 +1018,7 @@ tSirRetStatus limFTSetupAuthSession(tpAniSirGlobal pMac,
    }
 
    /* Nothing to be done if the session is not in STA mode */
-   if (!LIM_IS_STA_ROLE(psessionEntry)) {
+   if (eLIM_STA_ROLE != psessionEntry->limSystemRole) {
 #if defined WLAN_FEATURE_VOWIFI_11R_DEBUG
       PELOGE(limLog(pMac, LOGE, FL("psessionEntry is not in STA mode"));)
 #endif
@@ -1052,7 +1052,7 @@ void limFTProcessPreAuthResult(tpAniSirGlobal pMac, eHalStatus status,
       return;
 
    /* Nothing to be done if the session is not in STA mode */
-   if (!LIM_IS_STA_ROLE(psessionEntry)) {
+   if (eLIM_STA_ROLE != psessionEntry->limSystemRole) {
 #if defined WLAN_FEATURE_VOWIFI_11R_DEBUG
       PELOGE(limLog(pMac, LOGE, FL("psessionEntry is not in STA mode"));)
 #endif
@@ -1112,7 +1112,7 @@ void limPostFTPreAuthRsp(tpAniSirGlobal pMac, tSirRetStatus status,
 
    if (psessionEntry) {
        /* Nothing to be done if the session is not in STA mode */
-       if (!LIM_IS_STA_ROLE(psessionEntry)) {
+       if (eLIM_STA_ROLE != psessionEntry->limSystemRole) {
 #if defined WLAN_FEATURE_VOWIFI_11R_DEBUG
            PELOGE(limLog(pMac, LOGE, FL("psessionEntry is not in STA mode"));)
 #endif
@@ -1177,7 +1177,7 @@ void limHandleFTPreAuthRsp(tpAniSirGlobal pMac, tSirRetStatus status,
 #endif
 
    /* Nothing to be done if the session is not in STA mode */
-   if (!LIM_IS_STA_ROLE(psessionEntry)) {
+   if (eLIM_STA_ROLE != psessionEntry->limSystemRole) {
 #if defined WLAN_FEATURE_VOWIFI_11R_DEBUG
       PELOGE(limLog(pMac, LOGE, FL("psessionEntry is not in STA mode"));)
 #endif
@@ -1293,7 +1293,7 @@ void limProcessMlmFTReassocReq(tpAniSirGlobal pMac, tANI_U32 *pMsgBuf,
 #endif
 
    /* Nothing to be done if the session is not in STA mode */
-   if (!LIM_IS_STA_ROLE(psessionEntry)) {
+   if (eLIM_STA_ROLE != psessionEntry->limSystemRole) {
 #if defined WLAN_FEATURE_VOWIFI_11R_DEBUG
       PELOGE(limLog(pMac, LOGE, FL("psessionEntry is not in STA mode"));)
 #endif
@@ -1430,7 +1430,7 @@ void limProcessFTPreauthRspTimeout(tpAniSirGlobal pMac)
    }
 
    /* Nothing to be done if the session is not in STA mode */
-   if (!LIM_IS_STA_ROLE(psessionEntry)) {
+   if (eLIM_STA_ROLE != psessionEntry->limSystemRole) {
 #if defined WLAN_FEATURE_VOWIFI_11R_DEBUG
       PELOGE(limLog(pMac, LOGE, FL("psessionEntry is not in STA mode"));)
 #endif
@@ -1509,7 +1509,7 @@ tANI_BOOLEAN limProcessFTUpdateKey(tpAniSirGlobal pMac, tANI_U32 *pMsgBuf )
     }
 
     /* Nothing to be done if the session is not in STA mode */
-    if (!LIM_IS_STA_ROLE(psessionEntry)) {
+    if (eLIM_STA_ROLE != psessionEntry->limSystemRole) {
 #if defined WLAN_FEATURE_VOWIFI_11R_DEBUG
        PELOGE(limLog(pMac, LOGE, FL("psessionEntry is not in STA mode"));)
 #endif
@@ -1675,7 +1675,7 @@ void limProcessFTAggrQoSRsp(tpAniSirGlobal pMac, tpSirMsgQ limMsg)
     }
 
     /* Nothing to be done if the session is not in STA mode */
-    if (!LIM_IS_STA_ROLE(psessionEntry)) {
+    if (eLIM_STA_ROLE != psessionEntry->limSystemRole) {
 #if defined WLAN_FEATURE_VOWIFI_11R_DEBUG
        PELOGE(limLog(pMac, LOGE, FL("psessionEntry is not in STA mode"));)
 #endif
@@ -1750,7 +1750,7 @@ limProcessFTAggrQosReq(tpAniSirGlobal pMac, tANI_U32 *pMsgBuf )
     }
 
     /* Nothing to be done if the session is not in STA mode */
-    if (!LIM_IS_STA_ROLE(psessionEntry)) {
+    if (eLIM_STA_ROLE != psessionEntry->limSystemRole) {
 #if defined WLAN_FEATURE_VOWIFI_11R_DEBUG
        PELOGE(limLog(pMac, LOGE, FL("psessionEntry is not in STA mode"));)
 #endif

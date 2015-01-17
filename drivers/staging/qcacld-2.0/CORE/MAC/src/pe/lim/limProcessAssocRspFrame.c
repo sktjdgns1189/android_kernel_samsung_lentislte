@@ -328,7 +328,7 @@ limProcessAssocRspFrame(tpAniSirGlobal pMac, tANI_U8 *pRxPacketInfo, tANI_U8 sub
               FL("received Re/Assoc(%d) resp on sessionid: %d with systemrole: %d "
               "and mlmstate: %d RSSI %d from "MAC_ADDRESS_STR),subType,
               psessionEntry->peSessionId,
-              GET_LIM_SYSTEM_ROLE(psessionEntry), psessionEntry->limMlmState,
+              psessionEntry->limSystemRole,psessionEntry->limMlmState,
               (uint)abs((tANI_S8)WDA_GET_RX_RSSI_DB(pRxPacketInfo)),
               MAC_ADDR_ARRAY(pHdr->sa));
 
@@ -340,12 +340,13 @@ limProcessAssocRspFrame(tpAniSirGlobal pMac, tANI_U8 *pRxPacketInfo, tANI_U8 sub
     }
 
 
-    if (LIM_IS_AP_ROLE(psessionEntry) || LIM_IS_BT_AMP_AP_ROLE(psessionEntry)) {
+    if (psessionEntry->limSystemRole == eLIM_AP_ROLE || psessionEntry->limSystemRole == eLIM_BT_AMP_AP_ROLE )
+    {
         // Should not have received Re/Association Response
         // frame on AP. Log error
         limLog(pMac, LOGE,
-               FL("Should not recieved Re/Assoc Response in role %d"),
-               GET_LIM_SYSTEM_ROLE(psessionEntry));
+               FL("Should not recieved Re/Assoc Response in role %d "),
+               psessionEntry->limSystemRole);
 
         vos_mem_free(pBeaconStruct);
         return;
@@ -692,7 +693,8 @@ limProcessAssocRspFrame(tpAniSirGlobal pMac, tANI_U8 *pRxPacketInfo, tANI_U8 sub
 
     if (!((psessionEntry->bssType == eSIR_BTAMP_STA_MODE) ||
           ((psessionEntry->bssType == eSIR_BTAMP_AP_MODE) &&
-          LIM_IS_BT_AMP_STA_ROLE(psessionEntry)))) {
+          (psessionEntry->limSystemRole == eLIM_BT_AMP_STA_ROLE))))
+    {
             if (limSetLinkState(pMac, eSIR_LINK_POSTASSOC_STATE, psessionEntry->bssId,
                                 psessionEntry->selfMacAddr, NULL, NULL) != eSIR_SUCCESS)
             {
@@ -924,25 +926,10 @@ limProcessAssocRspFrame(tpAniSirGlobal pMac, tANI_U8 *pRxPacketInfo, tANI_U8 sub
                FL("ExtCap present, timingMeas: %d fineTimingMeas: %d"),
                pAssocRsp->ExtCap.timingMeas,
                pAssocRsp->ExtCap.fineTimingMeas);)
-#ifdef FEATURE_WLAN_TDLS
-        psessionEntry->tdls_prohibited =
-                pAssocRsp->ExtCap.TDLSProhibited;
-        psessionEntry->tdls_chan_swit_prohibited =
-                pAssocRsp->ExtCap.TDLSChanSwitProhibited;
-
-        PELOG1(limLog(pMac, LOG1,
-               FL("ExtCap: tdls_prohibited: %d, tdls_chan_swit_prohibited: %d"),
-               pAssocRsp->ExtCap.TDLSProhibited,
-               pAssocRsp->ExtCap.TDLSChanSwitProhibited);)
-#endif
     }
     else
     {
         pStaDs->timingMeasCap = 0;
-#ifdef FEATURE_WLAN_TDLS
-        psessionEntry->tdls_prohibited = false;
-        psessionEntry->tdls_chan_swit_prohibited = false;
-#endif
         PELOG1(limLog(pMac, LOG1, FL("ExtCap not present"));)
     }
 

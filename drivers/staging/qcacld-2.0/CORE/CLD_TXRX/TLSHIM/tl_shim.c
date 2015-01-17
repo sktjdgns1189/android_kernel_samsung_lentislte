@@ -1755,7 +1755,7 @@ VOS_STATUS WLANTL_Start(void *vos_ctx)
 VOS_STATUS WLANTL_Close(void *vos_ctx)
 {
 	struct txrx_tl_shim_ctx *tl_shim;
-#if defined(QCA_LL_TX_FLOW_CT) || defined(QCA_SUPPORT_TXRX_VDEV_PAUSE_LL)
+#ifdef QCA_LL_TX_FLOW_CT
 	u_int8_t i;
 #endif /* QCA_LL_TX_FLOW_CT */
 
@@ -2523,52 +2523,4 @@ void WLANTL_RegisterOPCbFnc(void *vos_ctx,
 		WLANTL_IpaUcOpEventHandler, (void *)tl_shim);
 }
 #endif /* IPA_UC_OFFLOAD */
-
-/*=============================================================================
-  FUNCTION    WLANTL_RegisterOCBPeer
-
-  DESCRIPTION
-    Function to register the OCB Self Peer
-
-  PARAMETERS
-    IN
-    vos_ctx : Global OS context context
-    mac_addr : MAC address of self peer
-
-    OUT
-    peer_id : Peer ID
-
-  RETURN VALUE
-    VOS_STATUS_SUCCESS on success
-    VOS_STATUS_E_FAILURE on failure
-
-  SIDE EFFECTS
-
-==============================================================================*/
-VOS_STATUS WLANTL_RegisterOCBPeer(void *vos_ctx, uint8_t *mac_addr,
-    uint8_t *peer_id)
-{
-	ol_txrx_pdev_handle pdev;
-	ol_txrx_peer_handle peer;
-
-	pdev = vos_get_context(VOS_MODULE_ID_TXRX, vos_ctx);
-	if (!pdev) {
-		TLSHIM_LOGE("%s: Unable to find pdev!", __func__);
-		return VOS_STATUS_E_FAILURE;
-	}
-
-	peer = ol_txrx_find_peer_by_addr(pdev, mac_addr, peer_id);
-	if (!peer) {
-		TLSHIM_LOGE("%s: Unable to find OCB peer!", __func__);
-		return VOS_STATUS_E_FAILURE;
-	}
-
-	ol_txrx_set_ocb_peer(pdev, peer);
-
-	/* Set peer state to connected */
-	ol_txrx_peer_state_update(pdev, peer->mac_addr.raw,
-						  ol_txrx_peer_state_auth);
-
-	return VOS_STATUS_SUCCESS;
-}
 

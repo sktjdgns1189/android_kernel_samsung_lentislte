@@ -801,52 +801,46 @@ limCleanup(tpAniSirGlobal pMac)
 
 tSirRetStatus peOpen(tpAniSirGlobal pMac, tMacOpenParameters *pMacOpenParam)
 {
-    tSirRetStatus status = eSIR_SUCCESS;
-
     pMac->lim.maxBssId = pMacOpenParam->maxBssId;
     pMac->lim.maxStation = pMacOpenParam->maxStation;
 
-    if ((pMac->lim.maxBssId == 0) || (pMac->lim.maxStation == 0)) {
-         PELOGE(limLog(pMac, LOGE,
-                       FL("max number of Bssid or Stations cannot be zero!"));)
+    if ((pMac->lim.maxBssId == 0) || (pMac->lim.maxStation == 0))
+    {
+         PELOGE(limLog(pMac, LOGE, FL("max number of Bssid or Stations cannot be zero!"));)
          return eSIR_FAILURE;
     }
 
-    pMac->lim.limTimers.gpLimCnfWaitTimer = vos_mem_malloc(sizeof(TX_TIMER) *
-                                               (pMac->lim.maxStation + 1));
-    if (NULL == pMac->lim.limTimers.gpLimCnfWaitTimer) {
+    pMac->lim.limTimers.gpLimCnfWaitTimer = vos_mem_malloc(sizeof(TX_TIMER) * (pMac->lim.maxStation + 1));
+    if (NULL == pMac->lim.limTimers.gpLimCnfWaitTimer)
+    {
         PELOGE(limLog(pMac, LOGE, FL("memory allocate failed!"));)
         return eSIR_FAILURE;
     }
 
-    pMac->lim.gpSession = vos_mem_malloc(sizeof(tPESession)*
-                                          pMac->lim.maxBssId);
-    if (NULL == pMac->lim.gpSession) {
+    pMac->lim.gpSession = vos_mem_malloc(sizeof(tPESession)* pMac->lim.maxBssId);
+    if (NULL == pMac->lim.gpSession)
+    {
         limLog(pMac, LOGE, FL("memory allocate failed!"));
-        status = eSIR_FAILURE;
-        goto pe_open_psession_fail;
+        return eSIR_FAILURE;
     }
 
-    vos_mem_set(pMac->lim.gpSession, sizeof(tPESession) *
-                                     pMac->lim.maxBssId, 0);
+    vos_mem_set(pMac->lim.gpSession, sizeof(tPESession)*pMac->lim.maxBssId, 0);
 
-    pMac->pmm.gPmmTim.pTim = vos_mem_malloc(sizeof(tANI_U8) *
-                                            pMac->lim.maxStation);
-    if (NULL == pMac->pmm.gPmmTim.pTim) {
+    pMac->pmm.gPmmTim.pTim = vos_mem_malloc(sizeof(tANI_U8)*pMac->lim.maxStation);
+    if (NULL == pMac->pmm.gPmmTim.pTim)
+    {
         PELOGE(limLog(pMac, LOGE, FL("memory allocate failed for pTim!"));)
-        status = eSIR_FAILURE;
-        goto pe_open_ptim_fail;
+        return eSIR_FAILURE;
     }
-    vos_mem_set(pMac->pmm.gPmmTim.pTim, sizeof(tANI_U8) *
-                                        pMac->lim.maxStation, 0);
+    vos_mem_set(pMac->pmm.gPmmTim.pTim, sizeof(tANI_U8)*pMac->lim.maxStation, 0);
 
     pMac->lim.mgmtFrameSessionId = 0xff;
     pMac->lim.deferredMsgCnt = 0;
 
-    if (!VOS_IS_STATUS_SUCCESS(vos_lock_init(&pMac->lim.lkPeGlobalLock))) {
+    if( !VOS_IS_STATUS_SUCCESS( vos_lock_init( &pMac->lim.lkPeGlobalLock ) ) )
+    {
         PELOGE(limLog(pMac, LOGE, FL("pe lock init failed!"));)
-        status = eSIR_FAILURE;
-        goto pe_open_lock_fail;
+        return eSIR_FAILURE;
     }
     pMac->lim.deauthMsgCnt = 0;
 
@@ -858,19 +852,7 @@ tSirRetStatus peOpen(tpAniSirGlobal pMac, tMacOpenParameters *pMacOpenParam)
 #ifdef LIM_TRACE_RECORD
     MTRACE(limTraceInit(pMac));
 #endif
-    return status; /* status here will be eSIR_SUCCESS */
-
-pe_open_lock_fail:
-    vos_mem_free(pMac->pmm.gPmmTim.pTim);
-    pMac->pmm.gPmmTim.pTim = NULL;
-pe_open_ptim_fail:
-    vos_mem_free(pMac->lim.gpSession);
-    pMac->lim.gpSession = NULL;
-pe_open_psession_fail:
-    vos_mem_free(pMac->lim.limTimers.gpLimCnfWaitTimer);
-    pMac->lim.limTimers.gpLimCnfWaitTimer = NULL;
-
-    return status;
+    return eSIR_SUCCESS;
 }
 
 /** -------------------------------------------------------------
@@ -1119,12 +1101,13 @@ tSirRetStatus pePostMsgApi(tpAniSirGlobal pMac, tSirMsgQ *pMsg)
 
 tSirRetStatus peProcessMessages(tpAniSirGlobal pMac, tSirMsgQ* pMsg)
 {
-   if (ANI_DRIVER_TYPE(pMac) == eDRIVER_TYPE_MFG) {
+   if(pMac->gDriverType == eDRIVER_TYPE_MFG)
+   {
       return eSIR_SUCCESS;
    }
    /**
-    * If the Message to be handled is for CFG Module call the CFG Msg Handler
-    * and for all the other cases post it to LIM
+    *   If the Message to be handled is for CFG Module call the CFG Msg Handler and
+    *   for all the other cases post it to LIM
     */
     if ( SIR_CFG_PARAM_UPDATE_IND != pMsg->type && IS_CFG_MSG(pMsg->type))
         cfgProcessMbMsg(pMac, (tSirMbMsg*)pMsg->bodyptr);
@@ -2062,7 +2045,7 @@ void limRoamOffloadSynchInd(tpAniSirGlobal pMac, tpSirMsgQ pMsg)
        return;
      }
      /* Nothing to be done if the session is not in STA mode */
-     if (!LIM_IS_STA_ROLE(psessionEntry)) {
+     if (eLIM_STA_ROLE != psessionEntry->limSystemRole) {
         PELOGE(limLog(pMac, LOGE, FL("psessionEntry is not in STA mode"));)
         return;
      }
@@ -2301,8 +2284,9 @@ tMgmtFrmDropReason limIsPktCandidateForDrop(tpAniSirGlobal pMac, tANI_U8 *pRxPac
     {
         pHdr = WDA_GET_RX_MAC_HEADER(pRxPacketInfo);
         psessionEntry = peFindSessionByBssid(pMac, pHdr->bssId, &sessionId);
-        if ((psessionEntry && !LIM_IS_IBSS_ROLE(psessionEntry)) ||
-            (!psessionEntry))
+        if ((psessionEntry &&
+                    psessionEntry->limSystemRole != eLIM_STA_IN_IBSS_ROLE) ||
+                (!psessionEntry))
             return eMGMT_DROP_NO_DROP;
 
         //Drop the Probe Request in IBSS mode, if STA did not send out the last beacon

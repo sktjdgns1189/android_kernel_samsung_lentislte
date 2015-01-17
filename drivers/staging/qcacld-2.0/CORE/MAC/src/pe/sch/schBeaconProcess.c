@@ -350,10 +350,13 @@ static void __schBeaconProcessForSession( tpAniSirGlobal      pMac,
     vos_mem_zero(&beaconParams, sizeof(tUpdateBeaconParams));
     beaconParams.paramChangeBitmap = 0;
 
-    if (LIM_IS_IBSS_ROLE(psessionEntry)) {
+    if(eLIM_STA_IN_IBSS_ROLE == psessionEntry->limSystemRole )
+    {
         limHandleIBSScoalescing(pMac, pBeacon,  pRxPacketInfo, psessionEntry);
-    } else if (LIM_IS_STA_ROLE(psessionEntry) ||
-               LIM_IS_BT_AMP_STA_ROLE(psessionEntry)) {
+    }
+    else if(  (eLIM_STA_ROLE == psessionEntry->limSystemRole) ||
+                  (eLIM_BT_AMP_STA_ROLE == psessionEntry->limSystemRole))
+    {
         /*
         *  This handles two cases:
         *  -- Infra STA receiving beacons from AP
@@ -456,9 +459,9 @@ static void __schBeaconProcessForSession( tpAniSirGlobal      pMac,
         limUpdateStaRunTimeHTSwitchChnlParams( pMac, &pBeacon->HTInfo, bssIdx,psessionEntry);
     }
 
-    if (LIM_IS_STA_ROLE(psessionEntry) ||
-        LIM_IS_BT_AMP_STA_ROLE(psessionEntry) ||
-        LIM_IS_IBSS_ROLE(psessionEntry)) {
+    if ( (psessionEntry->limSystemRole == eLIM_STA_ROLE) ||(psessionEntry->limSystemRole == eLIM_BT_AMP_STA_ROLE) ||
+          (psessionEntry->limSystemRole == eLIM_STA_IN_IBSS_ROLE) )
+    {
         /* Channel Switch information element updated */
         if (pBeacon->channelSwitchPresent) {
             limUpdateChannelSwitch(pMac, pBeacon, psessionEntry);
@@ -469,9 +472,10 @@ static void __schBeaconProcessForSession( tpAniSirGlobal      pMac,
     }
 
 #ifdef WLAN_FEATURE_11AC
-    if (LIM_IS_STA_ROLE(psessionEntry) ||
-        LIM_IS_BT_AMP_STA_ROLE(psessionEntry) ||
-        LIM_IS_IBSS_ROLE(psessionEntry)) {
+    if ((psessionEntry->limSystemRole == eLIM_STA_ROLE) ||
+        (psessionEntry->limSystemRole == eLIM_BT_AMP_STA_ROLE) ||
+        (psessionEntry->limSystemRole == eLIM_STA_IN_IBSS_ROLE))
+    {
        // check for VHT capability
        pStaDs = dphLookupHashEntry(pMac, pMh->sa, &aid,
              &psessionEntry->dph.dphHashTable);
@@ -725,7 +729,8 @@ void schBeaconProcess(tpAniSirGlobal pMac, tANI_U8* pRxPacketInfo, tpPESession p
 #endif
     )
         {
-            if (!LIM_IS_AP_ROLE(pAPSession)) {
+            if (eLIM_AP_ROLE != pAPSession->limSystemRole)
+            {
                 continue;
             }
 

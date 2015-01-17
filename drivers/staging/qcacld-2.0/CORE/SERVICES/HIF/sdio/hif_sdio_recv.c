@@ -145,30 +145,23 @@ static A_STATUS HIFDevAllocAndPrepareRxPackets(HIF_SDIO_DEVICE *pDev,
             break;
         }
 
-        numMessages = GET_RECV_BUNDLE_COUNT(pHdr->Flags);
-
-        if (!numMessages)
-        {
+        if ((pHdr->Flags & HTC_FLAGS_RECV_BUNDLE_CNT_MASK) == 0) {
             /* HTC header only indicates 1 message to fetch */
             numMessages = 1;
-        }
-        else
-        {
-            /* the count doesn't include the starter frame, just a count of
-               frames to follow */
+        } else {
+            /* HTC header indicates that every packet to follow has the same padded length so that it can
+             * be optimally fetched as a full bundle */
+            numMessages = (pHdr->Flags & HTC_FLAGS_RECV_BUNDLE_CNT_MASK)
+                    >> HTC_FLAGS_RECV_BUNDLE_CNT_SHIFT;
+            /* the count doesn't include the starter frame, just a count of frames to follow */
             numMessages++;
             //A_ASSERT(numMessages <= target->MaxMsgPerBundle);
             AR_DEBUG_PRINTF( ATH_DEBUG_RECV,
                     ("HTC header indicates :%d messages can be fetched as a bundle \n",numMessages));
         }
 
-        fullLength = DEV_CALC_RECV_PADDED_LEN(pDev,pHdr->PayloadLen + sizeof(HTC_FRAME_HDR));
-
-        /*
-            all but the last packet have a length of payloadLen + sizeof(HTC_FRAME_HDR)
-            The last packet in the bundle has an additional 16 byte lookahead information.
-            This is present only if bit 0 of the flags is set
-        */
+        fullLength =
+                DEV_CALC_RECV_PADDED_LEN(pDev,pHdr->PayloadLen + sizeof(HTC_FRAME_HDR));
 
         /* get packet buffers for each message, if there was a bundle detected in the header,
          * use pHdr as a template to fetch all packets in the bundle */
@@ -177,13 +170,7 @@ static A_STATUS HIFDevAllocAndPrepareRxPackets(HIF_SDIO_DEVICE *pDev,
             /* reset flag, any packets allocated using the RecvAlloc() API cannot be recycled on cleanup,
              * they must be explicitly returned */
             noRecycle = FALSE;
-
-            /*allocate memory for the last packet*/
-            if ((j == (numMessages-1)) && ((pHdr->Flags) & HTC_FLAGS_RECV_1MORE_BLOCK))
-                fullLength += HIF_MBOX_BLOCK_SIZE;
-
-            pPacket = HIFDevAllocRxBuffer(pDev, fullLength);
-
+            pPacket = HIFDevAllocRxBuffer(pDev);
 
             if (pPacket == NULL) {
                 /* this is not an error, we simply need to mark that we are waiting for buffers.*/
@@ -221,6 +208,7 @@ static A_STATUS HIFDevAllocAndPrepareRxPackets(HIF_SDIO_DEVICE *pDev,
                 status = A_EPROTO;
                 break;
             }
+
             if (j > 0) {
                 /* for messages fetched in a bundle the expected lookahead is unknown since we
                  * are only using the lookahead of the first packet as a template of what to
@@ -234,9 +222,6 @@ static A_STATUS HIFDevAllocAndPrepareRxPackets(HIF_SDIO_DEVICE *pDev,
             }
             /* set the amount of data to fetch */
             pPacket->ActualLength = pHdr->PayloadLen + HTC_HDR_LENGTH;
-            if ((j == (numMessages-1)) && ((pHdr->Flags) & HTC_FLAGS_RECV_1MORE_BLOCK))
-                pPacket->PktInfo.AsRx.HTCRxFlags |=
-                HTC_RX_PKT_LAST_BUNDLED_PKT_HAS_ADDTIONAL_BLOCK;
             pPacket->Endpoint = pHdr->EndpointID;
             pPacket->Completion = NULL;
         }
@@ -290,14 +275,12 @@ static INLINE A_STATUS HIFDevRecvPacket(HIF_SDIO_DEVICE *pDev,
          RecvLength,
          paddedLength,
          pDev->MailBoxInfo.MboxAddresses[mboxIndex]));
-
-    status = HIFSyncRead(pDev->HIFDevice,
-                pDev->MailBoxInfo.MboxAddresses[mboxIndex],
-                pPacket->pBuffer,
-                paddedLength,
-                (sync ? HIF_RD_SYNC_BLOCK_FIX : HIF_RD_ASYNC_BLOCK_FIX),
-                sync ? NULL : pPacket); /* pass the packet as the context to the HIF request */
-
+    status = HIFReadWrite(pDev->HIFDevice,
+            pDev->MailBoxInfo.MboxAddresses[mboxIndex],
+            pPacket->pBuffer,
+            paddedLength,
+            (sync ? HIF_RD_SYNC_BLOCK_FIX : HIF_RD_ASYNC_BLOCK_FIX),
+            sync ? NULL : pPacket); /* pass the packet as the context to the HIF request */
     AR_DEBUG_PRINTF( ATH_DEBUG_RECV, ("EP%d, Seq:%d\n",
            ((HTC_FRAME_HDR*)pPacket->pBuffer)->EndpointID,
            ((HTC_FRAME_HDR*)pPacket->pBuffer)->ControlBytes1));
@@ -416,7 +399,7 @@ static INLINE A_STATUS HIFDevProcessTrailer(HIF_SDIO_DEVICE *pDev,
                 }
 
                 if ((pRecord->Length / (sizeof(HTC_BUNDLED_LOOKAHEAD_REPORT)))
-                        > HTC_MAX_MSG_PER_BUNDLE_RX) {
+                        > HTC_MAX_MSG_PER_BUNDLE) {
                     /* this should never happen, the target restricts the number
                      * of messages per bundle configured by the host */
                     A_ASSERT(FALSE);
@@ -617,29 +600,20 @@ static A_STATUS HIFDevIssueRecvPacketBundle(HIF_SDIO_DEVICE *pDev,
     int bundleSpaceRemaining = 0;
     target = (HTC_TARGET *)pDev->pTarget;
 
-    if((HTC_PACKET_QUEUE_DEPTH(pRecvPktQueue) - HTC_MAX_MSG_PER_BUNDLE_RX) > 0){
+    if((HTC_PACKET_QUEUE_DEPTH(pRecvPktQueue) - HTC_MAX_MSG_PER_BUNDLE) > 0){
         PartialBundle = TRUE;
         AR_DEBUG_PRINTF(ATH_DEBUG_WARN, ("%s, partial bundle detected num: %d, %d \n",
-                __FUNCTION__, HTC_PACKET_QUEUE_DEPTH(pRecvPktQueue),  HTC_MAX_MSG_PER_BUNDLE_RX));
+                __FUNCTION__, HTC_PACKET_QUEUE_DEPTH(pRecvPktQueue),  HTC_MAX_MSG_PER_BUNDLE));
     }
 
-    bundleSpaceRemaining = HTC_MAX_MSG_PER_BUNDLE_RX * target->TargetCreditSize;
-    pPacketRxBundle = AllocateHTCBundleRxPacket(target);
-    if (!pPacketRxBundle) {
-        AR_DEBUG_PRINTF(ATH_DEBUG_ERR, ("%s: pPacketRxBundle is NULL \n",
-            __FUNCTION__));
-        return A_NO_MEMORY;
-    }
+    bundleSpaceRemaining = HTC_MAX_MSG_PER_BUNDLE * target->TargetCreditSize;
+    pPacketRxBundle = AllocateHTCBundlePacket(target);
     pBundleBuffer = pPacketRxBundle->pBuffer;
 
-    for(i = 0; !HTC_QUEUE_EMPTY(pRecvPktQueue) && i < HTC_MAX_MSG_PER_BUNDLE_RX; i++){
+    for(i = 0; !HTC_QUEUE_EMPTY(pRecvPktQueue) && i < HTC_MAX_MSG_PER_BUNDLE; i++){
         pPacket = HTC_PACKET_DEQUEUE(pRecvPktQueue);
         A_ASSERT(pPacket != NULL);
-        if (pPacket->PktInfo.AsRx.HTCRxFlags & HTC_RX_PKT_LAST_BUNDLED_PKT_HAS_ADDTIONAL_BLOCK)
-            paddedLength = DEV_CALC_RECV_PADDED_LEN(pDev, pPacket->ActualLength)
-                                                    + HIF_MBOX_BLOCK_SIZE;
-        else
-            paddedLength = DEV_CALC_RECV_PADDED_LEN(pDev, pPacket->ActualLength);
+        paddedLength = DEV_CALC_RECV_PADDED_LEN(pDev, pPacket->ActualLength);
 
         if((bundleSpaceRemaining - paddedLength) < 0){
             /* exceeds what we can transfer, put the packet back */
@@ -662,12 +636,12 @@ static A_STATUS HIFDevIssueRecvPacketBundle(HIF_SDIO_DEVICE *pDev,
        HTC_PACKET_QUEUE_DEPTH(pSyncCompletionQueue), totalLength);
 #endif
 
-    status = HIFSyncRead(pDev->HIFDevice,
-                pDev->MailBoxInfo.MboxAddresses[(int)MailBoxIndex],
-                pBundleBuffer,
-                totalLength,
-                HIF_RD_SYNC_BLOCK_FIX,
-                NULL);
+    status = HIFReadWrite(pDev->HIFDevice,
+            pDev->MailBoxInfo.MboxAddresses[(int)MailBoxIndex],
+            pBundleBuffer,
+            totalLength,
+            HIF_RD_SYNC_BLOCK_FIX,
+            NULL);
 
     if(status != A_OK){
         AR_DEBUG_PRINTF(ATH_DEBUG_ERR, ("%s, HIFSend Failed status:%d \n",__FUNCTION__, status));
@@ -681,7 +655,7 @@ static A_STATUS HIFDevIssueRecvPacketBundle(HIF_SDIO_DEVICE *pDev,
         }HTC_PACKET_QUEUE_ITERATE_END;
     }
     /* free bundle space under Sync mode */
-    FreeHTCBundleRxPacket(target, pPacketRxBundle);
+    FreeHTCBundlePacket(target, pPacketRxBundle);
     return status;
 }
 A_STATUS HIFDevRecvMessagePendingHandler(HIF_SDIO_DEVICE *pDev,
@@ -694,14 +668,12 @@ A_STATUS HIFDevRecvMessagePendingHandler(HIF_SDIO_DEVICE *pDev,
     A_STATUS status = A_OK;
     HTC_PACKET *pPacket;
     A_BOOL asyncProc = FALSE;
-    A_UINT32 lookAheads[HTC_MAX_MSG_PER_BUNDLE_RX];
+    A_UINT32 lookAheads[HTC_MAX_MSG_PER_BUNDLE];
     int pktsFetched;
     HTC_PACKET_QUEUE recvPktQueue, syncCompletedPktsQueue;
     A_BOOL partialBundle;
     HTC_ENDPOINT_ID id;
     int totalFetched = 0;
-
-    HTC_TARGET *target = NULL;
 
     AR_DEBUG_PRINTF( ATH_DEBUG_RECV,
             ("+HTCRecvMessagePendingHandler NumLookAheads: %d \n", NumLookAheads));
@@ -721,29 +693,17 @@ A_STATUS HIFDevRecvMessagePendingHandler(HIF_SDIO_DEVICE *pDev,
         /* indicate to caller how we decided to process this */
         *pAsyncProc = asyncProc;
     }
-    if (NumLookAheads > HTC_MAX_MSG_PER_BUNDLE_RX) {
+    if (NumLookAheads > HTC_MAX_MSG_PER_BUNDLE) {
         A_ASSERT(FALSE);
         return A_EPROTO;
     }
     A_MEMCPY(lookAheads, MsgLookAheads, (sizeof(A_UINT32)) * NumLookAheads);
-
-    target = (HTC_TARGET *)pDev->pTarget;
-    id = ((HTC_FRAME_HDR *) &lookAheads[0])->EndpointID;
-
-#ifdef HTC_EP_STAT_PROFILING
-    LOCK_HTC_RX(target);
-    INC_HTC_EP_STAT(&target->EndPoint[id],HIFDSRCount,1);
-    UNLOCK_HTC_RX(target);
-#endif
-
-
-
     while (TRUE) {
 
         /* reset packets queues */
         INIT_HTC_PACKET_QUEUE(&recvPktQueue);
         INIT_HTC_PACKET_QUEUE(&syncCompletedPktsQueue);
-        if (NumLookAheads > HTC_MAX_MSG_PER_BUNDLE_RX) {
+        if (NumLookAheads > HTC_MAX_MSG_PER_BUNDLE) {
             status = A_EPROTO;
             A_ASSERT(FALSE);
             break;
@@ -795,18 +755,6 @@ A_STATUS HIFDevRecvMessagePendingHandler(HIF_SDIO_DEVICE *pDev,
                      * bundle  */
                     partialBundle = TRUE;
                 }
-                if (pktsFetched)
-                {
-                    HTC_TARGET *target = NULL;
-                    target = (HTC_TARGET *)pDev->pTarget;
-
-#ifdef HTC_EP_STAT_PROFILING
-                    LOCK_HTC_RX(target);
-                    INC_HTC_EP_STAT(&target->EndPoint[id],RxPacketsBundled,pktsFetched);
-                    UNLOCK_HTC_RX(target);
-#endif
-                }
-
             }
 
             /* see if the previous operation fetched any packets using bundling */
@@ -820,8 +768,8 @@ A_STATUS HIFDevRecvMessagePendingHandler(HIF_SDIO_DEVICE *pDev,
                     /* lookaheads in all packets except the last one in the bundle must be ignored */
                     pPacket->PktInfo.AsRx.HTCRxFlags |= HTC_RX_PKT_IGNORE_LOOKAHEAD;
                 }
-#if DEBUG_BUNDLE
-                adf_os_print("Recv single packet, length %d.\n", pPacket->ActualLength);
+#ifdef DEBUG_BUNDLE
+                //adf_os_print("Recv single packet, length %d.\n", pPacket->ActualLength);
 #endif
 
                 /* go fetch the packet */
@@ -1062,13 +1010,12 @@ static A_STATUS HIFDevProcessPendingIRQs(HIF_SDIO_DEVICE *pDev, A_BOOL *pDone,
              * point. */
             break;
         }
-
-        status = HIFSyncRead(pDev->HIFDevice,
-                    HOST_INT_STATUS_ADDRESS,
-                    (A_UINT8 *) &pDev->IrqProcRegisters,
-                    sizeof(pDev->IrqProcRegisters),
-                    HIF_RD_SYNC_BYTE_INC,
-                    NULL);
+        status = HIFReadWrite(pDev->HIFDevice,
+                HOST_INT_STATUS_ADDRESS,
+                (A_UINT8 *) &pDev->IrqProcRegisters,
+                sizeof(pDev->IrqProcRegisters),
+                HIF_RD_SYNC_BYTE_INC,
+                NULL);
 
         if (A_FAILED(status)) {
             break;

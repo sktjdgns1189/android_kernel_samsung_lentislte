@@ -537,10 +537,10 @@ static u_int8_t* get_wmi_cmd_string(WMI_CMD_ID wmi_command)
 		 *  configures/finetunes RMC algorithms */
 		CASE_RETURN_STRING(WMI_RMC_CONFIG_CMDID);
 
-		/** WLAN MHF offload commands */
-		/** enable/disable MHF offload */
+		/** WLAN multihop forwarding (MHF) offload commands */
+		/** enable/disable multihop forwarding offload */
 		CASE_RETURN_STRING(WMI_MHF_OFFLOAD_SET_MODE_CMDID);
-		/** Plumb routing table for MHF offload */
+		/** Plumb routing table for multihop forwarding offload */
 		CASE_RETURN_STRING(WMI_MHF_OFFLOAD_PLUMB_ROUTING_TBL_CMDID);
 
 		/*location scan commands*/
@@ -601,10 +601,6 @@ static u_int8_t* get_wmi_cmd_string(WMI_CMD_ID wmi_command)
 		CASE_RETURN_STRING(WMI_MDNS_SET_RESPONSE_CMDID);
 		CASE_RETURN_STRING(WMI_MDNS_GET_STATS_CMDID);
 		CASE_RETURN_STRING(WMI_ROAM_INVOKE_CMDID);
-		CASE_RETURN_STRING(WMI_SET_ANTENNA_DIVERSITY_CMDID);
-		CASE_RETURN_STRING(WMI_SAP_OFL_ENABLE_CMDID);
-		CASE_RETURN_STRING(WMI_APFIND_CMDID);
-		CASE_RETURN_STRING(WMI_OCB_SET_SCHED_CMDID);
 	}
 	return "Invalid WMI cmd";
 }

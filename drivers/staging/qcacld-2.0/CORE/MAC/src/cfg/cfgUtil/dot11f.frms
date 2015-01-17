@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2006-2007,2014-2015 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2006-2007,2014 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -20,9 +20,9 @@
  */
 
 /*
- * This file was originally distributed by Qualcomm Atheros, Inc.
- * under proprietary terms before Copyright ownership was assigned
- * to the Linux Foundation.
+ * Copyright (c) 2006-2007,2014 Qualcomm Atheros, Inc.
+ * All Rights Reserved.
+ * Qualcomm Atheros Confidential and Proprietary.
  */
 
 /**
@@ -101,8 +101,6 @@ const EID_RRM_MEAS_PILOT_TX_INFO     =  66;
 const EID_WAPI                       =  68;
 const EID_RRM_ENABLED_CAPS           =  70;
 const EID_MULTIPLE_BSSID             =  71;
-const EID_20_40_BSS_COEXISTENCE      =  72;
-const EID_20_40_BSS_INTOLERANT_REPORT=  73;
 const EID_OBSS_SCAN_PARAMETERS       =  74;
 const EID_FT_RIC_DESCRIPTOR          =  75;
 const EID_LINK_IDENTIFIER            = 101;
@@ -2033,12 +2031,6 @@ IE Vendor3IE (EID_VENDOR_SPECIFIC) OUI (0x00, 0x16, 0x32)
 {
 }
 
-IE QComVendorIE (EID_VENDOR_SPECIFIC) OUI (0x00, 0xA0, 0xC6)
-{
-    type,      1;
-    data[0..255];
-}
-
 IE ESETrafStrmMet (EID_VENDOR_SPECIFIC) OUI (0x00, 0x40, 0x96, 0x07)
 {
     tsid,           1;
@@ -2133,25 +2125,6 @@ IE OBSSScanParameters (EID_OBSS_SCAN_PARAMETERS)
 	obssScanActiveTotalPerChannel, 2;
 	bssWidthChannelTransitionDelayFactor, 2;
     obssScanActivityThreshold, 2;
-}
-
-IE HT2040BSSCoexistence (EID_20_40_BSS_COEXISTENCE)
-{
-     // 20/40 BSS Coexistence Information
-    {
-        infoRequest:             1;
-        fortyMHzIntolerant:      1;
-        twentyMHzBssWidthReq:    1;
-        obssScanExemptionReq:    1;
-        obssScanExemptionGrant:  1;
-        unused:                  3;
-    }
-}
-
-IE HT2040BSSIntolerantReport (EID_20_40_BSS_INTOLERANT_REPORT)
-{
-     operatingClass, 1;
-     channelList[0..50];
 }
 
 const EID_RRM_NBR_RPT_TSF              =    1;
@@ -3130,7 +3103,6 @@ FRAME Beacon                              // C.f. Sec. 7.2.3.1
     OPTIE  Vendor2IE;
     OPTIE  Vendor3IE;
     OPTIE  ChannelSwitchWrapper;
-    OPTIE  QComVendorIE;
 } // End frame Beacon.
 
 // Ok, here's  the story on  Beacon1 & Beacon2.   We presumably beacon  a lot
@@ -3209,12 +3181,10 @@ FRAME Beacon2
     OPTIE  ExtCap;
     OPTIE  OperatingMode;
     OPTIE  WiderBWChanSwitchAnn;
-    OPTIE  OBSSScanParameters;
     OPTIE  Vendor1IE;
     OPTIE  Vendor2IE;
     OPTIE  Vendor3IE;
     OPTIE  ChannelSwitchWrapper;
-    OPTIE  QComVendorIE;
 }
 
 // This frame is just Beacon with its Fixed Fields stripped out.  It's handy
@@ -3275,7 +3245,6 @@ FRAME BeaconIEs
     OPTIE  Vendor2IE;
     OPTIE  Vendor3IE;
     OPTIE  ChannelSwitchWrapper;
-    OPTIE  QComVendorIE;
 
 } // End frame BeaconIEs.
 
@@ -3482,7 +3451,6 @@ FRAME ProbeResponse                       // 7.2.3.9
     OPTIE  Vendor2IE;
     OPTIE  Vendor3IE;
     OPTIE  ChannelSwitchWrapper;
-    OPTIE  QComVendorIE;
 } // End frame ProbeResponse.
 
 FRAME Authentication                      // 7.2.3.10
@@ -3896,7 +3864,7 @@ FRAME TDLSDisRsp
     OPTIE  TimeoutInterval;
     OPTIE  RICData;
     OPTIE  HTCaps;
-    OPTIE  HT2040BSSCoexistence;
+   //Optional 20/40BSSCoexistence... ignoring
     MANDIE LinkIdentifier;
     OPTIE  VHTCaps;
 }
@@ -3919,7 +3887,7 @@ FRAME TDLSSetupReq
     OPTIE  TimeoutInterval;
     OPTIE  RICData;
     OPTIE  HTCaps;
-    OPTIE  HT2040BSSCoexistence;
+   //Optional 20/40BSSCoexistence... ignoring
     MANDIE LinkIdentifier;
     OPTIE  WMMInfoStation;
     OPTIE  AID;
@@ -3945,7 +3913,7 @@ FRAME TDLSSetupRsp
     OPTIE  TimeoutInterval;
     OPTIE  RICData;
     OPTIE  HTCaps;
-    OPTIE  HT2040BSSCoexistence;
+   //Optional 20/40BSSCoexistence... ignoring
     OPTIE  LinkIdentifier;
     OPTIE  WMMInfoStation;
     OPTIE  AID;
@@ -4023,14 +3991,6 @@ FRAME VHTGidManagementActionFrame
     FF     Action;
     FF     VhtMembershipStatusArray;
     FF     VhtUserPositionArray;
-}
-
-FRAME HT2040BSSCoexistenceManagementActionFrame
-{
-    FF     Category;
-    FF     Action;
-    MANDIE HT2040BSSCoexistence;
-    MANDIE HT2040BSSIntolerantReport;
 }
 
 // Local Variables:

@@ -147,6 +147,21 @@ typedef enum{
 }eSapReasonCode;
 
 typedef enum {
+    eSAP_DOT11_MODE_abg = 0x0001,
+    eSAP_DOT11_MODE_11a = 0x0002,
+    eSAP_DOT11_MODE_11b = 0x0004,
+    eSAP_DOT11_MODE_11g = 0x0008,
+    eSAP_DOT11_MODE_11n = 0x0010,
+    eSAP_DOT11_MODE_11g_ONLY = 0x0080,
+    eSAP_DOT11_MODE_11n_ONLY = 0x0100,
+    eSAP_DOT11_MODE_11b_ONLY = 0x0400,
+#ifdef WLAN_FEATURE_11AC
+    eSAP_DOT11_MODE_11ac     = 0x1000,
+    eSAP_DOT11_MODE_11ac_ONLY = 0x2000
+#endif
+} eSapPhyMode;
+
+typedef enum {
     eSAP_ACCEPT_UNLESS_DENIED = 0,
     eSAP_DENY_UNLESS_ACCEPTED = 1,
     eSAP_SUPPORT_ACCEPT_AND_DENY = 2, /* this type is added to support both accept and deny lists at the same time */
@@ -195,7 +210,6 @@ typedef enum {
 #ifdef FEATURE_WLAN_AP_AP_ACS_OPTIMIZE
     eSAP_ACS_SCAN_SUCCESS_EVENT,
 #endif
-    eSAP_ACS_CHANNEL_SELECTED,
 } eSapHddEvent;
 
 typedef enum {
@@ -393,11 +407,6 @@ typedef struct sap_DfsNolInfo_s {
    v_PVOID_t pDfsList;       /* pointer to pDfsList buffer */
 } tSap_DfsNolInfo;
 
-typedef struct sap_AcsChSelected_s {
-   v_U8_t   pri_channel;
-   v_U8_t   sec_channel;
-} tSap_AcsChSelectedEvent;
-
 /*
    This struct will be filled in and passed to tpWLAN_SAPEventCB that is provided during WLANSAP_StartBss call
    The event id corresponding to structure  in the union is defined in comment next to the structure
@@ -423,8 +432,6 @@ typedef struct sap_Event_s {
         tSap_MaxAssocExceededEvent                sapMaxAssocExceeded; /* eSAP_MAX_ASSOC_EXCEEDED */
         tSap_OperatingChannelChangeEvent          sapChannelChange; /* eSAP_CHANNEL_CHANGE_EVENT */
         tSap_DfsNolInfo                           sapDfsNolInfo;    /*eSAP_DFS_NOL_XXX */
-        /*eSAP_ACS_CHANNEL_SELECTED */
-        tSap_AcsChSelectedEvent                   sapAcsChSelected;
     } sapevt;
 } tSap_Event, *tpSap_Event;
 
@@ -441,7 +448,7 @@ typedef __ani_attr_pre_packed struct sap_SSIDInfo {
 
 typedef struct sap_Config {
     tSap_SSIDInfo_t SSIDinfo;
-    eCsrPhyMode     SapHw_mode; /* Wireless Mode */
+    eSapPhyMode     SapHw_mode; /* Wireless Mode */
     eSapMacAddrACL  SapMacaddr_acl;
     v_MACADDR_t     accept_mac[MAX_ACL_MAC_ADDRESS]; /* MAC filtering */
     v_BOOL_t        ieee80211d;      /*Specify if 11D is enabled or disabled*/
@@ -451,8 +458,6 @@ typedef struct sap_Config {
     v_MACADDR_t     self_macaddr; //self macaddress or BSSID
 
     v_U8_t          channel;         /* Operation channel */
-    v_U32_t         vht_channel_width;
-    v_U32_t         vht_ch_width_orig;
     v_U8_t          max_num_sta;     /* maximum number of STAs in station table */
     v_U8_t          dtim_period;     /* dtim interval */
     v_U8_t          num_accept_mac;
@@ -1221,8 +1226,7 @@ WLANSAP_DisassocSta
 
     IN
     pvosGCtx            : Pointer to vos global context structure
-    pDelStaParams       : Pointer to parameters of the station to
-                          deauthenticate
+    pPeerStaMac         : Mac address of the station to deauthenticate
 
   RETURN VALUE
     The VOS_STATUS code associated with performing the operation
@@ -1235,7 +1239,7 @@ VOS_STATUS
 WLANSAP_DeauthSta
 (
     v_PVOID_t pvosGCtx,
-    struct tagCsrDelStaParams *pDelStaParams
+    v_U8_t *pPeerStaMac
 );
 
 /*==========================================================================
@@ -2145,41 +2149,6 @@ WLANSAP_Set_Dfs_Target_Chnl(tHalHandle hHal,
 
 
 /*==========================================================================
-  FUNCTION   wlan_sap_get_vht_ch_width
-
-  DESCRIPTION Returns the SAP VHT channel width.
-
-  DEPENDENCIES NA.
-
-  PARAMETERS
-  IN
-  ctx: Pointer to vos Context or Sap Context based on MBSSID
-
-  RETURN VALUE VHT channnel width
-
-  SIDE EFFECTS
-============================================================================*/
-v_U32_t wlan_sap_get_vht_ch_width(v_PVOID_t ctx);
-
-/*==========================================================================
-  FUNCTION   wlan_sap_set_vht_ch_width
-
-  DESCRIPTION Sets the SAP VHT channel width.
-
-  DEPENDENCIES NA.
-
-  PARAMETERS
-  IN
-  ctx: Pointer to vos Context or Sap Context based on MBSSID
-  vht_channel_width - VHT channel width
-
-  RETURN VALUE NONE
-
-  SIDE EFFECTS
-============================================================================*/
-void wlan_sap_set_vht_ch_width(v_PVOID_t ctx, v_U32_t vht_channel_width);
-
-/*==========================================================================
   FUNCTION    WLANSAP_UpdateSapConfigAddIE
 
   DESCRIPTION
@@ -2243,6 +2212,23 @@ VOS_STATUS WLANSAP_UpdateSapConfigAddIE(tsap_Config_t *pConfig,
 VOS_STATUS
 WLANSAP_ResetSapConfigAddIE(tsap_Config_t *pConfig,
                             eUpdateIEsType updateType);
+
+
+
+/*==========================================================================
+FUNCTION  sapConvertSapPhyModeToCsrPhyMode
+
+DESCRIPTION Function to implement selection of CSR PhyMode using SAP PhyMode
+
+DEPENDENCIES PARAMETERS
+
+IN sapPhyMode : SAP Phy Module
+
+RETURN VALUE If SUCCESS or FAILURE
+
+SIDE EFFECTS
+============================================================================*/
+eCsrPhyMode sapConvertSapPhyModeToCsrPhyMode( eSapPhyMode sapPhyMode );
 
 /*==========================================================================
 FUNCTION  WLANSAP_extend_to_acs_range
@@ -2311,63 +2297,6 @@ WLANSAP_Get_DfsNol(v_PVOID_t pSapCtx);
 ============================================================================*/
 VOS_STATUS
 WLANSAP_Set_DfsNol(v_PVOID_t pSapCtx, eSapDfsNolType conf);
-
-/*==========================================================================
-  FUNCTION    WLANSAP_PopulateDelStaParams
-
-  DESCRIPTION
-  This API is used to populate del station parameters
-  DEPENDENCIES
-  NA.
-
-  PARAMETERS
-  IN
-  mac:           pointer to peer mac address.
-  reason_code:   Reason code for the disassoc/deauth.
-  subtype:       subtype points to either disassoc/deauth frame.
-  pDelStaParams: address where parameters to be populated.
-
-  RETURN VALUE NONE
-
-  SIDE EFFECTS
-============================================================================*/
-
-void WLANSAP_PopulateDelStaParams(const v_U8_t *mac,
-                                  v_U16_t reason_code,
-                                  v_U8_t subtype,
-                                  struct tagCsrDelStaParams *pDelStaParams);
-
-/*==========================================================================
-  FUNCTION    WLANSAP_ACS_CHSelect
-
-  DESCRIPTION
-    This api function provides ACS selection for BSS
-
-  DEPENDENCIES
-    NA.
-
-  PARAMETERS
-
-    IN
-      pvosGCtx: Pointer to vos global context structure
-      pConfig: Pointer to configuration structure passed down from HDD
-      pACSEventCallback: Callback function in HDD called by SAP to inform
-                         HDD about channel section result
-      usrDataForCallback: Parameter that will be passed back in all the
-                          SAP callback events.
-
-  RETURN VALUE
-    The VOS_STATUS code associated with performing the operation
-
-    VOS_STATUS_SUCCESS:  Success
-
-  SIDE EFFECTS
-============================================================================*/
-VOS_STATUS
-WLANSAP_ACS_CHSelect(v_PVOID_t pvosGCtx,
-                     tpWLAN_SAPEventCB pACSEventCallback,
-                     tsap_Config_t *pConfig,
-                     v_PVOID_t  pUsrContext);
 
 #ifdef __cplusplus
  }

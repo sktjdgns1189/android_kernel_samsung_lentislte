@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013-2015 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2014 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -89,7 +89,6 @@ struct hif_pci_softc {
     atomic_t pci_link_suspended;
     bool hif_init_done;
     bool recovery;
-    bool hdd_startup_reinit_flag;
     int htc_endpoint;
 };
 #define TARGID(sc) ((A_target_id_t)(&(sc)->mem))
@@ -129,7 +128,7 @@ void dump_CE_debug_register(struct hif_pci_softc *sc);
 /*These functions are exposed to HDD*/
 int hif_register_driver(void);
 void hif_unregister_driver(void);
-int hif_init_adf_ctx(void *ol_sc);
+void hif_init_adf_ctx(adf_os_device_t adf_dev, void *ol_sc);
 void hif_init_pdev_txrx_handle(void *ol_sc, void *txrx_handle);
 void hif_disable_isr(void *ol_sc);
 void hif_reset_soc(void *ol_sc);

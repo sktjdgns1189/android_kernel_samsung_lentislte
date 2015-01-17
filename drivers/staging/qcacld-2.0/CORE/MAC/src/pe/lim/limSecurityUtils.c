@@ -86,9 +86,10 @@ limIsAuthAlgoSupported(tpAniSirGlobal pMac, tAniAuthType authType, tpPESession p
 
     if (authType == eSIR_OPEN_SYSTEM)
     {
-        if (LIM_IS_AP_ROLE(psessionEntry)) {
-           if ((psessionEntry->authType == eSIR_OPEN_SYSTEM) ||
-              (psessionEntry->authType == eSIR_AUTO_SWITCH))
+
+        if(psessionEntry->limSystemRole == eLIM_AP_ROLE)
+        {
+           if((psessionEntry->authType == eSIR_OPEN_SYSTEM) || (psessionEntry->authType == eSIR_AUTO_SWITCH))
               return true;
            else
               return false;
@@ -112,14 +113,19 @@ limIsAuthAlgoSupported(tpAniSirGlobal pMac, tAniAuthType authType, tpPESession p
     else
     {
 
-        if (LIM_IS_AP_ROLE(psessionEntry)) {
-            if ((psessionEntry->authType == eSIR_SHARED_KEY) ||
-               (psessionEntry->authType == eSIR_AUTO_SWITCH))
+        if(psessionEntry->limSystemRole == eLIM_AP_ROLE)
+        {
+            if((psessionEntry->authType == eSIR_SHARED_KEY) || (psessionEntry->authType == eSIR_AUTO_SWITCH))
                 algoEnable = true;
             else
                 algoEnable = false;
-        } else if (wlan_cfgGetInt(pMac, WNI_CFG_SHARED_KEY_AUTH_ENABLE,
-                      &algoEnable) != eSIR_SUCCESS) {
+
+        }
+        else
+
+        if (wlan_cfgGetInt(pMac, WNI_CFG_SHARED_KEY_AUTH_ENABLE,
+                      &algoEnable) != eSIR_SUCCESS)
+        {
             /**
              * Could not get AuthAlgo2 Enable value
              * from CFG. Log error.
@@ -130,10 +136,15 @@ limIsAuthAlgoSupported(tpAniSirGlobal pMac, tAniAuthType authType, tpPESession p
             return false;
         }
 
-        if (LIM_IS_AP_ROLE(psessionEntry)) {
+        if(psessionEntry->limSystemRole == eLIM_AP_ROLE)
+        {
             privacyOptImp = psessionEntry->privacy;
-        } else if (wlan_cfgGetInt(pMac, WNI_CFG_PRIVACY_ENABLED,
-                      &privacyOptImp) != eSIR_SUCCESS) {
+        }
+        else
+
+        if (wlan_cfgGetInt(pMac, WNI_CFG_PRIVACY_ENABLED,
+                      &privacyOptImp) != eSIR_SUCCESS)
+        {
             /**
              * Could not get PrivacyOptionImplemented value
              * from CFG. Log error.
@@ -1019,11 +1030,11 @@ void limSendSetStaKeyReq( tpAniSirGlobal pMac,
       SET_LIM_PROCESS_DEFD_MESGS(pMac, false);
   }
 
-  if (LIM_IS_IBSS_ROLE(sessionEntry) && !pMlmSetKeysReq->key[0].unicast) {
+  if(sessionEntry->limSystemRole == eLIM_STA_IN_IBSS_ROLE && !pMlmSetKeysReq->key[0].unicast) {
       if (sendRsp == eANI_BOOLEAN_TRUE)
           sessionEntry->limMlmState = eLIM_MLM_WT_SET_STA_BCASTKEY_STATE;
       msgQ.type = WDA_SET_STA_BCASTKEY_REQ;
-  } else {
+  }else {
       if (sendRsp == eANI_BOOLEAN_TRUE)
           sessionEntry->limMlmState = eLIM_MLM_WT_SET_STA_KEY_STATE;
       msgQ.type = WDA_SET_STAKEY_REQ;

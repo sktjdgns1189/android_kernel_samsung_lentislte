@@ -154,7 +154,6 @@ struct ol_tx_desc_t {
 #if defined(CONFIG_PER_VDEV_TX_DESC_POOL)
 	struct ol_txrx_vdev_t* vdev;
 #endif
-	void *txq;
 };
 
 typedef TAILQ_HEAD(, ol_tx_desc_t) ol_tx_desc_list;
@@ -192,32 +191,6 @@ struct ol_rx_reorder_timeout_list_elem_t
 		(((_tid) ^ ((_tid) >> 1)) & 0x1) ? TXRX_WMM_AC_BK : \
 		TXRX_WMM_AC_BE)
 
-enum {
-    OL_TX_SCHED_WRR_ADV_CAT_BE,
-    OL_TX_SCHED_WRR_ADV_CAT_BK,
-    OL_TX_SCHED_WRR_ADV_CAT_VI,
-    OL_TX_SCHED_WRR_ADV_CAT_VO,
-    OL_TX_SCHED_WRR_ADV_CAT_NON_QOS_DATA,
-    OL_TX_SCHED_WRR_ADV_CAT_UCAST_MGMT,
-    OL_TX_SCHED_WRR_ADV_CAT_MCAST_DATA,
-    OL_TX_SCHED_WRR_ADV_CAT_MCAST_MGMT,
-
-    OL_TX_SCHED_WRR_ADV_NUM_CATEGORIES /* must be last */
-};
-
-A_COMPILE_TIME_ASSERT(ol_tx_sched_htt_ac_values,
-    /* check that regular WMM AC enum values match */
-    ((int)OL_TX_SCHED_WRR_ADV_CAT_VO == (int)HTT_AC_WMM_VO) &&
-    ((int)OL_TX_SCHED_WRR_ADV_CAT_VI == (int)HTT_AC_WMM_VI) &&
-    ((int)OL_TX_SCHED_WRR_ADV_CAT_BK == (int)HTT_AC_WMM_BK) &&
-    ((int)OL_TX_SCHED_WRR_ADV_CAT_BE == (int)HTT_AC_WMM_BE) &&
-
-    /* check that extension AC enum values match */
-    ((int)OL_TX_SCHED_WRR_ADV_CAT_NON_QOS_DATA == (int)HTT_AC_EXT_NON_QOS) &&
-    ((int)OL_TX_SCHED_WRR_ADV_CAT_UCAST_MGMT == (int)HTT_AC_EXT_UCAST_MGMT) &&
-    ((int)OL_TX_SCHED_WRR_ADV_CAT_MCAST_DATA == (int)HTT_AC_EXT_MCAST_DATA) &&
-    ((int)OL_TX_SCHED_WRR_ADV_CAT_MCAST_MGMT == (int)HTT_AC_EXT_MCAST_MGMT));
-
 struct ol_tx_reorder_cat_timeout_t {
 	TAILQ_HEAD(, ol_rx_reorder_timeout_list_elem_t) virtual_timer_list;
 	adf_os_timer_t timer;
@@ -249,19 +222,6 @@ enum {
 	ol_tx_aggr_in_progress,
 };
 
-#define OL_TX_MAX_GROUPS_PER_QUEUE 1
-#define OL_TX_MAX_VDEV_ID 16
-#define OL_TXQ_GROUP_VDEV_ID_MASK_GET(_membership)           \
-	(((_membership) & 0xffff0000) >> 16)
-#define OL_TXQ_GROUP_VDEV_ID_BIT_MASK_GET(_mask, _vdev_id)   \
-	((_mask >> _vdev_id) & 0x01)
-#define OL_TXQ_GROUP_AC_MASK_GET(_membership)           \
-	((_membership) & 0x0000ffff)
-#define OL_TXQ_GROUP_AC_BIT_MASK_GET(_mask, _ac_mask)   \
-	((_mask >> _ac_mask) & 0x01)
-#define OL_TXQ_GROUP_MEMBERSHIP_GET(_vdev_mask, _ac_mask)     \
-			((_vdev_mask << 16) | _ac_mask)
-
 struct ol_tx_frms_queue_t {
 	/* list_elem -
 	 * Allow individual tx frame queues to be linked together into
@@ -279,7 +239,6 @@ struct ol_tx_frms_queue_t {
 	u_int32_t bytes;
 	ol_tx_desc_list head;
 	enum ol_tx_queue_status flag;
-	struct ol_tx_queue_group_t *group_ptrs[OL_TX_MAX_GROUPS_PER_QUEUE];
 };
 
 enum {
@@ -365,12 +324,6 @@ typedef enum _throttle_phase {
 #ifdef IPA_UC_OFFLOAD
 typedef void (*ipa_uc_op_cb_type)(u_int8_t *op_msg, void *osif_ctxt);
 #endif /* IPA_UC_OFFLOAD */
-
-struct ol_tx_queue_group_t {
-	adf_os_atomic_t credit;
-	u_int32_t membership;
-};
-#define OL_TX_MAX_TXQ_GROUPS 2
 
 /*
  * As depicted in the diagram below, the pdev contains an array of
@@ -647,7 +600,6 @@ struct ol_txrx_pdev_t {
 	struct {
 		enum ol_tx_scheduler_status tx_sched_status;
 		ol_tx_sched_handle scheduler;
-		struct ol_tx_frms_queue_t *last_used_txq;
 	} tx_sched;
 	/*
 	 * tx_queue only applies for HL, but is defined unconditionally to avoid
@@ -739,10 +691,6 @@ struct ol_txrx_pdev_t {
     ipa_uc_op_cb_type ipa_uc_op_cb;
     void *osif_dev;
 #endif /* IPA_UC_OFFLOAD */
-	struct ol_tx_queue_group_t txq_grps[OL_TX_MAX_TXQ_GROUPS];
-	u_int8_t ocb_peer_valid;
-	struct ol_txrx_peer_t *ocb_peer;
-	int tid_to_ac[OL_TX_NUM_TIDS + OL_TX_VDEV_NUM_QUEUES];
 };
 
 struct ol_txrx_vdev_t {

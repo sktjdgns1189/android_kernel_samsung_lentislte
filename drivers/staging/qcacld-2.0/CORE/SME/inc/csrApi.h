@@ -122,8 +122,9 @@ typedef enum
 
 }eCsrSecurityType;
 
-typedef enum {
-    eCSR_DOT11_MODE_abg = 0x0001, /* 11a/b/g only, no HT, no proprietary */
+typedef enum
+{
+    eCSR_DOT11_MODE_abg = 0x0001,    //11a/b/g only, no HT, no proprietary
     eCSR_DOT11_MODE_11a = 0x0002,
     eCSR_DOT11_MODE_11b = 0x0004,
     eCSR_DOT11_MODE_11g = 0x0008,
@@ -131,20 +132,18 @@ typedef enum {
     eCSR_DOT11_MODE_11g_ONLY = 0x0020,
     eCSR_DOT11_MODE_11n_ONLY = 0x0040,
     eCSR_DOT11_MODE_11b_ONLY = 0x0080,
+    eCSR_DOT11_MODE_11a_ONLY = 0x0100,
 #ifdef WLAN_FEATURE_11AC
-    eCSR_DOT11_MODE_11ac     = 0x0100,
-    eCSR_DOT11_MODE_11ac_ONLY = 0x0200,
+    eCSR_DOT11_MODE_11ac     = 0x0200,
+    eCSR_DOT11_MODE_11ac_ONLY = 0x0400,
 #endif
-    /*
-     * This is for WIFI test. It is same as eWNIAPI_MAC_PROTOCOL_ALL
-     * except when it starts IBSS in 11B of 2.4GHz
-     * It is for CSR internal use
-     */
-    eCSR_DOT11_MODE_AUTO = 0x0400,
+    //This is for WIFI test. It is same as eWNIAPI_MAC_PROTOCOL_ALL except when it starts IBSS in 11B of 2.4GHz
+    //It is for CSR internal use
+    eCSR_DOT11_MODE_AUTO = 0x0800,
 
-    eCSR_NUM_PHY_MODE = 16, /* specify the number of maximum bits for phyMode */
+    eCSR_NUM_PHY_MODE = 16,     //specify the number of maximum bits for phyMode
+}eCsrPhyMode;
 
-} eCsrPhyMode;
 
 typedef tANI_U8 tCsrBssid[VOS_MAC_ADDR_SIZE];
 
@@ -522,6 +521,9 @@ typedef enum
 
     // Channel sw update notification
     eCSR_ROAM_DFS_CHAN_SW_NOTIFY,
+#ifdef WLAN_FEATURE_ROAM_OFFLOAD
+    eCSR_ROAM_AUTHORIZED_EVENT
+#endif
 }eRoamCmdStatus;
 
 
@@ -882,8 +884,7 @@ typedef struct tagCsrRoamProfile
     //that we need to join. Index 1 is the SSID for self BSS.
     tCsrSSIDs SSIDs;
     tCsrBSSIDs BSSIDs;
-    /* this is a bit mask of all the needed phy mode defined in eCsrPhyMode */
-    eCsrPhyMode phyMode;
+    tANI_U32 phyMode;   //this is a bit mask of all the needed phy mode defined in eCsrPhyMode
     eCsrRoamBssType BSSType;
 
     tCsrAuthList AuthType;
@@ -910,7 +911,6 @@ typedef struct tagCsrRoamProfile
     eCsrCBChoice CBMode; //up, down or auto
     tCsrChannelInfo ChannelInfo;
     tANI_U8 operationChannel;
-    tANI_U32 vht_channel_width;
     tANI_U16 beaconInterval;    //If this is 0, SME will fill in for caller.
     // during connect this specifies ACs U-APSD is to be setup
     //   for (Bit0:VO; Bit1:VI; Bit2:BK; Bit3:BE all other bits are ignored).
@@ -990,7 +990,6 @@ typedef struct tagCsrRoamConnectedProfile
     tCsrEncryptionList mcEncryptionInfo;
     eCsrCBChoice CBMode; //up, down or auto
     tANI_U8 operationChannel;
-    tANI_U32   vht_channel_width;
     tANI_U16   beaconInterval;
     tCsrKeys Keys;
     // meaningless on connect. It's an OUT param from CSR's point of view
@@ -1017,12 +1016,6 @@ typedef struct tagCsrRoamConnectedProfile
     tANI_U8 proxyARPService;
 #ifdef FEATURE_WLAN_MCC_TO_SCC_SWITCH
     tCsrRoamHTProfile HTProfile;
-#endif
-#ifdef WLAN_FEATURE_11W
-    /* Management Frame Protection */
-    tANI_BOOLEAN MFPEnabled;
-    tANI_U8 MFPRequired;
-    tANI_U8 MFPCapable;
 #endif
 }tCsrRoamConnectedProfile;
 
@@ -1052,7 +1045,6 @@ typedef struct tagCsrNeighborRoamConfigParams
     tANI_U8        nRoamBmissFirstBcnt;
     tANI_U8        nRoamBmissFinalBcnt;
     tANI_U8        nRoamBeaconRssiWeight;
-    tANI_U8        delay_before_vdev_stop;
 }tCsrNeighborRoamConfigParams;
 #endif
 
@@ -1117,7 +1109,6 @@ typedef struct tagCsrConfigParam
     tANI_U32  nActiveMaxChnTime;     //in units of milliseconds
 
     tANI_U32  nInitialDwellTime;      //in units of milliseconds
-    bool      initial_scan_no_dfs_chnl;
 
     tANI_U32  nActiveMinChnTimeBtc;     //in units of milliseconds
     tANI_U32  nActiveMaxChnTimeBtc;     //in units of milliseconds
@@ -1237,12 +1228,7 @@ typedef struct tagCsrConfigParam
 #endif
 
     tANI_BOOLEAN obssEnabled;
-    v_U8_t conc_custom_rule1;
-    v_U8_t conc_custom_rule2;
-    v_U8_t is_sta_connection_in_5gz_enabled;
 
-    /* 802.11p enable */
-    bool       enable_dot11p;
 }tCsrConfigParam;
 
 //Tush
@@ -1327,8 +1313,6 @@ typedef struct tagCsrRoamInfo
 
 #ifdef FEATURE_WLAN_TDLS
     tANI_U8 staType;
-    bool tdls_prohibited;           /* per ExtCap in Assoc/Reassoc resp */
-    bool tdls_chan_swit_prohibited; /* per ExtCap in Assoc/Reassoc resp */
 #endif
 
     // Required for indicating the frames to upper layer
@@ -1565,13 +1549,6 @@ typedef struct tagCsrEseBeaconReq
     tCsrEseBeaconReqParams bcnReq[SIR_ESE_MAX_MEAS_IE_REQS];
 } tCsrEseBeaconReq, *tpCsrEseBeaconReq;
 #endif /* FEATURE_WLAN_ESE && FEATURE_WLAN_ESE_UPLOAD */
-
-struct tagCsrDelStaParams
-{
-    tCsrBssid peerMacAddr;
-    u16 reason_code;
-    u8 subtype;
-};
 
 ////////////////////////////////////////////Common SCAN starts
 

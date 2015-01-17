@@ -79,7 +79,7 @@
 #define WMA_READY_EVENTID_TIMEOUT          2000
 #define WMA_TGT_SUSPEND_COMPLETE_TIMEOUT   3000
 #define WMA_WAKE_LOCK_TIMEOUT              1000
-#define WMA_MAX_RESUME_RETRY               10
+#define WMA_MAX_RESUME_RETRY               1000
 #define WMA_RESUME_TIMEOUT                 3000
 #define WMA_TGT_WOW_TX_COMPLETE_TIMEOUT    2000
 #define MAX_MEM_CHUNKS                     32
@@ -109,9 +109,6 @@
 #define WMA_11A_CHANNEL_END             165
 #define WMA_11G_CHANNEL_BEGIN           1
 #define WMA_11G_CHANNEL_END             14
-
-#define WMA_11P_CHANNEL_BEGIN           (172)
-#define WMA_11P_CHANNEL_END             (184)
 
 #define WMA_LOGD(args...) \
 	VOS_TRACE( VOS_MODULE_ID_WDA, VOS_TRACE_LEVEL_DEBUG, ## args)
@@ -154,7 +151,6 @@
 #define WMA_GO_MAX_ACTIVE_SCAN_BURST_DURATION   (120)
 #define WMA_DWELL_TIME_PASSIVE_DEFAULT          (110)
 #define WMA_DWELL_TIME_PROBE_TIME_MAP_SIZE      (11)
-#define WMA_3PORT_CONC_SCAN_MAX_BURST_DURATION  (25)
 
 #define WMA_SEC_TO_USEC                     (1000000)
 
@@ -218,10 +214,6 @@ static const t_probeTime_dwellTime
 #define WMA_EXTSCAN_REPEAT_PROBE        10
 #define WMA_EXTSCAN_BURST_DURATION      150
 #endif
-
-typedef void (*txFailIndCallback)(u_int8_t *peer_mac, u_int8_t seqNo);
-
-typedef void (*ocb_set_sched_callback_t)(sir_ocb_set_sched_response_t *resp);
 
 typedef struct {
 	HTC_ENDPOINT_ID endpoint_id;
@@ -543,7 +535,6 @@ struct wma_txrx_node {
 	v_BOOL_t roam_synch_in_progress;
 	void *plink_status_req;
 	void *psnr_req;
-	u_int8_t delay_before_vdev_stop;
 };
 
 #if defined(QCA_WIFI_FTM)
@@ -739,21 +730,10 @@ typedef struct {
 
 	u_int32_t hw_bd_id;
 	u_int32_t hw_bd_info[HW_BD_INFO_SIZE];
-#ifdef FEATURE_BUS_AUTO_SUSPEND
-	/* Callback registered by auto suspend to indicate HDD that driver
-	 * resumed from auto suspend. This callback is only needed for
-	 * auto resume.
-	 */
-	void (*resumed_cb)(void *param);
-#endif
 
 #ifdef FEATURE_WLAN_D0WOW
 	atomic_t in_d0wow;
 #endif
-
-	/* OCB Set Schedule Response */
-	ocb_set_sched_callback_t ocb_callback;
-	sir_ocb_set_sched_response_t *ocb_resp;
 }t_wma_handle, *tp_wma_handle;
 
 struct wma_target_cap {
@@ -891,6 +871,9 @@ typedef enum
    WLAN_HAL_PROCESS_PTT_REQ   = 70,
    WLAN_HAL_PROCESS_PTT_RSP   = 71,
 
+   // BTAMP related events
+   WLAN_HAL_SIGNAL_BTAMP_EVENT_REQ  = 72,
+   WLAN_HAL_SIGNAL_BTAMP_EVENT_RSP  = 73,
    WLAN_HAL_TL_HAL_FLUSH_AC_REQ     = 74,
    WLAN_HAL_TL_HAL_FLUSH_AC_RSP     = 75,
 
@@ -1042,6 +1025,9 @@ typedef enum
 
    WLAN_HAL_P2P_NOA_START_IND               = 184,
 
+   WLAN_HAL_GET_ROAM_RSSI_REQ               = 185,
+   WLAN_HAL_GET_ROAM_RSSI_RSP               = 186,
+
    WLAN_HAL_CLASS_B_STATS_IND               = 187,
    WLAN_HAL_DEL_BA_IND                      = 188,
    WLAN_HAL_DHCP_START_IND                  = 189,
@@ -1132,7 +1118,6 @@ u_int16_t get_regdmn_5g(u_int32_t reg_dmn);
 #define WMA_FW_TX_PPDU_STATS	0x4
 #define WMA_FW_TX_CONCISE_STATS 0x5
 #define WMA_FW_TX_RC_STATS	0x6
-#define WMA_FW_RX_REM_RING_BUF 0xc
 
 /*
  * Setting the Tx Comp Timeout to 1 secs.
@@ -1152,7 +1137,6 @@ struct wma_tx_ack_work_ctx {
 #define WMA_TARGET_REQ_TYPE_VDEV_DEL   0x3
 
 #define WMA_VDEV_START_REQUEST_TIMEOUT (3000) /* 3 seconds */
-#define WMA_VDEV_STOP_REQUEST_TIMEOUT  (3000) /* 3 seconds */
 
 struct wma_target_req {
 	vos_timer_t event_timeout;
@@ -1179,8 +1163,6 @@ struct wma_vdev_start_req {
 	u_int8_t ht_capable;
 	int32_t dfs_pri_multiplier;
 	u_int8_t dot11_mode;
-	bool is_half_rate;
-	bool is_quarter_rate;
 };
 
 struct wma_set_key_params {

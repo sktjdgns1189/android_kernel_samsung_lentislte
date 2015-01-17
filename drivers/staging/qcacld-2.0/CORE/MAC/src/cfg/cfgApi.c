@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2015 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2011-2014 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -835,18 +835,18 @@ cfgGetCapabilityInfo(tpAniSirGlobal pMac, tANI_U16 *pCap,tpPESession sessionEntr
 {
     tANI_U32 val = 0;
     tpSirMacCapabilityInfo pCapInfo;
+    tLimSystemRole systemRole = limGetSystemRole(sessionEntry);
 
     *pCap = 0;
     pCapInfo = (tpSirMacCapabilityInfo) pCap;
 
-    if (LIM_IS_IBSS_ROLE(sessionEntry))
+    if (systemRole == eLIM_STA_IN_IBSS_ROLE)
         pCapInfo->ibss = 1; // IBSS bit
-    else if (LIM_IS_AP_ROLE(sessionEntry) ||
-             LIM_IS_BT_AMP_AP_ROLE(sessionEntry) ||
-             LIM_IS_BT_AMP_STA_ROLE(sessionEntry) ||
-             LIM_IS_STA_ROLE(sessionEntry))
+    else if ( (systemRole == eLIM_AP_ROLE) ||(systemRole == eLIM_BT_AMP_AP_ROLE)||(systemRole == eLIM_BT_AMP_STA_ROLE) ||
+             (systemRole == eLIM_STA_ROLE) )
         pCapInfo->ess = 1; // ESS bit
-    else if (LIM_IS_P2P_DEVICE_ROLE(sessionEntry)) {
+    else if (limGetSystemRole(sessionEntry) == eLIM_P2P_DEVICE_ROLE )
+    {
         pCapInfo->ess = 0;
         pCapInfo->ibss = 0;
     }
@@ -854,18 +854,12 @@ cfgGetCapabilityInfo(tpAniSirGlobal pMac, tANI_U16 *pCap,tpPESession sessionEntr
         cfgLog(pMac, LOGP, FL("can't get capability, role is UNKNOWN!!"));
 
 
-    if (LIM_IS_AP_ROLE(sessionEntry)) {
+    if(systemRole == eLIM_AP_ROLE)
+    {
         val = sessionEntry->privacy;
-#ifdef SAP_AUTH_OFFLOAD
-         /* Support software AP Authentication Offload feature,
-          * If Auth offload security Type is not disabled
-          * We need to enable privacy bit in beacon
-          */
-        if (pMac->sap_auth_offload && pMac->sap_auth_offload_sec_type) {
-            val = 1;
-        }
-#endif
-    } else {
+    }
+    else
+    {
         // PRIVACY bit
         if (wlan_cfgGetInt(pMac, WNI_CFG_PRIVACY_ENABLED, &val) != eSIR_SUCCESS)
         {
@@ -896,9 +890,12 @@ cfgGetCapabilityInfo(tpAniSirGlobal pMac, tANI_U16 *pCap,tpPESession sessionEntr
         return eSIR_SUCCESS;
 
     // Short slot time bit
-    if (LIM_IS_AP_ROLE(sessionEntry)) {
+    if (systemRole == eLIM_AP_ROLE)
+    {
         pCapInfo->shortSlotTime = sessionEntry->shortSlotTimeSupported;
-    } else {
+    }
+    else
+    {
         if (wlan_cfgGetInt(pMac, WNI_CFG_11G_SHORT_SLOT_TIME_ENABLED, &val)
                        != eSIR_SUCCESS)
         {
@@ -919,7 +916,9 @@ cfgGetCapabilityInfo(tpAniSirGlobal pMac, tANI_U16 *pCap,tpPESession sessionEntr
     }
 
     // Spectrum Management bit
-    if (!LIM_IS_IBSS_ROLE(sessionEntry) && sessionEntry->lim11hEnable) {
+    if((eLIM_STA_IN_IBSS_ROLE != systemRole) &&
+            sessionEntry->lim11hEnable )
+    {
       if (wlan_cfgGetInt(pMac, WNI_CFG_11H_ENABLED, &val) != eSIR_SUCCESS)
       {
           cfgLog(pMac, LOGP, FL("cfg get WNI_CFG_11H_ENABLED failed"));
@@ -948,7 +947,8 @@ cfgGetCapabilityInfo(tpAniSirGlobal pMac, tANI_U16 *pCap,tpPESession sessionEntr
         pCapInfo->apsd = 1;
 
 #if defined WLAN_FEATURE_VOWIFI
-    if (LIM_IS_STA_ROLE(sessionEntry)) {
+    if ((limGetSystemRole(sessionEntry) == eLIM_STA_ROLE) )
+    {
       if (wlan_cfgGetInt(pMac, WNI_CFG_RRM_ENABLED, &val) != eSIR_SUCCESS)
       {
         cfgLog(pMac, LOGP, FL("cfg get WNI_CFG_RRM_ENABLED failed"));
@@ -1077,50 +1077,4 @@ Notify(tpAniSirGlobal pMac, tANI_U16 cfgId, tANI_U32 ntfMask)
 
 } /*** end Notify() ***/
 
-/**
- * cfg_get_vendor_ie_ptr_from_oui() - returns IE pointer in IE buffer given its
- * OUI and OUI size
- * @mac_ctx:    mac context.
- * @oui:        OUI string.
- * @oui_size:   length of OUI string
- *              One can provide multiple line descriptions
- *              for arguments.
- * @ie:         ie buffer
- * @ie_len:     length of ie buffer
- *
- * This function parses the IE buffer and finds the given OUI and returns its
- * pointer
- *
- * Return: pointer of given OUI IE else NULL
- */
-uint8_t* cfg_get_vendor_ie_ptr_from_oui(tpAniSirGlobal mac_ctx,
-					uint8_t *oui,
-					uint8_t oui_size,
-					uint8_t *ie,
-					uint16_t ie_len)
-{
-	int32_t left = ie_len;
-	uint8_t *ptr = ie;
-	uint8_t elem_id, elem_len;
-
-	while(left >= 2) {
-		elem_id  = ptr[0];
-		elem_len = ptr[1];
-		left -= 2;
-		if(elem_len > left) {
-			cfgLog(mac_ctx, LOGE,
-			FL("Invalid IEs eid = %d elem_len=%d left=%d"),
-			elem_id, elem_len, left);
-			return NULL;
-		}
-		if (SIR_MAC_EID_VENDOR == elem_id) {
-			if(memcmp(&ptr[2], oui, oui_size)==0)
-			return ptr;
-		}
-
-		left -= elem_len;
-		ptr += (elem_len + 2);
-	}
-	return NULL;
-}
 // ---------------------------------------------------------------------
