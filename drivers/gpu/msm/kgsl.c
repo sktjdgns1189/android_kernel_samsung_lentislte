@@ -30,6 +30,7 @@
 #include <linux/sort.h>
 #include <linux/security.h>
 #include <asm/cacheflush.h>
+#include <linux/compat.h>
 
 #include "kgsl.h"
 #include "kgsl_debugfs.h"

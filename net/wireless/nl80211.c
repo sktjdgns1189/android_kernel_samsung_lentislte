@@ -8511,7 +8511,7 @@ static int nl80211_vendor_cmd(struct sk_buff *skb, struct genl_info *info)
 	int i, err;
 	u32 vid, subcmd;
 
-	if (!rdev->wiphy.vendor_commands)
+	if (!rdev || !rdev->wiphy.vendor_commands)
 		return -EOPNOTSUPP;
 
 	if (IS_ERR(wdev)) {
@@ -8548,7 +8548,7 @@ static int nl80211_vendor_cmd(struct sk_buff *skb, struct genl_info *info)
 				return -EINVAL;
 
 			if (vcmd->flags & WIPHY_VENDOR_CMD_NEED_RUNNING) {
-				if (wdev->netdev &&
+				if (!wdev->netdev ||
 				    !netif_running(wdev->netdev))
 					return -ENETDOWN;
 			}
