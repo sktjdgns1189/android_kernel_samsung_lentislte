@@ -62,6 +62,9 @@
 #endif
 
 #define MAX_FBI_LIST 32
+
+extern int boot_mode_recovery;
+
 static struct fb_info *fbi_list[MAX_FBI_LIST];
 static int fbi_list_index;
 
@@ -71,6 +74,10 @@ static u32 mdss_fb_pseudo_palette[16] = {
 	0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff,
 	0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff
 };
+
+#ifdef CONFIG_FB_MSM_CAMERA_CSC
+u8 csc_update = 1;
+#endif
 
 static struct msm_mdp_interface *mdp_instance;
 
@@ -227,6 +234,64 @@ static struct led_classdev backlight_led = {
 	.brightness_set = mdss_fb_set_bl_brightness,
 	.max_brightness = MDSS_MAX_BL_BRIGHTNESS,
 };
+
+#ifdef CONFIG_FB_MSM_CAMERA_CSC
+static ssize_t csc_read_cfg(struct device *dev,
+               struct device_attribute *attr, char *buf)
+{
+	ssize_t ret = 0;
+
+	ret = snprintf(buf, PAGE_SIZE, "%d\n", csc_update);
+	return ret;
+}
+
+static ssize_t csc_write_cfg(struct device *dev,
+               struct device_attribute *attr, const char *buf, size_t count)
+{
+	ssize_t ret = strnlen(buf, PAGE_SIZE);
+	int err;
+	int mode;
+
+	err =  kstrtoint(buf, 0, &mode);
+	if (err)
+	       return ret;
+
+	csc_update = !!(u8)mode;
+
+	pr_info("%s: csc ctrl set to mode(%d) / csc_update(%d) \n", __func__, mode, csc_update);
+
+	return ret;
+}
+
+static DEVICE_ATTR(csc_cfg, S_IRUGO | S_IWUSR, csc_read_cfg, csc_write_cfg);
+
+static struct attribute *csc_fs_attrs[] = {
+	&dev_attr_csc_cfg.attr,
+	NULL,
+};
+
+static struct attribute_group csc_fs_attr_group = {
+	.attrs = csc_fs_attrs,
+};
+
+int mdp4_reg_csc_fs(struct msm_fb_data_type *mfd)
+{
+	int ret = 0;
+	struct device *dev = mfd->fbi->dev;
+
+	ret = sysfs_create_group(&dev->kobj,
+		&csc_fs_attr_group);
+	if (ret) {
+		pr_err("%s: sysfs group creation failed, ret=%d\n",
+		       __func__, ret);
+		return ret;
+	}
+
+	kobject_uevent(&dev->kobj, KOBJ_ADD);
+	pr_info("%s: kobject_uevent(KOBJ_ADD)\n", __func__);
+	return ret;
+}
+#endif
 
 static ssize_t mdss_fb_get_type(struct device *dev,
 				struct device_attribute *attr, char *buf)
@@ -438,21 +503,6 @@ static ssize_t mdss_fb_get_panel_info(struct device *dev,
 	return ret;
 }
 
-static ssize_t mdss_fb_get_src_split_info(struct device *dev,
-	struct device_attribute *attr, char *buf)
-{
-	struct fb_info *fbi = dev_get_drvdata(dev);
-	struct msm_fb_data_type *mfd = fbi->par;
-	int ret = 0;
-
-	if (mfd->split_display && (fbi->var.yres > 2048) &&
-		(fbi->var.yres > fbi->var.xres))
-		ret = scnprintf(buf, PAGE_SIZE,
-			"src_split_always\n");
-
-	return ret;
-}
-
 static DEVICE_ATTR(msm_fb_type, S_IRUGO, mdss_fb_get_type, NULL);
 static DEVICE_ATTR(msm_fb_split, S_IRUGO | S_IWUSR, mdss_fb_show_split,
 					mdss_fb_store_split);
@@ -461,8 +511,6 @@ static DEVICE_ATTR(idle_time, S_IRUGO | S_IWUSR | S_IWGRP,
 	mdss_fb_get_idle_time, mdss_fb_set_idle_time);
 static DEVICE_ATTR(idle_notify, S_IRUGO, mdss_fb_get_idle_notify, NULL);
 static DEVICE_ATTR(msm_fb_panel_info, S_IRUGO, mdss_fb_get_panel_info, NULL);
-static DEVICE_ATTR(msm_fb_src_split_info, S_IRUGO, mdss_fb_get_src_split_info,
-	NULL);
 
 static struct attribute *mdss_fb_attrs[] = {
 	&dev_attr_msm_fb_type.attr,
@@ -471,7 +519,6 @@ static struct attribute *mdss_fb_attrs[] = {
 	&dev_attr_idle_time.attr,
 	&dev_attr_idle_notify.attr,
 	&dev_attr_msm_fb_panel_info.attr,
-	&dev_attr_msm_fb_src_split_info.attr,
 	NULL,
 };
 
@@ -584,6 +631,9 @@ static int mdss_fb_probe(struct platform_device *pdev)
 
 	mdss_fb_create_sysfs(mfd);
 	mdss_fb_send_panel_event(mfd, MDSS_EVENT_FB_REGISTERED, fbi);
+#ifdef CONFIG_FB_MSM_CAMERA_CSC
+	mdp4_reg_csc_fs(mfd);
+#endif	
 
 	mfd->mdp_sync_pt_data.fence_name = "mdp-fence";
 	if (mfd->mdp_sync_pt_data.timeline == NULL) {
@@ -917,6 +967,9 @@ static int mdss_fb_blank_sub(int blank_mode, struct fb_info *info,
 	struct msm_fb_data_type *mfd = (struct msm_fb_data_type *)info->par;
 	int ret = 0;
 
+	pr_info("FB_NUM:%d, MDSS_FB_%s ++ \n", mfd->panel_info->fb_num,
+			blank_mode? "BLANK": "UNBLANK");
+
 	if (!op_enable)
 		return -EPERM;
 
@@ -977,6 +1030,10 @@ static int mdss_fb_blank_sub(int blank_mode, struct fb_info *info,
 	}
 	/* Notify listeners */
 	sysfs_notify(&mfd->fbi->dev->kobj, NULL, "show_blank_event");
+
+
+	pr_info("FB_NUM:%d, MDSS_FB_%s -- \n", mfd->panel_info->fb_num,
+			blank_mode ? "BLANK": "UNBLANK");
 
 	return ret;
 }
@@ -1045,7 +1102,6 @@ void mdss_fb_free_fb_ion_memory(struct msm_fb_data_type *mfd)
 	}
 
 	mfd->fbi->screen_base = NULL;
-	mfd->fbi->fix.smem_start = 0;
 	mfd->fbi->fix.smem_len = 0;
 
 	ion_unmap_kernel(mfd->fb_ion_client, mfd->fb_ion_handle);
@@ -1065,6 +1121,7 @@ int mdss_fb_alloc_fb_ion_memory(struct msm_fb_data_type *mfd)
 	int rc;
 	void *vaddr;
 
+	pr_info("%s ++\n", __func__);
 	if (!mfd) {
 		pr_err("Invalid input param - no mfd");
 		return -EINVAL;
@@ -1118,8 +1175,10 @@ int mdss_fb_alloc_fb_ion_memory(struct msm_fb_data_type *mfd)
 			&mfd->iova, mfd->index);
 
 	mfd->fbi->screen_base = (char *) vaddr;
-	mfd->fbi->fix.smem_start = (unsigned int) mfd->iova;
 	mfd->fbi->fix.smem_len = size;
+	pr_info("%s mfd->fbi->fix.smem_len = %d\n", __func__, mfd->fbi->fix.smem_len);	
+
+	pr_info("%s --\n", __func__);
 
 	return rc;
 
@@ -1127,6 +1186,7 @@ fb_mmap_failed:
 	ion_free(mfd->fb_ion_client, mfd->fb_ion_handle);
 	return rc;
 }
+
 
 /**
  * mdss_fb_fbmem_ion_mmap() -  Custom fb  mmap() function for MSM driver.
@@ -1153,6 +1213,7 @@ static int mdss_fb_fbmem_ion_mmap(struct fb_info *info,
 	unsigned int i;
 	struct page *page;
 
+	pr_info("%s +\n", __func__);
 	if (!mfd || !mfd->pdev || !mfd->pdev->dev.of_node) {
 		pr_err("Invalid device node\n");
 		return -ENODEV;
@@ -1161,7 +1222,7 @@ static int mdss_fb_fbmem_ion_mmap(struct fb_info *info,
 	req_size = vma->vm_end - vma->vm_start;
 	fb_size = mfd->fbi->fix.line_length * mfd->fbi->var.yres * MDSS_FB_NUM;
 	if (req_size > fb_size) {
-		pr_warn("requested map is greater than framebuffer");
+		pr_err("requested map is greater than framebuffer");
 		return -EOVERFLOW;
 	}
 
@@ -1195,6 +1256,7 @@ static int mdss_fb_fbmem_ion_mmap(struct fb_info *info,
 			page = sg_page(sg);
 
 			if (offset >= sg_dma_len(sg)) {
+				pr_info("%s ofsset = %ld, sg_dma_len(sg) = %d\n", __func__, offset, sg_dma_len(sg));				
 				offset -= sg_dma_len(sg);
 				continue;
 			} else if (offset) {
@@ -1224,6 +1286,8 @@ static int mdss_fb_fbmem_ion_mmap(struct fb_info *info,
 		mdss_fb_free_fb_ion_memory(mfd);
 		return -ENOMEM;
 	}
+	
+	pr_info("%s -\n", __func__);
 
 	return rc;
 }
@@ -1333,16 +1397,16 @@ static int mdss_fb_register(struct msm_fb_data_type *mfd)
 		fix->xpanstep = 1;
 		fix->ypanstep = 1;
 		var->vmode = FB_VMODE_NONINTERLACED;
-		var->blue.offset = 24;
-		var->green.offset = 16;
-		var->red.offset = 8;
+		var->blue.offset = 0;
+		var->green.offset = 8;
+		var->red.offset = 16;
 		var->blue.length = 8;
 		var->green.length = 8;
 		var->red.length = 8;
 		var->blue.msb_right = 0;
 		var->green.msb_right = 0;
 		var->red.msb_right = 0;
-		var->transp.offset = 0;
+		var->transp.offset = 24;
 		var->transp.length = 8;
 		bpp = 4;
 		break;
@@ -1352,16 +1416,16 @@ static int mdss_fb_register(struct msm_fb_data_type *mfd)
 		fix->xpanstep = 1;
 		fix->ypanstep = 1;
 		var->vmode = FB_VMODE_NONINTERLACED;
-		var->blue.offset = 16;
-		var->green.offset = 8;
-		var->red.offset = 0;
+		var->blue.offset = 8;
+		var->green.offset = 16;
+		var->red.offset = 24;
 		var->blue.length = 8;
 		var->green.length = 8;
 		var->red.length = 8;
 		var->blue.msb_right = 0;
 		var->green.msb_right = 0;
 		var->red.msb_right = 0;
-		var->transp.offset = 24;
+		var->transp.offset = 0;
 		var->transp.length = 8;
 		bpp = 4;
 		break;
@@ -1886,14 +1950,6 @@ static void mdss_fb_release_fences(struct msm_fb_data_type *mfd)
 	mutex_unlock(&sync_pt_data->sync_mutex);
 }
 
-static void mdss_fb_release_kickoff(struct msm_fb_data_type *mfd)
-{
-	if (mfd->wait_for_kickoff) {
-		atomic_set(&mfd->kickoff_pending, 0);
-		wake_up_all(&mfd->kickoff_wait_q);
-	}
-}
-
 /**
  * __mdss_fb_sync_buf_done_callback() - process async display events
  * @p:		Notifier block registered for async events.
@@ -1933,9 +1989,6 @@ static int __mdss_fb_sync_buf_done_callback(struct notifier_block *p,
 	case MDP_NOTIFY_FRAME_DONE:
 		pr_debug("%s: frame done\n", sync_pt_data->fence_name);
 		mdss_fb_signal_timeline(sync_pt_data);
-		break;
-	case MDP_NOTIFY_FRAME_START:
-		mdss_fb_release_kickoff(mfd);
 		break;
 	}
 
@@ -2109,26 +2162,30 @@ static int __mdss_fb_perform_commit(struct msm_fb_data_type *mfd)
 	sync_pt_data->flushed = false;
 
 	if (fb_backup->disp_commit.flags & MDP_DISPLAY_COMMIT_OVERLAY) {
-		if (mfd->mdp.kickoff_fnc)
+		if (mfd->mdp.kickoff_fnc && mfd->op_enable && mfd->panel_power_on)
 			ret = mfd->mdp.kickoff_fnc(mfd,
 					&fb_backup->disp_commit);
-		else
-			pr_warn("no kickoff function setup for fb%d\n",
-					mfd->index);
+		else {
+			pr_warn("no kickoff function setup for fb%d, op_enable(%d), power_on(%d)\n",
+					mfd->index, mfd->op_enable, mfd->panel_power_on);
+			atomic_set(&mfd->kickoff_pending, 0);
+			wake_up_all(&mfd->kickoff_wait_q);
+		}
 	} else {
 		ret = mdss_fb_pan_display_sub(&fb_backup->disp_commit.var,
 				&fb_backup->info);
 		if (ret)
 			pr_err("pan display failed %x on fb%d\n", ret,
 					mfd->index);
+		atomic_set(&mfd->kickoff_pending, 0);
+		wake_up_all(&mfd->kickoff_wait_q);
 	}
 	if (!ret)
 		mdss_fb_update_backlight(mfd);
 
-	if (IS_ERR_VALUE(ret) || !sync_pt_data->flushed) {
-		mdss_fb_release_kickoff(mfd);
+	if (IS_ERR_VALUE(ret) || !sync_pt_data->flushed)
 		mdss_fb_signal_timeline(sync_pt_data);
-	}
+
 	return ret;
 }
 
@@ -2162,8 +2219,8 @@ static int __mdss_fb_display_thread(void *data)
 		wake_up_all(&mfd->idle_wait_q);
 	}
 
-	mdss_fb_release_kickoff(mfd);
 	atomic_set(&mfd->commits_pending, 0);
+	atomic_set(&mfd->kickoff_pending, 0);
 	wake_up_all(&mfd->idle_wait_q);
 
 	return ret;
@@ -2215,22 +2272,21 @@ static int mdss_fb_check_var(struct fb_var_screeninfo *var,
 		break;
 
 	case 32:
-		/* Check user specified color format BGRA/ARGB/RGBA
+		/* Figure out if the user meant RGBA or ARGB
 		   and verify the position of the RGB components */
 
-		if (!((var->transp.offset == 24) &&
-			(var->blue.offset == 0) &&
-			(var->green.offset == 8) &&
-			(var->red.offset == 16)) &&
-		    !((var->transp.offset == 0) &&
-			(var->blue.offset == 24) &&
-			(var->green.offset == 16) &&
-			(var->red.offset == 8)) &&
-		    !((var->transp.offset == 24) &&
-			(var->blue.offset == 16) &&
-			(var->green.offset == 8) &&
-			(var->red.offset == 0)))
+		if (var->transp.offset == 24) {
+			if ((var->blue.offset != 0) ||
+			    (var->green.offset != 8) ||
+			    (var->red.offset != 16))
 				return -EINVAL;
+		} else if (var->transp.offset == 0) {
+			if ((var->blue.offset != 8) ||
+			    (var->green.offset != 16) ||
+			    (var->red.offset != 24))
+				return -EINVAL;
+		} else
+			return -EINVAL;
 
 		/* Check the common values for both RGBA and ARGB */
 
@@ -2317,23 +2373,10 @@ static int mdss_fb_set_par(struct fb_info *info)
 		break;
 
 	case 32:
-		if ((var->red.offset == 0) &&
-		    (var->green.offset == 8) &&
-		    (var->blue.offset == 16) &&
-		    (var->transp.offset == 24))
-			mfd->fb_imgType = MDP_RGBA_8888;
-		else if ((var->red.offset == 16) &&
-		    (var->green.offset == 8) &&
-		    (var->blue.offset == 0) &&
-		    (var->transp.offset == 24))
-			mfd->fb_imgType = MDP_BGRA_8888;
-		else if ((var->red.offset == 8) &&
-		    (var->green.offset == 16) &&
-		    (var->blue.offset == 24) &&
-		    (var->transp.offset == 0))
+		if (var->transp.offset == 24)
 			mfd->fb_imgType = MDP_ARGB_8888;
 		else
-			mfd->fb_imgType = MDP_RGBA_8888;
+			mfd->fb_imgType	= MDP_RGBA_8888;
 		break;
 
 	default:

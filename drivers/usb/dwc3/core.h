@@ -834,6 +834,13 @@ struct dwc3 {
 	bool			core_reset_after_phy_init;
 	bool			err_evt_seen;
 	bool			enable_suspend_event;
+
+#ifdef CONFIG_USB_ANDROID_SAMSUNG_USB30_MENU
+	enum usb_device_speed	speed_limit;
+	struct work_struct	reconnect_work;
+	int			ss_host_avail;
+	bool			reconnect;
+#endif
 };
 
 /* -------------------------------------------------------------------------- */

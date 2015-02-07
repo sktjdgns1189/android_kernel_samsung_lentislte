@@ -5,7 +5,8 @@
 
 enum msm_ion_heap_types {
 	ION_HEAP_TYPE_MSM_START = ION_HEAP_TYPE_CUSTOM + 1,
-	ION_HEAP_TYPE_DMA = ION_HEAP_TYPE_MSM_START,
+	ION_HEAP_TYPE_IOMMUCA = ION_HEAP_TYPE_MSM_START,
+	ION_HEAP_TYPE_DMA,
 	ION_HEAP_TYPE_SECURE_DMA,
 	ION_HEAP_TYPE_REMOVED,
 	/*
@@ -39,6 +40,7 @@ enum ion_heap_ids {
 	ION_AUDIO_HEAP_ID = 28,
 
 	ION_MM_FIRMWARE_HEAP_ID = 29,
+	ION_IOMMUCA_HEAP_ID = 30,
 
 	ION_HEAP_ID_RESERVED = 31 /** Bit reserved for ION_FLAG_SECURE flag */
 };
@@ -107,6 +109,7 @@ enum cp_mem_usage {
 #define ION_MM_HEAP_NAME	"mm"
 #define ION_CAMERA_HEAP_NAME	"camera_preview"
 #define ION_IOMMU_HEAP_NAME	"iommu"
+#define ION_IOMMUCA_HEAP_NAME	"iommuca"
 #define ION_MFC_HEAP_NAME	"mfc"
 #define ION_WB_HEAP_NAME	"wb"
 #define ION_MM_FIRMWARE_HEAP_NAME	"mm_fw"

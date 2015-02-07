@@ -13,6 +13,7 @@
  * GNU General Public License for more details.
  */
 
+#define DEBUG
 #include <linux/module.h>
 #include <linux/usb.h>
 #include <linux/usb/hcd.h>
@@ -166,6 +167,7 @@ static int dwc3_otg_start_host(struct usb_otg *otg, int on)
 	if (!dwc->xhci)
 		return -EINVAL;
 
+#ifdef CONFIG_CHARGER_PM8941
 	if (!dotg->vbus_otg) {
 		dotg->vbus_otg = devm_regulator_get(dwc->dev->parent,
 							"vbus_dwc3");
@@ -176,17 +178,20 @@ static int dwc3_otg_start_host(struct usb_otg *otg, int on)
 			return ret;
 		}
 	}
+#endif
 
 	if (on) {
-		dev_dbg(otg->phy->dev, "%s: turn on host\n", __func__);
+		dev_info(otg->phy->dev, "%s: turn on host\n", __func__);
 
 		dwc3_otg_notify_host_mode(otg, on);
+#ifdef CONFIG_CHARGER_PM8941
 		ret = regulator_enable(dotg->vbus_otg);
 		if (ret) {
 			dev_err(otg->phy->dev, "unable to enable vbus_otg\n");
 			dwc3_otg_notify_host_mode(otg, 0);
 			return ret;
 		}
+#endif
 
 		/*
 		 * This should be revisited for more testing post-silicon.
@@ -213,7 +218,9 @@ static int dwc3_otg_start_host(struct usb_otg *otg, int on)
 			dev_err(otg->phy->dev,
 				"%s: failed to add XHCI pdev ret=%d\n",
 				__func__, ret);
+#ifdef CONFIG_CHARGER_PM8941
 			regulator_disable(dotg->vbus_otg);
+#endif
 			dwc3_otg_notify_host_mode(otg, 0);
 			return ret;
 		}
@@ -227,11 +234,13 @@ static int dwc3_otg_start_host(struct usb_otg *otg, int on)
 	} else {
 		dev_dbg(otg->phy->dev, "%s: turn off host\n", __func__);
 
+#ifdef CONFIG_CHARGER_PM8941
 		ret = regulator_disable(dotg->vbus_otg);
 		if (ret) {
 			dev_err(otg->phy->dev, "unable to disable vbus_otg\n");
 			return ret;
 		}
+#endif
 
 		pm_runtime_get(dwc->dev);
 		dwc3_otg_notify_host_mode(otg, on);
@@ -450,10 +459,10 @@ static void dwc3_ext_event_notify(struct usb_otg *otg,
 				dev_warn(phy->dev, "pm_runtime_get failed!!\n");
 		}
 		if (ext_xceiv->id == DWC3_ID_FLOAT) {
-			dev_dbg(phy->dev, "XCVR: ID set\n");
+			dev_info(phy->dev, "XCVR: ID set\n");
 			set_bit(ID, &dotg->inputs);
 		} else {
-			dev_dbg(phy->dev, "XCVR: ID clear\n");
+			dev_info(phy->dev, "XCVR: ID clear\n");
 			clear_bit(ID, &dotg->inputs);
 		}
 
@@ -518,6 +527,9 @@ static int dwc3_otg_set_power(struct usb_phy *phy, unsigned mA)
 	static int power_supply_type;
 	struct dwc3_otg *dotg = container_of(phy->otg, struct dwc3_otg, otg);
 
+#ifdef CONFIG_USB_ANDROID_SAMSUNG_COMPOSITE
+	return 0;
+#endif
 
 	if (!dotg->psy || !dotg->charger) {
 		dev_err(phy->dev, "no usb power supply/charger registered\n");
@@ -694,15 +706,18 @@ static void dwc3_otg_sm_work(struct work_struct *w)
 	unsigned long delay = 0;
 
 	pm_runtime_resume(phy->dev);
-	dev_dbg(phy->dev, "%s state\n", usb_otg_state_string(phy->state));
+	dev_dbg(phy->dev, "sm_work: %s state\n",usb_otg_state_string(phy->state));
 
 	/* Check OTG state */
 	switch (phy->state) {
 	case OTG_STATE_UNDEFINED:
 		dwc3_otg_init_sm(dotg);
 		if (!dotg->psy) {
+#if defined(CONFIG_BATTERY_SAMSUNG)
+		dotg->psy = power_supply_get_by_name("dwc-usb");
+#else
 			dotg->psy = power_supply_get_by_name("usb");
-
+#endif
 			if (!dotg->psy)
 				dev_err(phy->dev,
 					 "couldn't get usb power supply\n");
@@ -895,6 +910,9 @@ static void dwc3_otg_sm_work(struct work_struct *w)
 		dev_err(phy->dev, "%s: invalid otg-state\n", __func__);
 
 	}
+
+	dev_info(phy->dev, "sm_work: --> %s state\n",
+			usb_otg_state_string(phy->state));
 
 	if (work)
 		queue_delayed_work(system_nrt_wq, &dotg->sm_work, delay);

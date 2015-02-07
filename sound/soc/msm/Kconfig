@@ -268,6 +268,16 @@ config SND_SOC_MSM8X16
 	 the machine drivers and the corresponding
 	 DAI-links.
 
+config SEC_SOLUTION
+	tristate "Samsung solution"
+	default n
+	help
+		To add support for Samsung solution
+
+config JACK_AUDIO
+	tristate "Low Latency for JAM audio"
+	default y
+
 config SND_SOC_MDM9630
 	tristate "SoC Machine driver for MDM9630 boards"
 	depends on ARCH_MDM9630

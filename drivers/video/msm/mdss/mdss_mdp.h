@@ -25,6 +25,7 @@
 #include "mdss.h"
 #include "mdss_mdp_hwio.h"
 #include "mdss_fb.h"
+#include <mach/sec_debug.h>
 
 #define MDSS_MDP_DEFAULT_INTR_MASK 0
 #define MDSS_MDP_CURSOR_WIDTH 64
@@ -55,7 +56,7 @@
 #define C0_G_Y		0	/* G/luma */
 
 /* wait for at most 2 vsync for lowest refresh rate (24hz) */
-#define KOFF_TIMEOUT msecs_to_jiffies(84)
+#define KOFF_TIMEOUT msecs_to_jiffies(200)
 
 #define OVERFETCH_DISABLE_TOP		BIT(0)
 #define OVERFETCH_DISABLE_BOTTOM	BIT(1)
@@ -117,19 +118,6 @@ enum mdp_wfd_blk_type {
 	MDSS_MDP_WFD_DEDICATED,
 };
 
-/**
- * enum mdp_commit_stage_type - Indicate different commit stages
- *
- * @MDP_COMMIT_STATE_WAIT_FOR_PINGPONG:	At the stage of
- *			being ready to wait for pingpong buffer.
- * @MDP_COMMIT_STATE_PINGPONG_DONE:	At the stage that pingpong buffer
- *			is ready.
- */
-enum mdp_commit_stage_type {
-	MDP_COMMIT_STAGE_WAIT_FOR_PINGPONG,
-	MDP_COMMIT_STAGE_PINGPONG_DONE,
-};
-
 struct mdss_mdp_ctl;
 typedef void (*mdp_vsync_handler_t)(struct mdss_mdp_ctl *, ktime_t);
 
@@ -145,20 +133,12 @@ enum mdss_mdp_wb_ctl_type {
 	MDSS_MDP_WB_CTL_TYPE_LINE
 };
 
-enum mdss_mdp_bw_vote_mode {
-	MDSS_MDP_BW_MODE_NONE = 0,
-	MDSS_MDP_BW_MODE_UHD = BIT(0),
-	MDSS_MDP_BW_MODE_QHD = BIT(1),
-	MDSS_MDP_BW_MODE_MAX
-};
-
 struct mdss_mdp_perf_params {
 	u64 bw_overlap;
 	u64 bw_prefill;
 	u32 prefill_bytes;
 	u64 bw_ctl;
 	u32 mdp_clk_rate;
-	u32 bw_vote_mode;
 };
 
 struct mdss_mdp_ctl {
@@ -168,6 +148,7 @@ struct mdss_mdp_ctl {
 	u32 ref_cnt;
 	int power_on;
 
+	u32 panel_ndx;
 	u32 intf_num;
 	u32 intf_type;
 
@@ -474,12 +455,6 @@ struct mdss_overlay_private {
 	int retire_cnt;
 };
 
-struct mdss_mdp_commit_cb {
-	void *data;
-	int (*commit_cb_fnc) (enum mdp_commit_stage_type commit_state,
-		void *data);
-};
-
 /**
  * enum mdss_screen_state - Screen states that MDP can be forced into
  *
@@ -605,7 +580,7 @@ int mdss_mdp_overlay_get_buf(struct msm_fb_data_type *mfd,
 			     u32 flags);
 int mdss_mdp_overlay_pipe_setup(struct msm_fb_data_type *mfd,
 	struct mdp_overlay *req, struct mdss_mdp_pipe **ppipe,
-	struct mdss_mdp_pipe *left_blend_pipe, bool is_single_layer);
+	struct mdss_mdp_pipe *left_blend_pipe);
 void mdss_mdp_handoff_cleanup_pipes(struct msm_fb_data_type *mfd,
 							u32 type);
 int mdss_mdp_overlay_release(struct msm_fb_data_type *mfd, int ndx);
@@ -639,7 +614,7 @@ int mdss_mdp_perf_bw_check_pipe(struct mdss_mdp_perf_params *perf,
 		struct mdss_mdp_pipe *pipe);
 int mdss_mdp_perf_calc_pipe(struct mdss_mdp_pipe *pipe,
 	struct mdss_mdp_perf_params *perf, struct mdss_rect *roi,
-	bool apply_fudge, bool is_single_layer);
+	bool apply_fudge);
 int mdss_mdp_ctl_notify(struct mdss_mdp_ctl *ctl, int event);
 void mdss_mdp_ctl_notifier_register(struct mdss_mdp_ctl *ctl,
 	struct notifier_block *notifier);
@@ -665,8 +640,7 @@ int mdss_mdp_mixer_pipe_update(struct mdss_mdp_pipe *pipe,
 int mdss_mdp_mixer_pipe_unstage(struct mdss_mdp_pipe *pipe,
 	struct mdss_mdp_mixer *mixer);
 void mdss_mdp_mixer_unstage_all(struct mdss_mdp_mixer *mixer);
-int mdss_mdp_display_commit(struct mdss_mdp_ctl *ctl, void *arg,
-	struct mdss_mdp_commit_cb *commit_cb);
+int mdss_mdp_display_commit(struct mdss_mdp_ctl *ctl, void *arg);
 int mdss_mdp_display_wait4comp(struct mdss_mdp_ctl *ctl);
 int mdss_mdp_display_wait4pingpong(struct mdss_mdp_ctl *ctl);
 int mdss_mdp_display_wakeup_time(struct mdss_mdp_ctl *ctl,
@@ -808,4 +782,6 @@ int mdss_mdp_footswitch_ctrl_idle_pc(int on, struct device *dev);
 				(mfd->mdp.private1))->wb)
 
 int  mdss_mdp_ctl_reset(struct mdss_mdp_ctl *ctl);
+void dumpreg(void);
+void mdp5_dump_regs(void);
 #endif /* MDSS_MDP_H */

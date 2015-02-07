@@ -35,6 +35,9 @@
 #include "../codecs/wcd9xxx-common.h"
 #include "../codecs/wcd9320.h"
 #include "../codecs/wcd9330.h"
+#if defined(CONFIG_SND_SOC_ES705)
+#include "../codecs/audience/es705-export.h"
+#endif
 
 #define DRV_NAME "apq8084-asoc"
 
@@ -67,7 +70,7 @@ static int apq8084_auxpcm_rate = 8000;
 #define I2S_PCM_SEL_OFFSET 1
 
 
-#define WCD9XXX_MBHC_DEF_BUTTONS 8
+#define WCD9XXX_MBHC_DEF_BUTTONS 3
 #define WCD9XXX_MBHC_DEF_RLOADS 5
 #define TAIKO_EXT_CLK_RATE 9600000
 
@@ -82,6 +85,8 @@ static int apq8084_auxpcm_rate = 8000;
 #define EXT_CLASS_AB_DELAY_DELTA 1000
 
 #define NUM_OF_AUXPCM_GPIOS 4
+
+static int micbias_en_msm_gpio = -1;
 
 static void *adsp_state_notifier;
 
@@ -113,6 +118,44 @@ static struct attribute_group attr_grp = {
 };
 
 static struct cpe_load_priv cpe_priv;
+
+#if defined(CONFIG_SND_SOC_MAX98504) || defined(CONFIG_SND_SOC_MAX98504A)
+#define GPIO_QUAD_MI2S_SCK    92
+#define GPIO_QUAD_MI2S_WS     93
+#define GPIO_QUAD_MI2S_DATA0  94
+#define GPIO_QUAD_MI2S_DATA1  95
+struct request_gpio {
+	unsigned gpio_no;
+	char *gpio_name;
+};
+
+static struct request_gpio pri_mi2s_gpio[] = {
+	{
+		.gpio_no = GPIO_QUAD_MI2S_SCK,
+		.gpio_name = "QUAD_MI2S_SCK",
+	},
+	{
+		.gpio_no = GPIO_QUAD_MI2S_WS,
+		.gpio_name = "QUAD_MI2S_WS",
+	},
+	{
+		.gpio_no = GPIO_QUAD_MI2S_DATA0,
+		.gpio_name = "QUAD_MI2S_DATA0",
+	},
+	{
+		.gpio_no = GPIO_QUAD_MI2S_DATA1,
+		.gpio_name = "QUAD_MI2S_DATA1",
+	},
+};
+/* MI2S clock */
+struct mi2s_clk {
+	struct clk *core_clk;
+	struct clk *osr_clk;
+	struct clk *bit_clk;
+	atomic_t mi2s_rsc_ref;
+};
+static struct mi2s_clk pri_mi2s_clk;
+#endif
 
 static inline int param_is_mask(int p)
 {
@@ -154,15 +197,23 @@ static struct wcd9xxx_mbhc_config mbhc_cfg = {
 	.mclk_rate = TAIKO_EXT_CLK_RATE,
 	.gpio = 0,
 	.gpio_irq = 0,
-	.gpio_level_insert = 1,
+	.gpio_level_insert = 0,
 	.detect_extn_cable = true,
+#if defined(CONFIG_SEC_FACTORY)
+	/* Micbias for MBHC is always on in factory test */
+	.micbias_enable_flags = (1 << MBHC_MICBIAS_ENABLE_THRESHOLD_HEADSET | 
+	1 << MBHC_MICBIAS_ENABLE_REGULAR_HEADSET),
+#else
 	.micbias_enable_flags = 1 << MBHC_MICBIAS_ENABLE_THRESHOLD_HEADSET,
+#endif
 	.insert_detect = true,
 	.swap_gnd_mic = NULL,
-	.cs_enable_flags = (1 << MBHC_CS_ENABLE_POLLING |
-			    1 << MBHC_CS_ENABLE_INSERTION |
-			    1 << MBHC_CS_ENABLE_REMOVAL),
-	.do_recalibration = true,
+#if (defined(CONFIG_MACH_LENTISLTE_SKT) || defined(CONFIG_MACH_LENTISLTE_KTT) || defined(CONFIG_MACH_LENTISLTE_LGT)) && !defined(CONFIG_SEC_FACTORY)
+	.cs_enable_flags = (1 << MBHC_CS_ENABLE_POLLING),
+#else
+	.cs_enable_flags = 0,
+#endif
+	.do_recalibration = false,
 	.use_vddio_meas = true,
 };
 
@@ -314,6 +365,7 @@ static int clk_users;
 static atomic_t prim_auxpcm_rsc_ref;
 static atomic_t sec_auxpcm_rsc_ref;
 static bool codec_reg_done;
+
 static int apq8084_mi2s_rx_ch = 1;
 static int apq8084_mi2s_tx_ch = 1;
 static atomic_t quad_mi2s_ref_count;
@@ -321,6 +373,9 @@ static atomic_t quad_mi2s_ref_count;
 static const char *const mi2s_tx_ch_text[] = {"One", "Two"};
 static const char *const mi2s_rx_ch_text[] = {"One", "Two"};
 
+#if !defined(CONFIG_SAMSUNG_JACK)
+static int fsa_en_gpio;
+#endif
 static int apq8084_liquid_ext_spk_power_amp_init(void)
 {
 	int ret = 0;
@@ -484,6 +539,10 @@ static int apq8084_liquid_init_docking(struct snd_soc_dapm_context *dapm)
 
 		apq8084_liquid_dock_dev->dapm = dapm;
 
+		INIT_WORK(
+			&apq8084_liquid_dock_dev->irq_work,
+			apq8084_liquid_docking_irq_work);
+
 		ret = request_irq(apq8084_liquid_dock_dev->dock_plug_irq,
 				  apq8084_liquid_docking_irq_handler,
 				  dock_plug_irq_flags,
@@ -494,10 +553,6 @@ static int apq8084_liquid_init_docking(struct snd_soc_dapm_context *dapm)
 				__func__, ret);
 			goto out2;
 		}
-
-		INIT_WORK(
-			&apq8084_liquid_dock_dev->irq_work,
-			apq8084_liquid_docking_irq_work);
 	}
 	return 0;
 
@@ -684,6 +739,12 @@ static int apq8084_ext_mclk_gpio_init(void)
 	if (ext_mclk_gpio >= 0) {
 		ret = gpio_request(ext_mclk_gpio, "ext_mclk_gpio");
 		if (ret) {
+			if (ret == -EBUSY) {
+				pr_info("%s : gpio %d is requested in es704\n", 
+					__func__, ext_mclk_gpio);
+				return 0;
+			}
+
 			pr_err("%s: gpio_request failed for ext_mclk_gpio.\n",
 				__func__);
 
@@ -692,6 +753,7 @@ static int apq8084_ext_mclk_gpio_init(void)
 		}
 		gpio_direction_output(ext_mclk_gpio, 0);
 	}
+
 	return 0;
 }
 
@@ -700,7 +762,7 @@ static int msm_snd_enable_codec_ext_clk(struct snd_soc_codec *codec,
 {
 	int ret = 0;
 
-	pr_debug("%s: enable = %d clk_users = %d\n",
+	pr_info("%s: enable = %d clk_users = %d\n",
 			__func__, enable, clk_users);
 
 	if (!apq8084_codec_fn.mclk_enable_fn) {
@@ -716,7 +778,7 @@ static int msm_snd_enable_codec_ext_clk(struct snd_soc_codec *codec,
 			if (clk_users != 1)
 				goto exit;
 
-			gpio_direction_output(ext_mclk_gpio, 1);
+			gpio_direction_output_ex(ext_mclk_gpio, 1);
 			apq8084_codec_fn.mclk_enable_fn(codec, 1, dapm);
 		} else if (codec_clk) {
 			clk_users++;
@@ -737,7 +799,7 @@ static int msm_snd_enable_codec_ext_clk(struct snd_soc_codec *codec,
 			if (clk_users == 0) {
 				apq8084_codec_fn.mclk_enable_fn(codec, 0, dapm);
 				if (ext_mclk_gpio >= 0)
-					gpio_direction_output(ext_mclk_gpio, 0);
+					gpio_direction_output_ex(ext_mclk_gpio, 0);
 				else if (codec_clk)
 					clk_disable_unprepare(codec_clk);
 			}
@@ -765,6 +827,17 @@ static int apq8084_mclk_event(struct snd_soc_dapm_widget *w,
 	return 0;
 }
 
+static int msm_mainmic_bias_event(struct snd_soc_dapm_widget *w,
+	struct snd_kcontrol *k, int event)
+{
+	pr_info("%s : Event %d,  SND_SOC_DAPM:%d\n",
+		__func__, (event), SND_SOC_DAPM_EVENT_ON(event));
+
+	gpio_direction_output(micbias_en_msm_gpio, 
+		SND_SOC_DAPM_EVENT_ON(event));
+	return 0;
+}
+
 static const struct snd_soc_dapm_widget apq8084_dapm_widgets[] = {
 
 	SND_SOC_DAPM_SUPPLY("MCLK",  SND_SOC_NOPM, 0, 0,
@@ -780,8 +853,11 @@ static const struct snd_soc_dapm_widget apq8084_dapm_widgets[] = {
 
 	SND_SOC_DAPM_MIC("Handset Mic", NULL),
 	SND_SOC_DAPM_MIC("Headset Mic", NULL),
+	SND_SOC_DAPM_MIC("Main Mic", msm_mainmic_bias_event),
 	SND_SOC_DAPM_MIC("ANCRight Headset Mic", NULL),
 	SND_SOC_DAPM_MIC("ANCLeft Headset Mic", NULL),
+	SND_SOC_DAPM_MIC("Sub Mic", NULL),
+	SND_SOC_DAPM_MIC("Third Mic", NULL),
 	SND_SOC_DAPM_MIC("Analog Mic4", NULL),
 	SND_SOC_DAPM_MIC("Analog Mic6", NULL),
 	SND_SOC_DAPM_MIC("Analog Mic7", NULL),
@@ -1869,6 +1945,28 @@ static int msm_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
 	return 0;
 }
 
+#if defined(CONFIG_SND_SOC_MAX98504) || defined(CONFIG_SND_SOC_MAX98504A)
+static int apq8084_mi2s_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
+				struct snd_pcm_hw_params *params)
+{
+	struct snd_interval *rate = hw_param_interval(params,
+					SNDRV_PCM_HW_PARAM_RATE);
+	struct snd_interval *channels = hw_param_interval(params,
+						SNDRV_PCM_HW_PARAM_CHANNELS);
+	pr_info("%s: enter\n", __func__);
+
+	rate->min = rate->max = 48000;
+
+
+	param_set_mask(params, SNDRV_PCM_HW_PARAM_FORMAT,
+		SNDRV_PCM_FORMAT_S16_LE);
+
+	channels->min = channels->max = 2;
+
+	return 0;
+}
+#endif
+
 static int msm_incall_rec_mode_get(struct snd_kcontrol *kcontrol,
 				   struct snd_ctl_elem_value *ucontrol)
 {
@@ -2159,6 +2257,8 @@ static int msm_audrx_init(struct snd_soc_pcm_runtime *rtd)
 	snd_soc_dapm_ignore_suspend(dapm, "Digital Mic6");
 
 	snd_soc_dapm_ignore_suspend(dapm, "MADINPUT");
+	snd_soc_dapm_ignore_suspend(dapm, "BE_IN");
+	snd_soc_dapm_ignore_suspend(dapm, "BE_OUT");
 	snd_soc_dapm_ignore_suspend(dapm, "EAR");
 	snd_soc_dapm_ignore_suspend(dapm, "HEADPHONE");
 	snd_soc_dapm_ignore_suspend(dapm, "LINEOUT1");
@@ -2241,6 +2341,7 @@ static int msm_audrx_init(struct snd_soc_pcm_runtime *rtd)
 			return err;
 		}
 	}
+#if !defined(CONFIG_SAMSUNG_JACK)
 	/* start mbhc */
 	mbhc_cfg.calibration = def_codec_mbhc_cal();
 	if (mbhc_cfg.calibration) {
@@ -2252,6 +2353,7 @@ static int msm_audrx_init(struct snd_soc_pcm_runtime *rtd)
 		err = -ENOMEM;
 		goto out;
 	}
+#endif
 	adsp_state_notifier =
 	    subsys_notif_register_notifier("adsp",
 					   &adsp_state_notifier_block);
@@ -2259,7 +2361,10 @@ static int msm_audrx_init(struct snd_soc_pcm_runtime *rtd)
 		pr_err("%s: Failed to register adsp state notifier\n",
 		       __func__);
 		err = -EFAULT;
+#if !defined(CONFIG_SAMSUNG_JACK)
+		taiko_hs_detect_exit(codec);
 		apq8084_codec_fn.mbhc_hs_detect_exit(codec);
+#endif
 		goto out;
 	}
 
@@ -2338,8 +2443,12 @@ void *def_codec_mbhc_cal(void)
 	S(t_ins_retry, 200);
 #undef S
 #define S(X, Y) ((WCD9XXX_MBHC_CAL_PLUG_TYPE_PTR(codec_cal)->X) = (Y))
-	S(v_no_mic, 30);
-	S(v_hs_max, 2400);
+	S(v_no_mic, 950);
+#if defined(CONFIG_SEC_FACTORY)
+	S(v_hs_max, 3000);
+#else
+	S(v_hs_max, 2500);
+#endif
 #undef S
 #define S(X, Y) ((WCD9XXX_MBHC_CAL_BTN_DET_PTR(codec_cal)->X) = (Y))
 	S(c[0], 62);
@@ -2358,21 +2467,11 @@ void *def_codec_mbhc_cal(void)
 	btn_high = wcd9xxx_mbhc_cal_btn_det_mp(btn_cfg,
 					       MBHC_BTN_DET_V_BTN_HIGH);
 	btn_low[0] = -50;
-	btn_high[0] = 20;
-	btn_low[1] = 21;
-	btn_high[1] = 61;
-	btn_low[2] = 62;
-	btn_high[2] = 104;
-	btn_low[3] = 105;
-	btn_high[3] = 148;
-	btn_low[4] = 149;
-	btn_high[4] = 189;
-	btn_low[5] = 190;
-	btn_high[5] = 228;
-	btn_low[6] = 229;
-	btn_high[6] = 269;
-	btn_low[7] = 270;
-	btn_high[7] = 500;
+	btn_high[0] = 160;
+	btn_low[1] = 161;
+	btn_high[1] = 330;
+	btn_low[2] = 331;
+	btn_high[2] = 730;
 	n_ready = wcd9xxx_mbhc_cal_btn_det_mp(btn_cfg, MBHC_BTN_DET_N_READY);
 	n_ready[0] = 80;
 	n_ready[1] = 68;
@@ -2458,6 +2557,124 @@ static void apq8084_snd_shudown(struct snd_pcm_substream *substream)
 		  __func__, rtd->dai_link->stream_name,
 		  rtd->dai_link->cpu_dai_name, rtd->dai_link->codec_dai_name);
 }
+
+#if defined(CONFIG_SND_SOC_MAX98504) || defined(CONFIG_SND_SOC_MAX98504A)
+static int apq8084_pri_mi2s_free_gpios(void)
+{
+	int	i;
+	for (i = 0; i < ARRAY_SIZE(pri_mi2s_gpio); i++)
+                gpio_free(pri_mi2s_gpio[i].gpio_no);
+	return 0;
+}
+
+static struct afe_clk_cfg lpass_mi2s_enable = {
+        AFE_API_VERSION_I2S_CONFIG,
+        Q6AFE_LPASS_IBIT_CLK_1_P536_MHZ,
+        Q6AFE_LPASS_OSR_CLK_12_P288_MHZ,
+        Q6AFE_LPASS_CLK_SRC_INTERNAL,
+        Q6AFE_LPASS_CLK_ROOT_DEFAULT,
+        Q6AFE_LPASS_MODE_BOTH_VALID,
+        0,
+};
+static struct afe_clk_cfg lpass_mi2s_disable = {
+        AFE_API_VERSION_I2S_CONFIG,
+        0,
+        0,
+        Q6AFE_LPASS_CLK_SRC_INTERNAL,
+        Q6AFE_LPASS_CLK_ROOT_DEFAULT,
+        Q6AFE_LPASS_MODE_BOTH_VALID,
+        0,
+};
+
+
+static void apq8084_mi2s_shutdown(struct snd_pcm_substream *substream)
+{
+	
+
+	if (atomic_dec_return(&pri_mi2s_clk.mi2s_rsc_ref) == 0) {
+		int ret =0;
+		pr_err("[MAX98504_DEBUG] %s: free mi2s resources\n", __func__);
+			if(substream->stream==0)
+				ret = afe_set_lpass_clock(AFE_PORT_ID_QUATERNARY_MI2S_RX, &lpass_mi2s_disable);	
+			else if(substream->stream==1)
+				ret = afe_set_lpass_clock(AFE_PORT_ID_QUATERNARY_MI2S_TX, &lpass_mi2s_disable);		
+       		
+       		if (ret < 0) {	
+      			pr_err("%s: afe_set_lpass_clock failed\n", __func__);	
+       	
+      		}	
+		apq8084_pri_mi2s_free_gpios();
+	}
+}
+
+static int apq8084_configure_pri_mi2s_gpio(void)
+{
+	int	rtn;
+	int	i;
+	for (i = 0; i < ARRAY_SIZE(pri_mi2s_gpio); i++) {
+
+		rtn = gpio_request(pri_mi2s_gpio[i].gpio_no,
+				pri_mi2s_gpio[i].gpio_name);
+
+		pr_info("%s: gpio = %d, gpio name = %s, rtn = %d\n", __func__,
+		pri_mi2s_gpio[i].gpio_no, pri_mi2s_gpio[i].gpio_name, rtn);		
+		if (rtn) {
+			pr_err("%s: Failed to request gpio %d\n",
+				   __func__,
+				   pri_mi2s_gpio[i].gpio_no);
+			while( i >= 0) {
+				gpio_free(pri_mi2s_gpio[i].gpio_no);
+				i--;
+			}
+			break;
+		}
+	}
+
+	return rtn;
+}
+static int apq8084_mi2s_startup(struct snd_pcm_substream *substream)
+{
+	int ret = 0;
+	struct snd_soc_pcm_runtime *rtd = substream->private_data;
+	struct snd_soc_dai *cpu_dai = rtd->cpu_dai;
+	struct snd_soc_dai *codec_dai = rtd->codec_dai;
+
+	pr_err("%s: dai name %s %p\n", __func__, cpu_dai->name, cpu_dai->dev);
+
+	if (atomic_inc_return(&pri_mi2s_clk.mi2s_rsc_ref) == 1) {
+		pr_info("%s: acquire mi2s resources\n", __func__);
+		apq8084_configure_pri_mi2s_gpio();	
+			if(substream->stream==0)
+				ret = afe_set_lpass_clock(AFE_PORT_ID_QUATERNARY_MI2S_RX, &lpass_mi2s_enable);	
+			else if(substream->stream==1)
+				ret = afe_set_lpass_clock(AFE_PORT_ID_QUATERNARY_MI2S_TX, &lpass_mi2s_enable); 
+       		if (ret < 0) {	
+      			pr_err("%s: afe_set_lpass_clock failed\n", __func__);	
+       		return ret;	
+      		}	
+		ret = snd_soc_dai_set_fmt(cpu_dai, SND_SOC_DAIFMT_CBS_CFS);
+		if (ret < 0)
+			dev_err(cpu_dai->dev, "set format for CPU dai"
+				" failed\n");
+
+		ret = snd_soc_dai_set_fmt(codec_dai, SND_SOC_DAIFMT_I2S | SND_SOC_DAIFMT_NB_NF |
+                		SND_SOC_DAIFMT_CBS_CFS);
+		if (ret < 0)
+			dev_err(codec_dai->dev, "set format for codec dai"
+				 " failed\n");
+
+		ret  = 0;
+	}
+	return ret;
+}
+
+
+
+static struct snd_soc_ops apq8084_mi2s_be_ops = {
+	.startup = apq8084_mi2s_startup,
+	.shutdown = apq8084_mi2s_shutdown
+};
+#endif
 
 static struct snd_soc_ops apq8084_be_ops = {
 	.startup = apq8084_snd_startup,
@@ -3224,6 +3441,23 @@ static struct snd_soc_dai_link apq8084_common_dai_links[] = {
 		.codec_name = "snd-soc-dummy",
 		.be_id = MSM_FRONTEND_DAI_QCHAT,
 	},
+#ifdef CONFIG_JACK_AUDIO
+	{
+		.name = "APQ8084 JACK LowLatency",
+		.stream_name = "MultiMedia10",
+		.cpu_dai_name	= "MultiMedia10",
+		.platform_name	= "msm-pcm-dsp.1",
+		.dynamic = 1,
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+				SND_SOC_DPCM_TRIGGER_POST},
+		.ignore_suspend = 1,
+		/* this dainlink has playback support */
+		.ignore_pmdown_time = 1,
+		.be_id = MSM_FRONTEND_DAI_MULTIMEDIA10,
+	},
+#endif
 };
 
 static struct snd_soc_dai_link apq8084_tomtom_fe_dai_links[] = {
@@ -3542,6 +3776,10 @@ static struct snd_soc_dai_link apq8084_common_be_dai_links[] = {
 		.ignore_suspend = 1,
 		.ignore_pmdown_time = 1,
 	},
+};
+
+
+static struct snd_soc_dai_link apq8084_qc_quat_mi2s_be_dai_links[] = {
 	{
 		.name = LPASS_BE_QUAT_MI2S_TX,
 		.stream_name = "Quaternary MI2S Capture",
@@ -3557,6 +3795,22 @@ static struct snd_soc_dai_link apq8084_common_be_dai_links[] = {
 	},
 };
 
+#if defined(CONFIG_SND_SOC_MAX98504) || defined(CONFIG_SND_SOC_MAX98504A)
+static struct snd_soc_dai_link apq8084_maxim_quat_mi2s_be_dai_links[] = {
+	{
+		.name = LPASS_BE_QUAT_MI2S_TX,
+		.stream_name = "Quaternary MI2S Capture",
+		.cpu_dai_name = "msm-dai-q6-mi2s.3",
+		.platform_name = "msm-pcm-routing",
+		.codec_name 	= "max98504.16-0031",
+		.codec_dai_name = "max98504-aif1",
+		.no_pcm = 1,
+		.be_id = MSM_BACKEND_DAI_QUATERNARY_MI2S_TX,
+		.be_hw_params_fixup = apq8084_mi2s_be_hw_params_fixup,
+		.ops = &apq8084_mi2s_be_ops,
+	},
+};
+#endif
 static struct snd_soc_dai_link apq8084_tomtom_be_dai_links[] = {
 	/* Slimbus Backend DAI Links */
 	{
@@ -3582,7 +3836,7 @@ static struct snd_soc_dai_link apq8084_tomtom_be_dai_links[] = {
 		.cpu_dai_name = "msm-dai-q6-dev.16385",
 		.platform_name = "msm-pcm-routing",
 		.codec_name = "tomtom_codec",
-		.codec_dai_name	= "tomtom_tx1",
+		.codec_dai_name	= "tomtom_tx2",
 		.no_pcm = 1,
 		.async_ops = ASYNC_DPCM_SND_SOC_PREPARE,
 		.be_id = MSM_BACKEND_DAI_SLIMBUS_0_TX,
@@ -3827,6 +4081,7 @@ static struct snd_soc_dai_link apq8084_taiko_dai_links[
 		 ARRAY_SIZE(apq8084_common_dai_links) +
 		 ARRAY_SIZE(apq8084_taiko_fe_dai_links) +
 		 ARRAY_SIZE(apq8084_common_be_dai_links) +
+		 ARRAY_SIZE(apq8084_qc_quat_mi2s_be_dai_links) +
 		 ARRAY_SIZE(apq8084_taiko_be_dai_links) +
 		 ARRAY_SIZE(apq8084_hdmi_dai_link)];
 
@@ -3834,6 +4089,7 @@ static struct snd_soc_dai_link apq8084_tomtom_dai_links[
 		 ARRAY_SIZE(apq8084_common_dai_links) +
 		 ARRAY_SIZE(apq8084_tomtom_fe_dai_links) +
 		 ARRAY_SIZE(apq8084_common_be_dai_links) +
+		 ARRAY_SIZE(apq8084_qc_quat_mi2s_be_dai_links) +
 		 ARRAY_SIZE(apq8084_tomtom_be_dai_links) +
 		 ARRAY_SIZE(apq8084_hdmi_dai_link) +
 		 ARRAY_SIZE(apq8084_cpe_lsm_dailink)];
@@ -3908,6 +4164,25 @@ err:
 		devm_kfree(&pdev->dev, pin_data);
 	return ret;
 }
+static int apq8084_prepare_mainmic(void)
+{
+	int ret;
+	if (micbias_en_msm_gpio) {
+		pr_debug("%s : mainmic bias gpio request %d", __func__,
+			micbias_en_msm_gpio);
+		ret = gpio_request(micbias_en_msm_gpio, "TAIKO_MAINMIC_BIAS");
+		if (ret) {
+			pr_debug("%s: Failed to request taiko mainmic bias gpio %d error %d\n",
+				__func__, micbias_en_msm_gpio, ret);
+			return ret;
+		}
+		gpio_direction_output(micbias_en_msm_gpio, 0);
+	}
+
+	return 0;
+}
+
+
 
 /**
  * msm_mi2s_get_pinctrl() - Get the MI2S pinctrl definitions.
@@ -3998,9 +4273,13 @@ static struct snd_soc_card *populate_snd_card_dailinks(struct device *dev)
 {
 	struct snd_soc_card *card = NULL;
 	struct snd_soc_dai_link *dailink;
-	int len_1, len_2, len_3, len_4;
+	int len_1, len_2, len_3, len_4, len_5;
 	const struct of_device_id *match;
+#if defined(CONFIG_SND_SOC_MAX98504) || defined(CONFIG_SND_SOC_MAX98504A)
+	bool maxim = false;
 
+	maxim = of_property_read_bool(dev->of_node, "qcom,maxim-mi2s-tx");
+#endif
 	match = of_match_node(apq8084_asoc_machine_of_match, dev->of_node);
 
 	if (!strcmp(match->data, "tomtom_codec")) {
@@ -4008,7 +4287,14 @@ static struct snd_soc_card *populate_snd_card_dailinks(struct device *dev)
 		len_1 = ARRAY_SIZE(apq8084_common_dai_links);
 		len_2 = len_1 + ARRAY_SIZE(apq8084_tomtom_fe_dai_links);
 		len_3 = len_2 + ARRAY_SIZE(apq8084_common_be_dai_links);
-
+#if defined(CONFIG_SND_SOC_MAX98504) || defined(CONFIG_SND_SOC_MAX98504A)
+		if (maxim)
+			len_4 = len_3 + ARRAY_SIZE(apq8084_maxim_quat_mi2s_be_dai_links);
+		else
+			len_4 = len_3 + ARRAY_SIZE(apq8084_qc_quat_mi2s_be_dai_links);
+#else
+			len_4 = len_3 + ARRAY_SIZE(apq8084_qc_quat_mi2s_be_dai_links);
+#endif
 		memcpy(apq8084_tomtom_dai_links,
 		       apq8084_common_dai_links,
 		       sizeof(apq8084_common_dai_links));
@@ -4018,18 +4304,34 @@ static struct snd_soc_card *populate_snd_card_dailinks(struct device *dev)
 		memcpy(apq8084_tomtom_dai_links + len_2,
 		       apq8084_common_be_dai_links,
 		       sizeof(apq8084_common_be_dai_links));
+#if defined(CONFIG_SND_SOC_MAX98504) || defined(CONFIG_SND_SOC_MAX98504A)
+		if (maxim)
+			memcpy(apq8084_tomtom_dai_links + len_3,
+			       apq8084_maxim_quat_mi2s_be_dai_links,
+			       sizeof(apq8084_qc_quat_mi2s_be_dai_links));
+		else
+			memcpy(apq8084_tomtom_dai_links + len_3,
+			       apq8084_qc_quat_mi2s_be_dai_links,
+			       sizeof(apq8084_qc_quat_mi2s_be_dai_links));
+#else
 		memcpy(apq8084_tomtom_dai_links + len_3,
+		       apq8084_qc_quat_mi2s_be_dai_links,
+		       sizeof(apq8084_qc_quat_mi2s_be_dai_links));
+
+#endif
+		memcpy(apq8084_tomtom_dai_links + len_4,
 		       apq8084_tomtom_be_dai_links,
 		       sizeof(apq8084_tomtom_be_dai_links));
 
 		dailink = apq8084_tomtom_dai_links;
-		len_4 = len_3 + ARRAY_SIZE(apq8084_tomtom_be_dai_links);
+		len_5 = len_4 + ARRAY_SIZE(apq8084_tomtom_be_dai_links);
 
 	} else {
 		card = &snd_soc_card_taiko_apq8084;
 		len_1 = ARRAY_SIZE(apq8084_common_dai_links);
 		len_2 = len_1 + ARRAY_SIZE(apq8084_taiko_fe_dai_links);
 		len_3 = len_2 + ARRAY_SIZE(apq8084_common_be_dai_links);
+		len_4 = len_3 + ARRAY_SIZE(apq8084_qc_quat_mi2s_be_dai_links);
 
 		memcpy(apq8084_taiko_dai_links,
 		       apq8084_common_dai_links,
@@ -4041,31 +4343,29 @@ static struct snd_soc_card *populate_snd_card_dailinks(struct device *dev)
 		       apq8084_common_be_dai_links,
 		       sizeof(apq8084_common_be_dai_links));
 		memcpy(apq8084_taiko_dai_links + len_3,
+			apq8084_qc_quat_mi2s_be_dai_links,
+			sizeof(apq8084_qc_quat_mi2s_be_dai_links));
+
+		memcpy(apq8084_taiko_dai_links + len_4,
 		       apq8084_taiko_be_dai_links,
 		       sizeof(apq8084_taiko_be_dai_links));
 
 		dailink = apq8084_taiko_dai_links;
-		len_4 = len_3 + ARRAY_SIZE(apq8084_taiko_be_dai_links);
+		len_5 = len_4 + ARRAY_SIZE(apq8084_taiko_be_dai_links);
 	}
 
 	if (of_property_read_bool(dev->of_node, "qcom,hdmi-audio-rx")) {
 		dev_dbg(dev, "%s(): hdmi audio support present\n",
 				__func__);
-		memcpy(dailink + len_4, apq8084_hdmi_dai_link,
+		memcpy(dailink + len_5, apq8084_hdmi_dai_link,
 			sizeof(apq8084_hdmi_dai_link));
-		len_4 += ARRAY_SIZE(apq8084_hdmi_dai_link);
+		card->dai_link = dailink;
+		card->num_links = len_5 + ARRAY_SIZE(apq8084_hdmi_dai_link);
 	} else {
 		dev_dbg(dev, "%s(): No hdmi audio support\n", __func__);
+		card->dai_link = dailink;
+		card->num_links = len_5;
 	}
-
-	if (!strcmp(match->data, "tomtom_codec")) {
-		memcpy(dailink + len_4, apq8084_cpe_lsm_dailink,
-		       sizeof(apq8084_cpe_lsm_dailink));
-		len_4 += ARRAY_SIZE(apq8084_cpe_lsm_dailink);
-	}
-
-	card->dai_link = dailink;
-	card->num_links = len_4;
 
 	return card;
 }
@@ -4192,6 +4492,50 @@ static int apq8084_asoc_machine_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "apq8084_prepare_us_euro failed (%d)\n",
 			ret);
 
+	/* the ldo of main mic bias */
+	micbias_en_msm_gpio = of_get_named_gpio(pdev->dev.of_node,
+				"qcom,micbias-en-msm-gpio", 0);
+	if (micbias_en_msm_gpio < 0)
+		of_property_read_u32(pdev->dev.of_node, "qcom,micbias-en-msm-expander-gpio", &micbias_en_msm_gpio);
+	if (micbias_en_msm_gpio < 0) {
+		dev_err(&pdev->dev, "Looking up %s property in node %s failed",
+			"qcom,mainmic-bias-gpio",
+			pdev->dev.of_node->full_name);
+	} else {
+		pr_info("%s : mic bias = %d\n", __func__, micbias_en_msm_gpio);
+		
+		ret = apq8084_prepare_mainmic();
+		if (ret) {
+			dev_err(&pdev->dev, "msm8974_prepare_mainmic failed (%d)\n",
+				ret);
+			gpio_free(micbias_en_msm_gpio);
+			micbias_en_msm_gpio = 0;
+		}
+	}
+#if !defined(CONFIG_SAMSUNG_JACK)
+	/* enable FSA8039 for jack detection */
+	pr_info("%s: Check to enable FSA8039\n", __func__);
+	fsa_en_gpio = of_get_named_gpio(pdev->dev.of_node,
+					"qcom,earjack-fsa_en_gpio", 0);
+	if (fsa_en_gpio < 0)
+		of_property_read_u32(pdev->dev.of_node,
+			"qcom,earjack-fsa_en_gpio", &fsa_en_gpio);
+	if (fsa_en_gpio < 0)
+		pr_info("%s: No support FSA8039 chip\n", __func__);
+	else
+		pr_info("%s: qcom,earjack-fsa_en_gpio =%d\n",
+						__func__, fsa_en_gpio);
+
+	if (fsa_en_gpio > 0) {
+		ret = gpio_request(fsa_en_gpio, "fsa_en");
+		if (ret) {
+			pr_err("%s : gpio_request failed for %d, ret %d\n",
+				__func__, fsa_en_gpio, ret);
+			goto err;
+		}
+		gpio_direction_output(fsa_en_gpio, 1);
+	}
+#endif
 	ret = of_property_read_string(pdev->dev.of_node,
 			"qcom,prim-auxpcm-gpio-set", &auxpcm_pri_gpio_set);
 	if (ret) {
@@ -4221,6 +4565,9 @@ static int apq8084_asoc_machine_probe(struct platform_device *pdev)
 		ret = -EINVAL;
 		goto err;
 	}
+#if defined(CONFIG_SND_SOC_MAX98504) || defined(CONFIG_SND_SOC_MAX98504A)
+	atomic_set(&pri_mi2s_clk.mi2s_rsc_ref, 0);
+#endif
 	return 0;
 
 err:

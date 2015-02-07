@@ -150,8 +150,10 @@ enum mdss_intf_events {
 	MDSS_EVENT_CONT_SPLASH_FINISH,
 	MDSS_EVENT_PANEL_UPDATE_FPS,
 	MDSS_EVENT_FB_REGISTERED,
+	MDSS_EVENT_FRAME_UPDATE,
 	MDSS_EVENT_PANEL_CLK_CTRL,
 	MDSS_EVENT_DSI_CMDLIST_KOFF,
+	MDSS_EVENT_MDNIE_DEFAULT_UPDATE,
 	MDSS_EVENT_ENABLE_PARTIAL_ROI,
 	MDSS_EVENT_DSI_STREAM_SIZE,
 };
@@ -294,6 +296,8 @@ struct mdss_panel_info {
 	u32 yres;
 	u32 physical_width;
 	u32 physical_height;
+	u32 width;
+	u32 height;
 	u32 bpp;
 	u32 type;
 	u32 wait_cycle;
@@ -310,8 +314,17 @@ struct mdss_panel_info {
 	u32 out_format;
 	u32 rst_seq[MDSS_DSI_RST_SEQ_LEN];
 	u32 rst_seq_len;
+	u32 early_lcd_on;
 	u32 vic; /* video identification code */
 	struct mdss_rect roi;
+	u32 roi_x;
+	u32 roi_y;
+	u32 roi_w;
+	u32 roi_h;
+	u32 dsi_roi_x;
+	u32 dsi_roi_y;
+	u32 dsi_roi_w;
+	u32 dsi_roi_h;
 	int bklt_ctrl;	/* backlight ctrl */
 	int pwm_pmic_gpio;
 	int pwm_lpg_chan;
@@ -344,7 +357,20 @@ struct mdss_panel_info {
 	struct mipi_panel_info mipi;
 	struct lvds_panel_info lvds;
 	struct edp_panel_info edp;
+	u8 (*alpm_event) (u8 flag);
 };
+enum {
+	/* Status Flags */
+	MODE_OFF = 0,		/* Off ALPM or Normal Mode Status */
+	ALPM_MODE_ON,				/* ALPM Mode Status */
+	NORMAL_MODE_ON,			/* Normal Mode Status */
+	/* Event Flags */
+	CHECK_CURRENT_STATUS,	/* Check Current Mode */
+	CHECK_PREVIOUS_STATUS,	/* Check Previous Mode */
+	STORE_CURRENT_STATUS,	/* Store Current Mode to Previous Mode */
+	CLEAR_MODE_STATUS,		/* Clear Status Flag as 0 */
+};
+
 
 struct mdss_panel_data {
 	struct mdss_panel_info panel_info;

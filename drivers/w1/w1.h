@@ -70,6 +70,13 @@ struct w1_slave
 	u32			flags;
 	int			ttl;
 
+	u32 id_min;
+	u32 id_max;
+	u32 id_default;
+	u32 color_min;
+	u32 color_max;
+	u32 color_default;
+
 	struct w1_master	*master;
 	struct w1_family	*family;
 	void			*family_data;
@@ -153,6 +160,9 @@ struct w1_bus_master
 	 */
 	void		(*search)(void *, struct w1_master *,
 		u8, w1_slave_found_callback);
+
+	/* add for sending uevent */
+	struct input_dev *input;
 };
 
 struct w1_master
@@ -188,6 +198,11 @@ struct w1_master
 	struct w1_bus_master	*bus_master;
 
 	u32			seq;
+
+#ifdef CONFIG_W1_WORKQUEUE
+	struct work_struct	work;
+	struct delayed_work	w1_dwork;
+#endif
 };
 
 int w1_create_master_attributes(struct w1_master *);
@@ -243,6 +258,11 @@ extern struct list_head w1_masters;
 extern struct mutex w1_mlock;
 
 extern int w1_process(void *);
+
+#ifdef CONFIG_W1_WORKQUEUE
+extern void w1_work(struct work_struct *work);
+extern struct w1_master *w1_gdev;
+#endif
 
 #endif /* __KERNEL__ */
 

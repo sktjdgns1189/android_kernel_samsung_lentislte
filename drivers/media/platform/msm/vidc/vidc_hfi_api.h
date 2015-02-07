@@ -197,6 +197,7 @@ enum hal_property {
 	HAL_CONFIG_VENC_USELTRFRAME,
 	HAL_CONFIG_VENC_LTRPERIOD,
 	HAL_PARAM_VENC_HIER_P_NUM_FRAMES,
+	HAL_PARAM_VPE_COLOR_SPACE_CONVERSION,
 };
 
 enum hal_domain {
@@ -835,6 +836,11 @@ struct hal_h264_vui_timing_info {
 	u32 time_scale;
 };
 
+struct hal_vpe_color_space_conversion {
+	u32 csc_matrix[9];
+	u32 csc_bias[3];
+	u32 csc_limit[6];
+};
 struct hal_h264_vui_bitstream_restrc {
 	u32 enable;
 };

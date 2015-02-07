@@ -186,12 +186,10 @@ static void mdm_disable_irqs(struct mdm_ctrl *mdm)
 	if (!mdm)
 		return;
 	if (!(mdm->irq_mask & IRQ_ERRFATAL)) {
-		irq_set_irq_wake(mdm->errfatal_irq, 0);
 		disable_irq_nosync(mdm->errfatal_irq);
 		mdm->irq_mask |= IRQ_ERRFATAL;
 	}
 	if (!(mdm->irq_mask & IRQ_STATUS)) {
-		irq_set_irq_wake(mdm->status_irq, 0);
 		disable_irq_nosync(mdm->status_irq);
 		mdm->irq_mask |= IRQ_STATUS;
 	}
@@ -253,10 +251,13 @@ static void mdm_toggle_soft_reset(struct mdm_ctrl *mdm)
 	int soft_reset_direction_assert = 0,
 	    soft_reset_direction_de_assert = 1;
 
+	dev_info(mdm->dev, "%s\n", __func__);
+
 	if (mdm->soft_reset_inverted) {
 		soft_reset_direction_assert = 1;
 		soft_reset_direction_de_assert = 0;
 	}
+
 	gpio_direction_output(MDM_GPIO(mdm, AP2MDM_SOFT_RESET),
 			soft_reset_direction_assert);
 	/*
@@ -273,7 +274,7 @@ static void mdm_do_first_power_on(struct mdm_ctrl *mdm)
 	int pblrdy;
 	struct device *dev = mdm->dev;
 
-	dev_dbg(dev, "Powering on modem for the first time\n");
+	dev_info(dev, "Powering on modem for the first time\n");
 	mdm_toggle_soft_reset(mdm);
 	/* Add a delay to allow PON sequence to complete*/
 	msleep(50);
@@ -284,7 +285,7 @@ static void mdm_do_first_power_on(struct mdm_ctrl *mdm)
 			break;
 		usleep_range(5000, 6000);
 	}
-	dev_dbg(dev, "pblrdy i:%d\n", i);
+	dev_info(dev, "pblrdy i:%d\n", i);
 	msleep(200);
 }
 
@@ -294,10 +295,10 @@ static void mdm_power_down(struct mdm_ctrl *mdm)
 	int soft_reset_direction = mdm->soft_reset_inverted ? 1 : 0;
 	/* Assert the soft reset line whether mdm2ap_status went low or not */
 	gpio_direction_output(MDM_GPIO(mdm, AP2MDM_SOFT_RESET),
-					soft_reset_direction);
-	dev_dbg(dev, "Doing a hard reset\n");
+			soft_reset_direction);
+	dev_info(dev, "Doing a hard reset\n");
 	gpio_direction_output(MDM_GPIO(mdm, AP2MDM_SOFT_RESET),
-						soft_reset_direction);
+			soft_reset_direction);
 	/*
 	* Currently, there is a debounce timer on the charm PMIC. It is
 	* necessary to hold the PMIC RESET low for 400ms
@@ -327,11 +328,12 @@ static int mdm_cmd_exe(enum esoc_cmd cmd, struct esoc_clink *esoc)
 		mdm->debug = 0;
 		mdm->ready = false;
 		ret = sysmon_send_shutdown(mdm->sysmon_subsys_id);
+		device_lock(dev);
 		if (ret)
 			dev_err(mdm->dev, "Graceful shutdown fail, ret = %d\n",
 									ret);
 		else {
-			dev_dbg(mdm->dev, "Waiting for status gpio go low\n");
+			dev_info(mdm->dev, "Waiting for status gpio go low\n");
 			status_down = false;
 			end_time = jiffies + msecs_to_jiffies(10000);
 			while (time_before(jiffies, end_time)) {
@@ -344,7 +346,7 @@ static int mdm_cmd_exe(enum esoc_cmd cmd, struct esoc_clink *esoc)
 				msleep(100);
 			}
 			if (status_down)
-				dev_dbg(dev, "shutdown successful\n");
+				dev_info(dev, "shutdown successful\n");
 			else
 				dev_err(mdm->dev, "graceful poff ipc fail\n");
 		}
@@ -357,6 +359,7 @@ static int mdm_cmd_exe(enum esoc_cmd cmd, struct esoc_clink *esoc)
 		esoc_clink_queue_request(ESOC_REQ_SHUTDOWN, esoc);
 		mdm_power_down(mdm);
 		mdm_update_gpio_configs(mdm, GPIO_UPDATE_BOOTING_CONFIG);
+		device_unlock(dev);
 		break;
 	case ESOC_RESET:
 		mdm_toggle_soft_reset(mdm);
@@ -370,7 +373,7 @@ static int mdm_cmd_exe(enum esoc_cmd cmd, struct esoc_clink *esoc)
 		mdm->ready = false;
 		cancel_delayed_work(&mdm->mdm2ap_status_check_work);
 		gpio_set_value(MDM_GPIO(mdm, AP2MDM_ERRFATAL), 1);
-		dev_dbg(mdm->dev, "set ap2mdm errfatal to force reset\n");
+		dev_info(mdm->dev, "set ap2mdm errfatal to force reset\n");
 		msleep(mdm->ramdump_delay_ms);
 		break;
 	case ESOC_EXE_DEBUG:
@@ -431,7 +434,7 @@ static void mdm_status_fn(struct work_struct *work)
 	struct device *dev = mdm->dev;
 	int value = gpio_get_value(MDM_GPIO(mdm, MDM2AP_STATUS));
 
-	dev_dbg(dev, "%s: status:%d\n", __func__, value);
+	dev_info(dev, "%s: status:%d\n", __func__, value);
 	/* Update gpio configuration to "running" config. */
 	mdm_update_gpio_configs(mdm, GPIO_UPDATE_RUNNING_CONFIG);
 }
@@ -454,7 +457,7 @@ static void mdm_get_restart_reason(struct work_struct *work)
 		msleep(SFR_RETRY_INTERVAL);
 	} while (++ntries < SFR_MAX_RETRIES);
 	if (ntries == SFR_MAX_RETRIES)
-		dev_dbg(dev, "%s: Error retrieving restart reason: %d\n",
+		dev_err(dev, "%s: Error retrieving restart reason: %d\n",
 						__func__, ret);
 	mdm->get_restart_reason = false;
 }
@@ -469,6 +472,7 @@ static void mdm_notify(enum esoc_notify notify, struct esoc_clink *esoc)
 
 	switch (notify) {
 	case ESOC_IMG_XFER_DONE:
+		dev_info(dev, "%s ESOC_IMG_XFER_DONE\n", __func__);
 		if (gpio_get_value(MDM_GPIO(mdm, MDM2AP_STATUS)) ==  0)
 			schedule_delayed_work(&mdm->mdm2ap_status_check_work,
 				msecs_to_jiffies(MDM2AP_STATUS_TIMEOUT_MS));
@@ -497,7 +501,7 @@ static void mdm_notify(enum esoc_notify notify, struct esoc_clink *esoc)
 	case ESOC_PRIMARY_CRASH:
 		mdm_disable_irqs(mdm);
 		status_down = false;
-		dev_dbg(dev, "signal apq err fatal for graceful restart\n");
+		dev_info(dev, "signal apq err fatal for graceful restart\n");
 		gpio_set_value(MDM_GPIO(mdm, AP2MDM_ERRFATAL), 1);
 		timeout = local_clock();
 		do_div(timeout, NSEC_PER_MSEC);
@@ -527,7 +531,7 @@ static void mdm_notify(enum esoc_notify notify, struct esoc_clink *esoc)
 		}
 		break;
 	case ESOC_PRIMARY_REBOOT:
-		dev_dbg(mdm->dev, "Triggering mdm cold reset");
+		dev_info(mdm->dev, "Triggering mdm cold reset");
 		mdm->ready = 0;
 		gpio_direction_output(MDM_GPIO(mdm, AP2MDM_SOFT_RESET),
 				!!mdm->soft_reset_inverted);
@@ -578,7 +582,7 @@ static irqreturn_t mdm_status_change(int irq, void *dev_id)
 		esoc_clink_evt_notify(ESOC_UNEXPECTED_RESET, esoc);
 	} else if (value == 1) {
 		cancel_delayed_work(&mdm->mdm2ap_status_check_work);
-		dev_dbg(dev, "status = 1: mdm is now ready\n");
+		dev_info(dev, "status = 1: mdm is now ready\n");
 		mdm->ready = true;
 		queue_work(mdm->mdm_queue, &mdm->mdm_status_work);
 		if (mdm->get_restart_reason)
@@ -598,10 +602,11 @@ static irqreturn_t mdm_pblrdy_change(int irq, void *dev_id)
 		return IRQ_HANDLED;
 	esoc = mdm->esoc;
 	dev = mdm->dev;
-	dev_dbg(dev, "pbl ready %d:\n",
+	dev_info(dev, "pbl ready %d:\n",
 			gpio_get_value(MDM_GPIO(mdm, MDM2AP_PBLRDY)));
 	if (mdm->init) {
 		mdm->init = 0;
+		dev_err(dev, "Signaling request engine for images\n");
 		esoc_clink_queue_request(ESOC_REQ_IMG, esoc);
 		return IRQ_HANDLED;
 	}
@@ -718,7 +723,7 @@ static int mdm_configure_ipc(struct mdm_ctrl *mdm, struct platform_device *pdev)
 	ret = of_property_read_u32(node, "qcom,sysmon-subsys-id",
 						&mdm->sysmon_subsys_id);
 	if (ret < 0)
-		dev_dbg(dev, "sysmon_subsys_id not set.\n");
+		dev_info(dev, "sysmon_subsys_id not set.\n");
 
 	gpio_direction_output(MDM_GPIO(mdm, AP2MDM_STATUS), 0);
 	gpio_direction_output(MDM_GPIO(mdm, AP2MDM_ERRFATAL), 0);
@@ -930,14 +935,27 @@ static struct mdm_ops mdm9x35_ops = {
 	.config_hw = mdm9x35_setup_hw,
 };
 
-static const struct of_device_id mdm_dt_match[] = {
-	{ .compatible = "qcom,ext-mdm9x25",
-		.data = &mdm9x25_ops, },
+static struct of_device_id mdm_dt_match[] = {
 	{ .compatible = "qcom,ext-mdm9x35",
 		.data = &mdm9x35_ops, },
 	{},
 };
 MODULE_DEVICE_TABLE(of, mdm_dt_match);
+
+static int __init get_baseband(char *str)
+{
+	if(!strncasecmp(str, "mdm2", 4)) {
+		strcpy(mdm_dt_match->compatible, "qcom,ext-mdm9x35");
+		mdm_dt_match->data = &mdm9x35_ops;
+	} else if(!strncasecmp(str, "mdm", 3)) {
+		strcpy(mdm_dt_match->compatible, "qcom,ext-mdm9x25");
+		mdm_dt_match->data = &mdm9x25_ops;
+	}
+	pr_emerg("%s: %s\n", __func__, mdm_dt_match->compatible);
+
+	return 0;
+}
+__setup("androidboot.baseband=", get_baseband);
 
 static int mdm_probe(struct platform_device *pdev)
 {

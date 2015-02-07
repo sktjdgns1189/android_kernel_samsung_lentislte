@@ -3054,6 +3054,7 @@ static int msm_tspp_probe(struct platform_device *pdev)
 		resource_size(mem_tsif0));
 	if (!device->tsif[0].base) {
 		pr_err("tspp: ioremap failed");
+		rc = -ENXIO;
 		goto err_map_tsif0;
 	}
 
@@ -3068,6 +3069,7 @@ static int msm_tspp_probe(struct platform_device *pdev)
 		resource_size(mem_tsif1));
 	if (!device->tsif[1].base) {
 		dev_err(&pdev->dev, "ioremap failed");
+		rc = -ENXIO;
 		goto err_map_tsif1;
 	}
 
@@ -3081,6 +3083,7 @@ static int msm_tspp_probe(struct platform_device *pdev)
 	device->base = ioremap(mem_tspp->start, resource_size(mem_tspp));
 	if (!device->base) {
 		dev_err(&pdev->dev, "ioremap failed");
+		rc = -ENXIO;
 		goto err_map_dev;
 	}
 
@@ -3097,12 +3100,14 @@ static int msm_tspp_probe(struct platform_device *pdev)
 		resource_size(mem_bam));
 	if (!device->bam_props.virt_addr) {
 		dev_err(&pdev->dev, "ioremap failed");
+		rc = -ENXIO;
 		goto err_map_bam;
 	}
 
-	if (msm_tspp_map_irqs(pdev, device))
+	if (msm_tspp_map_irqs(pdev, device)) {
+		rc = -EINVAL;
 		goto err_irq;
-
+	}
 	/* power management */
 	pm_runtime_set_active(&pdev->dev);
 	pm_runtime_enable(&pdev->dev);
@@ -3131,13 +3136,15 @@ static int msm_tspp_probe(struct platform_device *pdev)
 	device->bam_props.irq = device->bam_irq;
 	device->bam_props.manage = SPS_BAM_MGR_LOCAL;
 
-	if (tspp_clock_start(device) != 0) {
+	rc = tspp_clock_start(device);
+	if (rc != 0) {
 		dev_err(&pdev->dev, "Can't start clocks");
 		goto err_clock;
 	}
 
-	if (sps_register_bam_device(&device->bam_props,
-		&device->bam_handle) != 0) {
+	rc = sps_register_bam_device(&device->bam_props,
+		&device->bam_handle);
+	if (rc != 0) {
 		pr_err("tspp: failed to register bam");
 		goto err_bam;
 	}
@@ -3159,7 +3166,8 @@ static int msm_tspp_probe(struct platform_device *pdev)
 
 	/* initialize the channels */
 	for (i = 0; i < TSPP_NUM_CHANNELS; i++) {
-		if (tspp_channel_init(&(device->channels[i]), device) != 0) {
+		rc = tspp_channel_init(&(device->channels[i]), device);
+		if (rc != 0) {
 			pr_err("tspp_channel_init failed");
 			goto err_channel;
 		}
@@ -3306,7 +3314,7 @@ static struct of_device_id msm_match_table[] = {
 
 static struct platform_driver msm_tspp_driver = {
 	.probe          = msm_tspp_probe,
-	.remove         = __exit_p(msm_tspp_remove),
+	.remove         = msm_tspp_remove,
 	.driver         = {
 		.name   = "msm_tspp",
 		.pm     = &tspp_dev_pm_ops,

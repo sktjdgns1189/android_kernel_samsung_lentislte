@@ -378,6 +378,86 @@ config MSM_LPM_TEST
 	  processes them to measure various stats including latency
 	  measurement.
 
+
+menu "Board Selection"
+config SEC_FACTORY
+        bool "when it comes to sec factory mode"
+	default n
+        help
+          It will support a sec factory mode
+
+config SEC_LENTIS_PROJECT
+        depends on ARCH_APQ8084
+        default n
+        bool "Samsung LENTIS project"
+        help
+          Support for Samsung LENTIS project.
+
+config MACH_LENTISLTE_SKT
+        default n
+        bool "Samsung model LENTISLTE_SKT"
+        help
+          Support for Samsung LENTISLTE_SKT device.
+
+config MACH_LENTISLTE_KTT
+        default n
+        bool "Samsung model LENTISLTE_KTT"
+        help
+          Support for Samsung LENTISLTE_KTT device.
+
+config MACH_LENTISLTE_LGT
+        default n
+        bool "Samsung model LENTISLTE_LGT"
+        help
+          Support for Samsung LENTISLTE_LGT device.
+
+config SEC_TRLTE_PROJECT
+        depends on ARCH_APQ8084
+        default n
+        bool "Samsung TRLTE project"
+
+config MACH_TRLTE_KOR
+        default n
+        bool "Samsung TRLTE KOR ALL"
+        help
+            Support for Samsung TRLTE KOR device.
+
+config SEC_TRLTE_CHNDUOS
+	default n
+	bool "Samsung model TRLTE_CHNDUOS"
+	help
+	Support for Samsung TRLTE_CHNDUOS device.
+
+config SEC_TRLTE_JPN
+	default n
+	bool "Samsung model TRLTE_JPN"
+	help
+	Support for Samsung TRLTE_JPN device.
+
+config SEC_TRLTE_DCM
+	default n
+	bool "Samsung model TRLTE_DCM"
+	help
+	Support for Samsung TRLTE_DCM device.
+
+config SEC_TRLTE_KDI
+	default n
+	bool "Samsung model TRLTE_KDI"
+	help
+	Support for Samsung TRLTE_KDI device.
+
+config SEC_TBLTE_PROJECT
+        depends on ARCH_APQ8084
+        default n
+        bool "Samsung TBLTE project"
+
+config MACH_TBLTE_KOR
+        default n
+        bool "Samsung TBLTE KOR ALL"
+        help
+            Support for Samsung TBLTE KOR device.
+endmenu
+
 config MSM_REMOTE_SPINLOCK_DEKKERS
 	bool
 config MSM_REMOTE_SPINLOCK_SWP
@@ -730,6 +810,22 @@ config MSM_RPC_LOOPBACK_XPRT
 	  Support for routing RPC messages between APPS clients
 	  and APPS servers.  Helps in testing APPS RPC framework.
 
+config MSM_RMT_STORAGE_CLIENT
+	depends on (ARCH_MSM && MSM_ONCRPCROUTER)
+	default n
+	bool "Remote Storage RPC client"
+	help
+	  Provide RPC mechanism for remote processors to access storage
+	  device on apps processor.
+
+config MSM_RMT_STORAGE_CLIENT_STATS
+	depends on (MSM_RMT_STORAGE_CLIENT && DEBUG_FS)
+	default n
+	bool "Remote storage RPC client performance statistics"
+	help
+	  Collects performance statistics and shows this information
+	  through a debugfs file rmt_storage_stats.
+
 if CPU_FREQ_MSM
 
 config MSM_CPU_FREQ_SET_MIN_MAX
@@ -793,6 +889,15 @@ config MSM_DMA_TEST
 	help
 	  Intended to be compiled as a module.  Provides a device node
 	  and ioctls for testing the MSM dma system.
+
+config USER_RESET_DEBUG
+	bool "KOR reset reason debug feature in user version"
+    default n
+    help
+        This option enables debugging log for B10 project.
+        This option provides reset history log in user version.
+        This option enable proc/reset_reason support
+        It's only support KOR Model
 
 config WIFI_CONTROL_FUNC
 	bool "Enable WiFi control function abstraction"
@@ -1405,6 +1510,101 @@ config MSM_CPR_REGULATOR
 	  to voltage value before writing to a voltage regulator API, such as
 	  that provided by spm-regulator driver.
 
+config TIMA_RKP
+       bool "Enable RKP (Realtime Kernel Protection) TIMA feature"
+       default n
+
+config TIMA_RKP_30
+       bool "Enable RKP TIMA 3.0 features"
+       depends on (ARCH_MSM8974PRO || ARCH_MSM8226)
+       depends on TIMA_RKP       
+       default y
+       help
+         RKP 3.0 features, enabled for msm8974pro only
+
+config TIMA_RKP_COHERENT_TT
+       bool
+       depends on TIMA_RKP_30
+       default n 
+       help
+         RKP cache coherency feature- depends on corresponding TZ RKP code!!!
+
+config TIMA_RKP_L1_TABLES
+       bool
+       depends on TIMA_RKP
+       default y
+       help
+         TIMA taking over management of L1 tables.
+
+config TIMA_RKP_L2_TABLES
+       bool
+       depends on TIMA_RKP
+       default y
+       help
+         TIMA taking over management L2 tables too.
+
+config TIMA_RKP_L2_GROUP
+	bool
+	depends on TIMA_RKP_L2_TABLES
+	depends on TIMA_RKP_COHERENT_TT
+	default y
+	help
+	 TIMA grouping page table writes; do only with cache coherence
+
+config TIMA_RKP_LAZY_MMU
+	bool
+	depends on TIMA_RKP_L2_TABLES
+	default y
+	help
+	 TIMA lazy MMU for L2 pages
+
+config	TIMA_RKP_DMA_MVA_TO_SETWAY
+	bool
+	depends on TIMA_RKP
+	default n
+	help
+	 Flush cache by set-way for dma?
+
+config TIMA_RKP_DEBUG
+       bool
+       depends on TIMA_RKP
+       default n
+       help
+         TIMA debug infrastructure.
+
+config TIMA_LKMAUTH
+       bool "Enable LKM authentication TIMA feature"
+       default n
+       help
+         TIMA authenticates loaded kernel modules. Disable it if you don't
+         want TIMA enabled.
+
+config TIMA_LKMAUTH_CODE_PROT
+       bool
+       depends on TIMA_LKMAUTH
+       default y
+       help
+         When enabled, this feature will mark all Executable sections in an
+         LKM as RO
+
+config TIMA_TEST_INFRA
+       tristate "Testing infrastructure for TIMA"
+       default n
+       help
+         Kernel bits of the TIMA test infrastructure
+
+config TIMA_UEVENT
+       bool "Uevent message propagation for TIMA"
+       default n
+       help
+         Uevent messages for TIMA PKM/LKM
+
+config TIMA_LOG
+       bool "Log dumping support for TIMA"
+       default n
+       help
+         TIMA Log dumping support
+
 config KRAIT_REGULATOR
 	bool "Support Kraits powered via ganged regulators in the pmic"
 	help
@@ -1412,4 +1612,11 @@ config KRAIT_REGULATOR
 	 line from the PMIC. This supply line is powered by multiple
 	 regulators running in ganged mode inside the PMIC. Enable
 	 this option to support such configurations.
+
+config SEC_THERMISTOR
+        bool "Use external thermistor near AP for checking temprature"
+        default n
+        help
+        Use thermistor driver for checking temperature near AP chip.
+        
 endif

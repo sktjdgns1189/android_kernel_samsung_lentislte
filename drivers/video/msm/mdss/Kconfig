@@ -43,3 +43,46 @@ config FB_MSM_MDSS_MDP3
 	---help---
 	The MDP3 provides support for an older version display controller
 	included in latest display sub-system, known as MDSS.
+
+config MDNIE_LITE_TUNING
+	bool "MDNIe lite panel tuning"
+	default n
+	
+config FB_MSM_MIPI_SAMSUNG_OCTA_CMD_FULL_HD_PT_PANEL
+	bool "Support SAMSUNG OCTA Command Full-HD Panel"
+	default n
+
+config FB_MSM_MIPI_SAMSUNG_OCTA_CMD_WQHD_PT_PANEL
+	bool "Support SAMSUNG OCTA Command WQHD Panel"
+	default n
+
+	
+config FB_MSM_MIPI_SAMSUNG_OCTA_S6E3HA2_CMD_WQHD_PT_PANEL
+	bool "Support SAMSUNG OCTA S6E3HA2 Command WQHD Panel"
+	default n
+	
+config FB_MSM_MIPI_SAMSUNG_OCTA_S6E3HA2_CMD_WQXGA_PT_PANEL
+	bool "Support SAMSUNG OCTA S6E3HA2 Command WQXGA Panel"
+	default n
+	
+config FB_MSM_CMD_MODE_PANEL
+	bool "Support  Command mode Panle"
+	default n
+
+config FB_MSM_VIDEO_MODE_PANEL
+	bool "Support  Video mode Panle"
+	default n
+
+config FB_MSM_DUAL_DSI_MODE
+	bool "Using Dual-dsi mode"
+	default n
+	
+config FB_MSM_MDSS_DSI_DBG
+	bool "DSI dbg support"
+	default n
+
+config FB_MSM_CAMERA_CSC
+	default n
+	bool "Support SAMSUNG CAMERA CSC"
+	---help---
+		Support for camera CSC tuning

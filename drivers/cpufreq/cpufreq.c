@@ -415,6 +415,8 @@ show_one(cpuinfo_transition_latency, cpuinfo.transition_latency);
 show_one(scaling_min_freq, min);
 show_one(scaling_max_freq, max);
 show_one(scaling_cur_freq, cur);
+show_one(cpu_utilization, util);
+show_one(cpu_load, load_at_max);
 
 static int cpufreq_set_policy(struct cpufreq_policy *policy,
 				struct cpufreq_policy *new_policy);
@@ -630,6 +632,8 @@ cpufreq_freq_attr_ro(scaling_cur_freq);
 cpufreq_freq_attr_ro(bios_limit);
 cpufreq_freq_attr_ro(related_cpus);
 cpufreq_freq_attr_ro(affected_cpus);
+cpufreq_freq_attr_ro(cpu_utilization);
+cpufreq_freq_attr_ro(cpu_load);
 cpufreq_freq_attr_rw(scaling_min_freq);
 cpufreq_freq_attr_rw(scaling_max_freq);
 cpufreq_freq_attr_rw(scaling_governor);
@@ -641,6 +645,8 @@ static struct attribute *default_attrs[] = {
 	&cpuinfo_transition_latency.attr,
 	&scaling_min_freq.attr,
 	&scaling_max_freq.attr,
+	&cpu_utilization.attr,
+	&cpu_load.attr,
 	&affected_cpus.attr,
 	&related_cpus.attr,
 	&scaling_governor.attr,
@@ -1439,7 +1445,7 @@ static unsigned int __cpufreq_get(unsigned int cpu)
 	struct cpufreq_policy *policy = per_cpu(cpufreq_cpu_data, cpu);
 	unsigned int ret_freq = 0;
 
-	if (!cpufreq_driver->get)
+	if (!cpufreq_driver->get || policy == 0)
 		return ret_freq;
 
 	ret_freq = cpufreq_driver->get(cpu);
@@ -1586,6 +1592,24 @@ const char *cpufreq_get_current_driver(void)
 	return NULL;
 }
 EXPORT_SYMBOL_GPL(cpufreq_get_current_driver);
+
+/**
+ * cpufreq_notify_utilization - notify CPU userspace about CPU utilization
+ * change
+ *
+ * This function is called everytime the CPU load is evaluated by the
+ * ondemand governor. It notifies userspace of cpu load changes via sysfs.
+ */
+void cpufreq_notify_utilization(struct cpufreq_policy *policy,
+		unsigned int util)
+{
+	if (policy) {
+		policy->util = util;
+
+		if (policy->util >= MIN_CPU_UTIL_NOTIFY)
+			sysfs_notify(&policy->kobj, NULL, "cpu_utilization");
+	}
+}
 
 /*********************************************************************
  *                     NOTIFIER LISTS INTERFACE                      *

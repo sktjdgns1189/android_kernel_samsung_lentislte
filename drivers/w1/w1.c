@@ -32,6 +32,7 @@
 #include <linux/sched.h>
 #include <linux/kthread.h>
 #include <linux/freezer.h>
+#include <linux/input.h>
 
 #include <linux/atomic.h>
 
@@ -45,9 +46,23 @@ MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Evgeniy Polyakov <zbr@ioremap.net>");
 MODULE_DESCRIPTION("Driver for 1-wire Dallas network protocol.");
 
+#ifdef CONFIG_W1_SLAVE_DS28E15
+static int w1_timeout = 2;
+int w1_max_slave_count = 1;
+int w1_max_slave_ttl = 2;
+
+static struct w1_master *master_dev = NULL;
+
+extern int w1_ds28e15_verifymac(struct w1_slave *sl);
+extern int id, color, verification;
+#ifdef CONFIG_W1_SN
+extern char g_sn[14];
+#endif
+#else
 static int w1_timeout = 10;
 int w1_max_slave_count = 10;
 int w1_max_slave_ttl = 10;
+#endif /* CONFIG_W1_SLAVE_DS28E15 */
 
 module_param_named(timeout, w1_timeout, int, 0);
 module_param_named(max_slave_count, w1_max_slave_count, int, 0);
@@ -82,6 +97,13 @@ static void w1_slave_release(struct device *dev)
 	struct w1_slave *sl = dev_to_w1_slave(dev);
 
 	dev_dbg(dev, "%s: Releasing %s.\n", __func__, sl->name);
+	printk(KERN_ERR "%s: Releasing %s.\n", __func__, sl->name);
+
+	/* add for sending uevent*/
+	pr_info("%s: uevent send 0\n", __func__);
+	input_report_switch(sl->master->bus_master->input, SW_W1, 0);
+	input_sync(sl->master->bus_master->input);
+	/* end */
 
 	while (atomic_read(&sl->refcnt)) {
 		dev_dbg(dev, "Waiting for %s to become free: refcnt=%d.\n",
@@ -424,14 +446,16 @@ static int w1_atoreg_num(struct device *dev, const char *buf, size_t count,
 static struct w1_slave *w1_slave_search_device(struct w1_master *dev,
 	struct w1_reg_num *rn)
 {
-	struct w1_slave *sl;
+	struct w1_slave *sl=NULL;
 	list_for_each_entry(sl, &dev->slist, w1_slave_entry) {
+#if !defined(CONFIG_W1_FAST_CHECK)
 		if (sl->reg_num.family == rn->family &&
 				sl->reg_num.id == rn->id &&
-				sl->reg_num.crc == rn->crc) {
+				sl->reg_num.crc == rn->crc)
+#endif
 			return sl;
-		}
 	}
+	pr_info("%s: Node search FAIL!\n", __func__);
 	return NULL;
 }
 
@@ -499,6 +523,42 @@ static ssize_t w1_master_attribute_store_remove(struct device *dev,
 	return result;
 }
 
+void w1_master_search(void);
+#ifdef CONFIG_W1_SLAVE_DS28E15
+static ssize_t w1_master_attribute_show_verify_mac(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	int result = -1;
+#ifdef CONFIG_W1_WORKQUEUE
+	cancel_delayed_work_sync(&w1_gdev->w1_dwork);
+	schedule_delayed_work(&w1_gdev->w1_dwork, 0);
+
+	msleep(10);
+#endif
+	result = verification;
+
+	return sprintf(buf, "%d\n", result);
+}
+
+static ssize_t w1_master_attribute_show_check_id(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	return sprintf(buf, "%d\n", id);
+}
+
+static ssize_t w1_master_attribute_show_check_color(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	return sprintf(buf, "%d\n", color);
+}
+#ifdef CONFIG_W1_SN
+static ssize_t w1_master_attribute_show_check_sn(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	if (g_sn[0])
+		return snprintf(buf, 15, "%s\n", g_sn);
+	else
+		return snprintf(buf, 1, "%s", "");
+}
+#endif
+#endif
+
 #define W1_MASTER_ATTR_RO(_name, _mode)				\
 	struct device_attribute w1_master_attribute_##_name =	\
 		__ATTR(w1_master_##_name, _mode,		\
@@ -521,6 +581,14 @@ static W1_MASTER_ATTR_RW(search, S_IRUGO | S_IWUSR | S_IWGRP);
 static W1_MASTER_ATTR_RW(pullup, S_IRUGO | S_IWUSR | S_IWGRP);
 static W1_MASTER_ATTR_RW(add, S_IRUGO | S_IWUSR | S_IWGRP);
 static W1_MASTER_ATTR_RW(remove, S_IRUGO | S_IWUSR | S_IWGRP);
+#ifdef CONFIG_W1_SLAVE_DS28E15
+static W1_MASTER_ATTR_RO(verify_mac, S_IRUGO);
+static W1_MASTER_ATTR_RO(check_id, S_IRUGO);
+static W1_MASTER_ATTR_RO(check_color, S_IRUGO);
+#ifdef CONFIG_W1_SN
+static W1_MASTER_ATTR_RO(check_sn, S_IRUGO);
+#endif
+#endif
 
 static struct attribute *w1_master_default_attrs[] = {
 	&w1_master_attribute_name.attr,
@@ -534,6 +602,14 @@ static struct attribute *w1_master_default_attrs[] = {
 	&w1_master_attribute_pullup.attr,
 	&w1_master_attribute_add.attr,
 	&w1_master_attribute_remove.attr,
+#ifdef CONFIG_W1_SLAVE_DS28E15
+	&w1_master_attribute_verify_mac.attr,
+	&w1_master_attribute_check_id.attr,
+	&w1_master_attribute_check_color.attr,
+#ifdef CONFIG_W1_SN
+	&w1_master_attribute_check_sn.attr,
+#endif
+#endif
 	NULL
 };
 
@@ -562,6 +638,10 @@ static int w1_uevent(struct device *dev, struct kobj_uevent_env *env)
 		md = container_of(dev, struct w1_master, dev);
 		event_owner = "master";
 		name = md->name;
+#ifdef CONFIG_W1_SLAVE_DS28E15
+		master_dev = md; //container_of(dev, struct w1_master, dev);
+		printk(KERN_ERR "%s master_dev name = %s\n", __func__, master_dev->name);
+#endif	/* CONFIG_W1_SLAVE_DS28E15 */
 	} else if (dev->driver == &w1_slave_driver) {
 		sl = container_of(dev, struct w1_slave, dev);
 		event_owner = "slave";
@@ -586,6 +666,19 @@ static int w1_uevent(struct device *dev, struct kobj_uevent_env *env)
 end:
 	return err;
 }
+
+#ifdef CONFIG_W1_SLAVE_DS28E15
+static void w1_search_process(struct w1_master *dev, u8 search_type);
+
+void w1_master_search(void)
+{
+	if (master_dev == NULL)
+		return;
+
+	w1_search_process(master_dev, W1_SEARCH);
+}
+EXPORT_SYMBOL(w1_master_search);
+#endif /* CONFIG_W1_SLAVE_DS28L15 */
 
 static int __w1_attach_slave_device(struct w1_slave *sl)
 {
@@ -718,6 +811,7 @@ void w1_slave_detach(struct w1_slave *sl)
 	struct w1_netlink_msg msg;
 
 	dev_dbg(&sl->dev, "%s: detaching %s [%p].\n", __func__, sl->name, sl);
+	printk(KERN_ERR "%s: detaching %s [%p].\n", __func__, sl->name, sl);
 
 	list_del(&sl->w1_slave_entry);
 
@@ -832,6 +926,7 @@ void w1_slave_found(struct w1_master *dev, u64 rn)
 	if (sl) {
 		set_bit(W1_SLAVE_ACTIVE, (long *)&sl->flags);
 	} else {
+		printk(KERN_ERR "%s : no slave before, id=0x%x\n", __func__, tmp->family);
 		if (rn && tmp->crc == w1_calc_crc8((u8 *)&rn_le, 7))
 			w1_attach_slave_device(dev, tmp);
 	}
@@ -1001,6 +1096,22 @@ int w1_process(void *data)
 	return 0;
 }
 
+#ifdef CONFIG_W1_WORKQUEUE
+void w1_work(struct work_struct *work)
+{
+	struct w1_master *dev =
+		container_of(work, struct w1_master, w1_dwork.work);
+
+	if (dev->search_count) {
+		mutex_lock(&dev->mutex);
+		w1_search_process(dev, W1_SEARCH);
+		mutex_unlock(&dev->mutex);
+	}
+
+	schedule_delayed_work(&dev->w1_dwork, HZ * 2);
+}
+#endif
+
 static int __init w1_init(void)
 {
 	int retval;
@@ -1064,5 +1175,5 @@ static void __exit w1_fini(void)
 	bus_unregister(&w1_bus_type);
 }
 
-module_init(w1_init);
+late_initcall(w1_init);
 module_exit(w1_fini);

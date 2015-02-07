@@ -639,14 +639,14 @@ int mdss_dsi_clk_ctrl(struct mdss_dsi_ctrl_pdata *ctrl,
 	}
 
 	/*
-	 * In sync_wait_broadcast mode, we need to enable clocks
-	 * for the other controller as well when enabling clocks
-	 * for the trigger controller
+	 * In broadcast mode, we need to enable clocks for the
+	 * master controller as well when enabling clocks for the
+	 * slave controller
 	 */
-	if (mdss_dsi_sync_wait_trigger(ctrl)) {
-		mctrl = mdss_dsi_get_other_ctrl(ctrl);
+	if (mdss_dsi_is_slave_ctrl(ctrl)) {
+		mctrl = mdss_dsi_get_master_ctrl();
 		if (!mctrl)
-			pr_warn("%s: Unable to get other control\n", __func__);
+			pr_warn("%s: Unable to get master control\n", __func__);
 	}
 
 	pr_debug("%s++: ndx=%d clk_type=%d bus_clk_cnt=%d link_clk_cnt=%d\n",
@@ -787,7 +787,7 @@ void mdss_dsi_phy_disable(struct mdss_dsi_ctrl_pdata *ctrl)
 		ctrl0 = mdss_dsi_get_ctrl_by_index(DSI_CTRL_0);
 		if (ctrl0) {
 			MIPI_OUTP(ctrl0->phy_io.base + 0x0170, 0x000);
-			MIPI_OUTP(ctrl0->phy_io.base + 0x0298, 0x000);
+			MIPI_OUTP(ctrl0->regulator_io.base + 0x18, 0x000);
 		} else {
 			pr_warn("%s: Unable to get control%d\n",
 				__func__, DSI_CTRL_0);
@@ -795,7 +795,7 @@ void mdss_dsi_phy_disable(struct mdss_dsi_ctrl_pdata *ctrl)
 	}
 
 	MIPI_OUTP(ctrl->phy_io.base + 0x0170, 0x000);
-	MIPI_OUTP(ctrl->phy_io.base + 0x0298, 0x000);
+	MIPI_OUTP(ctrl->regulator_io.base + 0x18, 0x000);
 
 	/*
 	 * Wait for the registers writes to complete in order to
@@ -808,8 +808,8 @@ void mdss_dsi_phy_init(struct mdss_panel_data *pdata)
 {
 	struct mdss_dsi_phy_ctrl *pd;
 	int i, off, ln, offset;
-	struct mdss_dsi_ctrl_pdata *ctrl_pdata = NULL, *temp_ctrl = NULL;
-
+	struct mdss_dsi_ctrl_pdata *ctrl_pdata = NULL;
+	struct mdss_dsi_ctrl_pdata *temp_ctrl = NULL;
 	ctrl_pdata = container_of(pdata, struct mdss_dsi_ctrl_pdata,
 				panel_data);
 	if (!ctrl_pdata) {
@@ -837,23 +837,27 @@ void mdss_dsi_phy_init(struct mdss_panel_data *pdata)
 		}
 	}
 
+	/* phy regulator ctrl settings. Both the DSI controller
+	   have one regulator */
+
 	/* Regulator ctrl 0 */
-	MIPI_OUTP((temp_ctrl->phy_io.base) + 0x280, 0x0);
+	MIPI_OUTP((ctrl_pdata->regulator_io.base) + 0x00, 0x0);
 	/* Regulator ctrl - CAL_PWR_CFG */
-	MIPI_OUTP((temp_ctrl->phy_io.base) + 0x298, pd->regulator[6]);
+	MIPI_OUTP((ctrl_pdata->regulator_io.base) + 0x18, pd->regulator[6]);
 
 	/* Regulator ctrl - TEST */
-	MIPI_OUTP((temp_ctrl->phy_io.base) + 0x294, pd->regulator[5]);
+	MIPI_OUTP((ctrl_pdata->regulator_io.base) + 0x14, pd->regulator[5]);
 	/* Regulator ctrl 3 */
-	MIPI_OUTP((temp_ctrl->phy_io.base) + 0x28c, pd->regulator[3]);
+	MIPI_OUTP((ctrl_pdata->regulator_io.base) + 0x0c, pd->regulator[3]);
 	/* Regulator ctrl 2 */
-	MIPI_OUTP((temp_ctrl->phy_io.base) + 0x288, pd->regulator[2]);
+	MIPI_OUTP((ctrl_pdata->regulator_io.base) + 0x08, pd->regulator[2]);
 	/* Regulator ctrl 1 */
-	MIPI_OUTP((temp_ctrl->phy_io.base) + 0x284, pd->regulator[1]);
+	MIPI_OUTP((ctrl_pdata->regulator_io.base) + 0x04, pd->regulator[1]);
 	/* Regulator ctrl 0 */
-	MIPI_OUTP((temp_ctrl->phy_io.base) + 0x280, pd->regulator[0]);
+	MIPI_OUTP((ctrl_pdata->regulator_io.base) + 0x00, pd->regulator[0]);
 	/* Regulator ctrl 4 */
-	MIPI_OUTP((temp_ctrl->phy_io.base) + 0x290, pd->regulator[4]);
+	MIPI_OUTP((ctrl_pdata->regulator_io.base) + 0x10, pd->regulator[4]);
+
 
 	/* LDO ctrl 0 */
 	if ((ctrl_pdata->panel_data).panel_info.pdest == DISPLAY_1)

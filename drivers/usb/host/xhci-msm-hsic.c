@@ -131,6 +131,7 @@ struct mxhci_hsic_hcd {
 
 	uint32_t		wakeup_int_cnt;
 	uint32_t		pwr_evt_irq_inlpm;
+	int			hsic_connected;
 };
 
 #define SYNOPSIS_DWC3_VENDOR	0x5533
@@ -641,7 +642,7 @@ static irqreturn_t mxhci_hsic_wakeup_irq(int irq, void *data)
 	int ret;
 
 	mxhci->wakeup_int_cnt++;
-	dev_dbg(mxhci->dev, "%s: remote wakeup interrupt cnt: %u\n",
+	dev_err(mxhci->dev, "%s: remote wakeup interrupt cnt: %u\n",
 			__func__, mxhci->wakeup_int_cnt);
 	xhci_dbg_log_event(&dbg_hsic, NULL, "Remote Wakeup IRQ",
 			mxhci->wakeup_int_cnt);
@@ -828,13 +829,11 @@ static int mxhci_hsic_suspend(struct mxhci_hsic_hcd *mxhci)
 	}
 
 	disable_irq(hcd->irq);
-	disable_irq(mxhci->pwr_event_irq);
 
 	/* make sure we don't race against a remote wakeup */
 	if (test_bit(HCD_FLAG_WAKEUP_PENDING, &hcd->flags) ||
 	    (readl_relaxed(MSM_HSIC_PORTSC) & PORT_PLS_MASK) == XDEV_RESUME) {
 		dev_dbg(mxhci->dev, "wakeup pending, aborting suspend\n");
-		enable_irq(mxhci->pwr_event_irq);
 		enable_irq(hcd->irq);
 		return -EBUSY;
 	}
@@ -864,7 +863,6 @@ static int mxhci_hsic_suspend(struct mxhci_hsic_hcd *mxhci)
 
 	mxhci->in_lpm = 1;
 
-	enable_irq(mxhci->pwr_event_irq);
 	enable_irq(hcd->irq);
 
 	if (mxhci->wakeup_irq) {
@@ -979,7 +977,7 @@ int mxhci_hsic_hub_control(struct usb_hcd *hcd, u16 typeReq, u16 wValue,
 
 	ret = xhci_hub_control(hcd, typeReq, wValue, wIndex, buf, wLength);
 
-	if (!hcd->primary_hcd)
+	if(!hcd->primary_hcd)
 		return ret;
 
 	mxhci = hcd_to_hsic(hcd->primary_hcd);
@@ -1000,18 +998,6 @@ int mxhci_hsic_hub_control(struct usb_hcd *hcd, u16 typeReq, u16 wValue,
 		}
 	}
 	return ret;
-}
-
-void mxhci_hsic_udev_enum_done(struct usb_hcd *hcd)
-{
-	struct mxhci_hsic_hcd *mxhci = hcd_to_hsic(hcd->primary_hcd);
-
-	if (mxhci->host_ready) {
-		/* after device enum lower host ready gpio */
-		gpio_direction_output(mxhci->host_ready, 0);
-		xhci_dbg_log_event(&dbg_hsic, NULL,  "host ready set low",
-					gpio_get_value(mxhci->host_ready));
-	}
 }
 
 static struct hc_driver mxhci_hsic_hc_driver = {
@@ -1065,7 +1051,6 @@ static struct hc_driver mxhci_hsic_hc_driver = {
 	.log_urb =		xhci_hsic_log_urb,
 
 	.set_autosuspend_delay = mxhci_hsic_set_autosuspend_delay,
-	.udev_enum_done =	mxhci_hsic_udev_enum_done,
 };
 
 static ssize_t config_imod_store(struct device *pdev,
@@ -1182,9 +1167,11 @@ static int mxhci_hsic_probe(struct platform_device *pdev)
 	struct xhci_hcd		*xhci;
 	struct resource *res;
 	struct usb_hcd *hcd;
+	struct irq_desc *desc;
 	unsigned int reg;
 	int ret;
 	int irq;
+	unsigned int dep;
 	u32 tmp[3];
 	u32 temp;
 
@@ -1338,6 +1325,9 @@ static int mxhci_hsic_probe(struct platform_device *pdev)
 
 	irq_set_status_flags(irq, IRQ_NOAUTOEN);
 	ret = usb_add_hcd(hcd, irq, IRQF_SHARED);
+	desc = irq_to_desc(irq);
+	dep = desc->depth;
+	printk("###DIsabled IRQ in hcd_add depth: %d\n",dep);
 	if (ret)
 		goto deinit_vddcx;
 
@@ -1422,6 +1412,7 @@ static int mxhci_hsic_probe(struct platform_device *pdev)
 					__func__);
 
 	enable_irq(irq);
+	printk("###Enabled IRQ in hcd_add\n");
 	/* Enable HSIC PHY */
 	mxhci_hsic_ulpi_write(mxhci, 0x01, MSM_HSIC_CFG_SET);
 
@@ -1471,6 +1462,7 @@ static int mxhci_hsic_remove(struct platform_device *pdev)
 
 	xhci_dbg_log_event(&dbg_hsic, NULL,  "mxhci_hsic_remove", 0);
 
+	pr_err("%s: start\n", __func__);
 	/* disable STROBE_PAD_CTL */
 	reg = readl_relaxed(TLMM_GPIO_HSIC_STROBE_PAD_CTL);
 	writel_relaxed(reg & 0xfdffffff, TLMM_GPIO_HSIC_STROBE_PAD_CTL);
@@ -1497,7 +1489,6 @@ static int mxhci_hsic_remove(struct platform_device *pdev)
 
 	usb_remove_hcd(xhci->shared_hcd);
 	usb_put_hcd(xhci->shared_hcd);
-
 	usb_remove_hcd(hcd);
 
 	pm_runtime_put_noidle(mxhci->dev);
@@ -1519,7 +1510,7 @@ static int mxhci_hsic_remove(struct platform_device *pdev)
 	mxhci_msm_config_gdsc(mxhci, 0);
 	kfree(xhci);
 	usb_put_hcd(hcd);
-
+	pr_err("%s: remove done \n", __func__);
 	return 0;
 }
 

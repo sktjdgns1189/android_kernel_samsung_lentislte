@@ -75,8 +75,6 @@ static int kgsl_setup_dma_buf(struct kgsl_mem_entry *entry,
 				struct kgsl_device *device,
 				struct dma_buf *dmabuf);
 
-static const struct file_operations kgsl_fops;
-
 static int kgsl_memfree_hist_init(void)
 {
 	void *base;
@@ -810,32 +808,13 @@ kgsl_process_private_put(struct kgsl_process_private *private)
 }
 
 /**
- * kgsl_process_private_find() - Find the process associated with the specified
- * name
- * @name: pid_t of the process to search for
- * Return the process struct for the given ID.
- */
-struct kgsl_process_private *kgsl_process_private_find(pid_t pid)
-{
-	struct kgsl_process_private *p, *private = NULL;
-
-	mutex_lock(&kgsl_driver.process_mutex);
-	list_for_each_entry(p, &kgsl_driver.process_list, list) {
-		if (p->pid == pid) {
-			if (kgsl_process_private_get(p))
-				private = p;
-			break;
-		}
-	}
-	mutex_unlock(&kgsl_driver.process_mutex);
-	return private;
-}
-
-/**
- * kgsl_process_private_new() - Helper function to search for process private
+ * find_process_private() - Helper function to search for process private
+ * @cur_dev_priv: Pointer to device private structure which contains pointers
+ * to device and process_private structs.
  * Returns: Pointer to the found/newly created private struct
  */
-static struct kgsl_process_private *kgsl_process_private_new(void)
+static struct kgsl_process_private *
+kgsl_find_process_private(struct kgsl_device_private *cur_dev_priv)
 {
 	struct kgsl_process_private *private;
 
@@ -874,11 +853,11 @@ done:
  * NULL if pagetable creation for this process private obj failed.
  */
 static struct kgsl_process_private *
-kgsl_get_process_private(struct kgsl_device *device)
+kgsl_get_process_private(struct kgsl_device_private *cur_dev_priv)
 {
 	struct kgsl_process_private *private;
 
-	private = kgsl_process_private_new();
+	private = kgsl_find_process_private(cur_dev_priv);
 
 	if (!private)
 		return NULL;
@@ -895,15 +874,15 @@ kgsl_get_process_private(struct kgsl_device *device)
 
 	if ((!private->pagetable) && kgsl_mmu_enabled()) {
 		unsigned long pt_name;
+		struct kgsl_mmu *mmu = &cur_dev_priv->device->mmu;
 
 		pt_name = task_tgid_nr(current);
-		private->pagetable =
-			kgsl_mmu_getpagetable(&device->mmu, pt_name);
+		private->pagetable = kgsl_mmu_getpagetable(mmu, pt_name);
 		if (private->pagetable == NULL)
 			goto error;
 	}
 
-	if (kgsl_process_init_sysfs(device, private))
+	if (kgsl_process_init_sysfs(cur_dev_priv->device, private))
 		goto error;
 	if (kgsl_process_init_debugfs(private))
 		goto error;
@@ -1093,7 +1072,7 @@ static int kgsl_open(struct inode *inodep, struct file *filep)
 	 * after the first start so that the global pagetable mappings
 	 * are set up before we create the per-process pagetable.
 	 */
-	dev_priv->process_priv = kgsl_get_process_private(device);
+	dev_priv->process_priv = kgsl_get_process_private(dev_priv);
 	if (dev_priv->process_priv ==  NULL) {
 		result = -ENOMEM;
 		goto err_stop;
@@ -2608,21 +2587,9 @@ static int kgsl_setup_useraddr(struct kgsl_mem_entry *entry,
 	 */
 	down_read(&current->mm->mmap_sem);
 	vma = find_vma(current->mm, param->hostptr);
-
 	if (vma && vma->vm_file) {
-		int fd;
-
-		/*
-		 * Check to see that this isn't our own memory that we have
-		 * already mapped
-		 */
-		if (vma->vm_file->f_op == &kgsl_fops) {
-			up_read(&current->mm->mmap_sem);
-			return -EFAULT;
-		}
-
 		/* Look for the fd that matches this the vma file */
-		fd = iterate_fd(current->files, 0,
+		int fd = iterate_fd(current->files, 0,
 				match_file, vma->vm_file);
 		if (fd != 0)
 			dmabuf = dma_buf_get(fd - 1);
@@ -2926,9 +2893,6 @@ error_attach:
 	}
 	kgsl_sharedmem_free(&entry->memdesc);
 error:
-	/* Clear gpuaddr here so userspace doesn't get any wrong ideas */
-	param->gpuaddr = 0;
-
 	kfree(entry);
 	return result;
 }
@@ -4002,6 +3966,18 @@ static int kgsl_mmap(struct file *file, struct vm_area_struct *vma)
 
 	vma->vm_private_data = entry;
 
+#ifdef CONFIG_TIMA_RKP
+	if (vma->vm_end - vma->vm_start) {
+		/* iommu optimization- needs to be turned ON from
+		* the tz side.
+		*/
+		cpu_v7_tima_iommu_opt(vma->vm_start, vma->vm_end, (unsigned long)vma->vm_mm->pgd);
+		__asm__ __volatile__ (
+		"mcr    p15, 0, r0, c8, c3, 0\n"
+		"dsb\n"
+		"isb\n");
+	}
+#endif
 	/* Determine user-side caching policy */
 
 	cache = kgsl_memdesc_get_cachemode(&entry->memdesc);

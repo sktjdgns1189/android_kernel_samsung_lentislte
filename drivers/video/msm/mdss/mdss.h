@@ -71,8 +71,6 @@ struct mdss_fudge_factor {
 struct mdss_perf_tune {
 	unsigned long min_mdp_clk;
 	u64 min_bus_vote;
-	u64 min_uhd_bus_vote;
-	u64 min_qhd_bus_vote;
 };
 
 #define MDSS_IRQ_SUSPEND	-1
@@ -226,6 +224,12 @@ void mdss_enable_irq(struct mdss_hw *hw);
 void mdss_disable_irq(struct mdss_hw *hw);
 void mdss_disable_irq_nosync(struct mdss_hw *hw);
 int mdss_bus_bandwidth_ctrl(int enable);
+
+#if defined (CONFIG_FB_MSM_MDSS_DSI_DBG)
+int mdss_mdp_debug_bus(void);
+void xlog(const char *name, u32 data0, u32 data1, u32 data2, u32 data3, u32 data4, u32 data5);
+void xlog_dump(void);
+#endif
 
 static inline struct ion_client *mdss_get_ionclient(void)
 {

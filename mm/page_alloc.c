@@ -178,10 +178,17 @@ int sysctl_lowmem_reserve_ratio[MAX_NR_ZONES-1] = {
 #ifdef CONFIG_ZONE_DMA32
 	 256,
 #endif
+#ifdef CONFIG_SEC_LENTIS_PROJECT
+#ifdef CONFIG_HIGHMEM
+	 128,
+#endif
+	 128,
+#else
 #ifdef CONFIG_HIGHMEM
 	 32,
 #endif
 	 32,
+#endif
 };
 
 EXPORT_SYMBOL(totalram_pages);
@@ -2498,6 +2505,9 @@ __alloc_pages_slowpath(gfp_t gfp_mask, unsigned int order,
 	bool sync_migration = false;
 	bool deferred_compaction = false;
 	bool contended_compaction = false;
+#ifdef CONFIG_SEC_OOM_KILLER
+	unsigned long oom_invoke_timeout = jiffies + HZ/4;
+#endif
 
 	/*
 	 * In the slowpath, we sanity check order to avoid ever trying to
@@ -2618,7 +2628,12 @@ rebalance:
 	 * If we failed to make any progress reclaiming, then we are
 	 * running out of options and have to consider going OOM
 	 */
-	if (!did_some_progress) {
+#ifdef CONFIG_SEC_OOM_KILLER
+#define SHOULD_CONSIDER_OOM !did_some_progress || time_after(jiffies, oom_invoke_timeout)
+#else
+#define SHOULD_CONSIDER_OOM !did_some_progress
+#endif
+	if (SHOULD_CONSIDER_OOM) {
 		if ((gfp_mask & __GFP_FS) && !(gfp_mask & __GFP_NORETRY)) {
 			if (oom_killer_disabled)
 				goto nopage;
@@ -2626,6 +2641,13 @@ rebalance:
 			if ((current->flags & PF_DUMPCORE) &&
 			    !(gfp_mask & __GFP_NOFAIL))
 				goto nopage;
+#ifdef CONFIG_SEC_OOM_KILLER
+			if (did_some_progress)
+				pr_info("time's up : calling "
+					"__alloc_pages_may_oom(o:%d, gfp:0x%x)\n", order, gfp_mask);
+
+#endif
+
 			page = __alloc_pages_may_oom(gfp_mask, order,
 					zonelist, high_zoneidx,
 					nodemask, preferred_zone,
@@ -2651,6 +2673,9 @@ rebalance:
 					goto nopage;
 			}
 
+#ifdef CONFIG_SEC_OOM_KILLER
+			oom_invoke_timeout = jiffies + HZ/4;
+#endif
 			goto restart;
 		}
 	}
@@ -2811,6 +2836,19 @@ EXPORT_SYMBOL(get_zeroed_page);
 void __free_pages(struct page *page, unsigned int order)
 {
 	if (put_page_testzero(page)) {
+#ifdef CONFIG_TIMA_RKP_DEBUG
+	//TODO: Do the check for all pages if order > 0
+	if (((unsigned long)__va(page_to_phys(page))) < ((unsigned long) high_memory)){
+		if (tima_debug_page_protection((unsigned long)__va(page_to_phys(page)), 6, 0) == 1) {
+			tima_debug_signal_failure(0x3f80f221, 6);
+			//tima_send_cmd((unsigned long)__va(page_to_phys(page)), 0x3f80e221);
+			//printk(KERN_ERR"TIMA: Freed PAGE prtctd va %lx pa %lx caller %lx\n",
+			// (unsigned long)__va(page_to_phys(page)),
+			// (unsigned long) page_to_phys(page),
+			// (unsigned long)__builtin_return_address(0));
+		}
+	}
+#endif
 		if (order == 0)
 			free_hot_cold_page(page, 0);
 		else
@@ -3108,7 +3146,12 @@ void show_free_areas(unsigned int filter)
 		" dirty:%lu writeback:%lu unstable:%lu\n"
 		" free:%lu slab_reclaimable:%lu slab_unreclaimable:%lu\n"
 		" mapped:%lu shmem:%lu pagetables:%lu bounce:%lu\n"
-		" free_cma:%lu\n",
+#if defined(CONFIG_CMA_PAGE_COUNTING)
+		" free_cma:%lu cma_active_anon:%lu cma_inactive_anon:%lu\n"
+		" cma_active_file:%lu cma_inactive_file:%lu\n",
+#else
+		" free cma:%lu\n",
+#endif
 		global_page_state(NR_ACTIVE_ANON),
 		global_page_state(NR_INACTIVE_ANON),
 		global_page_state(NR_ISOLATED_ANON),
@@ -3126,7 +3169,15 @@ void show_free_areas(unsigned int filter)
 		global_page_state(NR_SHMEM),
 		global_page_state(NR_PAGETABLE),
 		global_page_state(NR_BOUNCE),
+#if defined(CONFIG_CMA_PAGE_COUNTING)
+		global_page_state(NR_FREE_CMA_PAGES),
+		global_page_state(NR_CMA_ACTIVE_ANON),
+		global_page_state(NR_CMA_INACTIVE_ANON),
+		global_page_state(NR_CMA_ACTIVE_FILE),
+		global_page_state(NR_CMA_INACTIVE_FILE));
+#else
 		global_page_state(NR_FREE_CMA_PAGES));
+#endif
 
 	for_each_populated_zone(zone) {
 		int i;
@@ -3160,6 +3211,13 @@ void show_free_areas(unsigned int filter)
 			" unstable:%lukB"
 			" bounce:%lukB"
 			" free_cma:%lukB"
+#if defined(CONFIG_CMA_PAGE_COUNTING)
+			" cma_active_anon:%lukB"
+			" cma_inactive_anon:%lukB"
+			" cma_active_file:%lukB"
+			" cma_inactive_file:%lukB"
+			" cma_unevictable:%lukB"
+#endif
 			" writeback_tmp:%lukB"
 			" pages_scanned:%lu"
 			" all_unreclaimable? %s"
@@ -3191,6 +3249,13 @@ void show_free_areas(unsigned int filter)
 			K(zone_page_state(zone, NR_UNSTABLE_NFS)),
 			K(zone_page_state(zone, NR_BOUNCE)),
 			K(zone_page_state(zone, NR_FREE_CMA_PAGES)),
+#if defined(CONFIG_CMA_PAGE_COUNTING)
+			K(zone_page_state(zone, NR_CMA_ACTIVE_ANON)),
+			K(zone_page_state(zone, NR_CMA_INACTIVE_ANON)),
+			K(zone_page_state(zone, NR_CMA_ACTIVE_FILE)),
+			K(zone_page_state(zone, NR_CMA_INACTIVE_FILE)),
+			K(zone_page_state(zone, NR_CMA_UNEVICTABLE)),
+#endif
 			K(zone_page_state(zone, NR_WRITEBACK_TEMP)),
 			zone->pages_scanned,
 			(!zone_reclaimable(zone) ? "yes" : "no")
@@ -5521,6 +5586,9 @@ void setup_per_zone_wmarks(void)
  */
 static void __meminit calculate_zone_inactive_ratio(struct zone *zone)
 {
+#ifdef CONFIG_FIX_INACTIVE_RATIO
+	zone->inactive_ratio = 1;
+#else
 	unsigned int gb, ratio;
 
 	/* Zone size in gigabytes */
@@ -5531,6 +5599,7 @@ static void __meminit calculate_zone_inactive_ratio(struct zone *zone)
 		ratio = 1;
 
 	zone->inactive_ratio = ratio;
+#endif
 }
 
 static void __meminit setup_per_zone_inactive_ratio(void)

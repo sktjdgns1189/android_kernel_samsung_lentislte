@@ -87,7 +87,7 @@ enum {
 };
 
 /* Default IPC log level INFO */
-static int hs_serial_debug_mask = INFO_LEV;
+static int hs_serial_debug_mask = DBG_LEV;
 module_param_named(debug_mask, hs_serial_debug_mask,
 		   int, S_IRUGO | S_IWUSR | S_IWGRP);
 
@@ -345,6 +345,7 @@ static int msm_hs_clock_vote(struct msm_hs_port *msm_uport)
 				dev_err(msm_uport->uport.dev,
 					"%s: Could not turn on pclk [%d]\n",
 					__func__, rc);
+				atomic_dec(&msm_uport->clk_count);
 				return rc;
 			}
 		}
@@ -354,7 +355,9 @@ static int msm_hs_clock_vote(struct msm_hs_port *msm_uport)
 			dev_err(msm_uport->uport.dev,
 				"%s: Could not turn on core clk [%d]\n",
 				__func__, rc);
-			clk_disable_unprepare(msm_uport->pclk);
+			if(msm_uport->pclk)
+				clk_disable_unprepare(msm_uport->pclk);
+			atomic_dec(&msm_uport->clk_count);
 			return rc;
 		}
 		msm_uport->clk_state = MSM_HS_CLK_ON;
@@ -1110,8 +1113,10 @@ static void msm_hs_set_termios(struct uart_port *uport,
 	msm_hs_write(uport, UART_DM_CR, RFR_LOW);
 	data = msm_hs_read(uport, UART_DM_MR1);
 	data &= ~(UARTDM_MR1_CTS_CTL_BMSK | UARTDM_MR1_RX_RDY_CTL_BMSK);
+	if (c_cflag & CRTSCTS) {
 		data |= UARTDM_MR1_CTS_CTL_BMSK;
 		data |= UARTDM_MR1_RX_RDY_CTL_BMSK;
+	}
 	msm_hs_write(uport, UART_DM_MR1, data);
 
 	msm_hs_write(uport, UART_DM_IMR, msm_uport->imr_reg);
@@ -1233,6 +1238,8 @@ static void msm_hs_submit_tx_locked(struct uart_port *uport)
 	struct msm_hs_tx *tx = &msm_uport->tx;
 	struct circ_buf *tx_buf = &msm_uport->uport.state->xmit;
 	struct sps_pipe *sps_pipe_handle;
+	struct platform_device *pdev = to_platform_device(uport->dev);
+	char * buff = tx_buf->buf+tx_buf->tail;
 
 	if (uart_circ_empty(tx_buf) || uport->state->port.tty->stopped) {
 		msm_hs_stop_tx_locked(uport);
@@ -1260,6 +1267,11 @@ static void msm_hs_submit_tx_locked(struct uart_port *uport)
 	MSM_HS_DBG("%s(): [UART_TX]<%d>\n", __func__, tx_count);
 	hex_dump_ipc("HSUART write: ", &tx_buf->buf[tx_buf->tail], tx_count);
 	src_addr = tx->dma_base + tx_buf->tail;
+
+	if (pdev->id == 0 && tx_count == 4 && buff[0] == 0x1 && buff[1] == 0x3 && buff[2] == 0xc && buff[3] == 0x0) {
+		printk(KERN_ERR "(msm_serial_hs) hci_reset was received at ttyHS0 port\n");
+	}
+
 	/* Mask the src_addr to align on a cache
 	 * and add those bytes to tx_count */
 	aligned_src_addr = src_addr & ~(dma_get_cache_alignment() - 1);
@@ -1871,6 +1883,8 @@ static int msm_hs_check_clock_off(struct uart_port *uport)
 		 */
 		disable_irq(uport->irq);
 	}
+
+	printk(KERN_INFO "(msm_serial_hs) msm_hs_check_clock_off - dma wake unlock\n");
 	wake_unlock(&msm_uport->dma_wake_lock);
 
 	spin_unlock_irqrestore(&uport->lock, flags);
@@ -1886,10 +1900,16 @@ static void hsuart_clock_off_work(struct work_struct *w)
 							clock_off_w);
 	struct uart_port *uport = &msm_uport->uport;
 
-	if (!msm_hs_check_clock_off(uport)) {
+	int check_clk_off = msm_hs_check_clock_off(uport);
+
+	if (!check_clk_off) {
 		hrtimer_start(&msm_uport->clk_off_timer,
 				msm_uport->clk_off_delay,
 				HRTIMER_MODE_REL);
+	} else if (check_clk_off == -1) {
+		printk(KERN_INFO "(msm_serial_hs) hsuart_clock_off_work WORKQUEUE - FIFO is not empty or in flight...\n");
+	} else {
+		printk(KERN_INFO "(msm_serial_hs) hsuart_clock_off_work WORKQUEUE - Maybe, clock is off-ed.\n");
 	}
 }
 
@@ -2070,6 +2090,7 @@ void msm_hs_request_clock_on(struct uart_port *uport)
 	}
 	switch (msm_uport->clk_state) {
 	case MSM_HS_CLK_OFF:
+		printk(KERN_INFO "(msm_serial_hs) msm_hs_check_clock_on - dma wake lock\n");
 		wake_lock(&msm_uport->dma_wake_lock);
 		if (use_low_power_wakeup(msm_uport)) {
 			disable_irq_nosync(msm_uport->wakeup.irq);
@@ -2168,7 +2189,7 @@ static irqreturn_t msm_hs_wakeup_isr(int irq, void *dev)
 					     msm_uport->wakeup.rx_to_inject,
 					     TTY_NORMAL);
 			MSM_HS_DBG("%s(): Inject 0x%x", __func__,
-				msm_uport->wakeup.rx_to_inject);
+                msm_uport->wakeup.rx_to_inject);
 		}
 	}
 
@@ -2352,6 +2373,7 @@ static int msm_hs_startup(struct uart_port *uport)
 	tx->dma_base = dma_map_single(uport->dev, tx_buf->buf, UART_XMIT_SIZE,
 				      DMA_TO_DEVICE);
 
+	printk(KERN_INFO "(msm_serial_hs) msm_hs_startup - dma wake lock\n");
 	wake_lock(&msm_uport->dma_wake_lock);
 	/* turn on uart clk */
 	ret = msm_hs_init_clk(uport);
@@ -2487,6 +2509,8 @@ unconfig_uart_gpios:
 	msm_hs_unconfig_uart_gpios(uport);
 deinit_uart_clk:
 	msm_hs_clock_unvote(msm_uport);
+
+	printk(KERN_INFO "(msm_serial_hs) msm_hs_startup deinit clk - dma wake unlock\n");
 	wake_unlock(&msm_uport->dma_wake_lock);
 
 	return ret;
@@ -3201,6 +3225,8 @@ static void msm_hs_shutdown(struct uart_port *uport)
 	if (msm_uport->clk_state != MSM_HS_CLK_OFF) {
 		/* to balance clk_state */
 		msm_hs_clock_unvote(msm_uport);
+
+		printk(KERN_INFO "(msm_serial_hs) msm_hs_shutdown - dma wake unlock\n");
 		wake_unlock(&msm_uport->dma_wake_lock);
 	}
 

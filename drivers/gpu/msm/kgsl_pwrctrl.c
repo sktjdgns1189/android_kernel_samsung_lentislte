@@ -1524,8 +1524,6 @@ void kgsl_pwrctrl_enable(struct kgsl_device *device)
 	} else
 		level = pwr->default_pwrlevel;
 
-	pwr->bus_mod = 0;
-
 	if (pwr->constraint.type == KGSL_CONSTRAINT_NONE)
 		kgsl_pwrctrl_pwrlevel_change(device, level);
 

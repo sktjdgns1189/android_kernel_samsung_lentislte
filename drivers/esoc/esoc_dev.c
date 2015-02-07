@@ -145,6 +145,7 @@ void esoc_udev_handle_clink_req(enum esoc_req req, struct esoc_eng *eng)
 		pr_err("unable to queue request for %s\n", esoc_clink->name);
 		return;
 	}
+	pr_err("releasing esoc REQ enginer from wait\n");
 	wake_up_interruptible(&esoc_udev->req_wait);
 }
 
@@ -197,9 +198,12 @@ static long esoc_dev_ioctl(struct file *file, unsigned int cmd,
 	case ESOC_WAIT_FOR_REQ:
 		if (esoc_clink->req_eng != &uhandle->eng)
 			return -EACCES;
+		pr_err("esoc REQ enginer waiting on request\n");
 		err = wait_event_interruptible(esoc_udev->req_wait,
 					!kfifo_is_empty(&esoc_udev->req_fifo));
+		pr_err("esoc REQ engine released from wait\n");
 		if (!err) {
+			pr_err("esoc REQ engine reading from req fifo\n");
 			err = kfifo_out_spinlocked(&esoc_udev->req_fifo, &req,
 								sizeof(req),
 						&esoc_udev->req_fifo_lock);
@@ -208,6 +212,7 @@ static long esoc_dev_ioctl(struct file *file, unsigned int cmd,
 							esoc_clink->name);
 				return -EIO;
 			}
+			pr_err("esoc REQ engine processing request\n");
 			put_user(req, (unsigned long __user *)uarg);
 
 		}

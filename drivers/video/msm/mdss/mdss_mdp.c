@@ -56,12 +56,12 @@
 #include "mdss_panel.h"
 #include "mdss_debug.h"
 
-#define CREATE_TRACE_POINTS
-#include "mdss_mdp_trace.h"
-
 #define AXI_HALT_TIMEOUT_US	0x4000
 
 struct mdss_data_type *mdss_res;
+#if defined (CONFIG_FB_MSM_MDSS_DSI_DBG)
+void xlog(const char *name, u32 data0, u32 data1, u32 data2, u32 data3, u32 data4, u32 data5);
+#endif
 
 static int mdss_fb_mem_get_iommu_domain(void)
 {
@@ -210,6 +210,9 @@ static inline int mdss_irq_dispatch(u32 hw_ndx, int irq, void *ptr)
 
 	spin_lock(&mdss_lock);
 	hw = mdss_irq_handlers[hw_ndx];
+#if defined (CONFIG_FB_MSM_MDSS_DSI_DBG)
+//	xlog(__func__, (u32)hw, hw_ndx, 0, 0, 0, 0xeeee); 
+#endif
 	spin_unlock(&mdss_lock);
 
 	if (hw)
@@ -222,6 +225,9 @@ static irqreturn_t mdss_irq_handler(int irq, void *ptr)
 {
 	struct mdss_data_type *mdata = ptr;
 	u32 intr = readl_relaxed(mdata->mdss_base + MDSS_REG_HW_INTR_STATUS);
+#if defined (CONFIG_FB_MSM_MDSS_DSI_DBG)
+//	xlog(__func__,  intr, (u32) mdata, 0, 0, 0, 0xffff);
+#endif
 
 	if (!mdata)
 		return IRQ_NONE;
@@ -292,9 +298,16 @@ void mdss_enable_irq(struct mdss_hw *hw)
 			mdss_res->irq_ena, mdss_res->irq_mask);
 
 	spin_lock_irqsave(&mdss_lock, irq_flags);
+#if defined (CONFIG_FB_MSM_MDSS_DSI_DBG)
+	xlog(__func__, hw->hw_ndx, ndx_bit,mdss_res->irq_mask, mdss_res->irq_ena, mdss_res->irq, 0xB);
+#endif
+
 	if (mdss_res->irq_mask & ndx_bit) {
 		pr_debug("MDSS HW ndx=%d is already set, mask=%x\n",
 				hw->hw_ndx, mdss_res->irq_mask);
+#if defined (CONFIG_FB_MSM_MDSS_DSI_DBG)
+		xlog(__func__, 0, 0, 0, 0, 0, 0xFF);
+#endif
 	} else {
 		mdss_res->irq_mask |= ndx_bit;
 		if (!mdss_res->irq_ena) {
@@ -302,6 +315,9 @@ void mdss_enable_irq(struct mdss_hw *hw)
 			enable_irq(mdss_res->irq);
 		}
 	}
+#if defined (CONFIG_FB_MSM_MDSS_DSI_DBG)
+	xlog(__func__, hw->hw_ndx, ndx_bit,mdss_res->irq_mask, mdss_res->irq_ena, mdss_res->irq, 0xE);
+#endif
 	spin_unlock_irqrestore(&mdss_lock, irq_flags);
 }
 EXPORT_SYMBOL(mdss_enable_irq);
@@ -320,6 +336,9 @@ void mdss_disable_irq(struct mdss_hw *hw)
 			mdss_res->irq_ena, mdss_res->irq_mask);
 
 	spin_lock_irqsave(&mdss_lock, irq_flags);
+#if defined (CONFIG_FB_MSM_MDSS_DSI_DBG)
+	xlog(__func__, hw->hw_ndx, ndx_bit,mdss_res->irq_mask, mdss_res->irq_ena, mdss_res->irq, 0xB);
+#endif
 	if (!(mdss_res->irq_mask & ndx_bit)) {
 		pr_warn("MDSS HW ndx=%d is NOT set, mask=%x, hist mask=%x\n",
 			hw->hw_ndx, mdss_res->mdp_irq_mask,
@@ -331,6 +350,9 @@ void mdss_disable_irq(struct mdss_hw *hw)
 			disable_irq_nosync(mdss_res->irq);
 		}
 	}
+#if defined (CONFIG_FB_MSM_MDSS_DSI_DBG)
+	xlog(__func__, hw->hw_ndx, ndx_bit,mdss_res->irq_mask, mdss_res->irq_ena, mdss_res->irq, 0xE);
+#endif
 	spin_unlock_irqrestore(&mdss_lock, irq_flags);
 }
 EXPORT_SYMBOL(mdss_disable_irq);
@@ -349,6 +371,10 @@ void mdss_disable_irq_nosync(struct mdss_hw *hw)
 			mdss_res->irq_ena, mdss_res->irq_mask);
 
 	spin_lock(&mdss_lock);
+#if defined (CONFIG_FB_MSM_MDSS_DSI_DBG)
+	xlog(__func__, hw->hw_ndx, ndx_bit,mdss_res->irq_mask, mdss_res->irq_ena, mdss_res->irq, 0xB);
+#endif
+
 	if (!(mdss_res->irq_mask & ndx_bit)) {
 		pr_warn("MDSS HW ndx=%d is NOT set, mask=%x, hist mask=%x\n",
 			hw->hw_ndx, mdss_res->mdp_irq_mask,
@@ -360,6 +386,9 @@ void mdss_disable_irq_nosync(struct mdss_hw *hw)
 			disable_irq_nosync(mdss_res->irq);
 		}
 	}
+#if defined (CONFIG_FB_MSM_MDSS_DSI_DBG)
+	xlog(__func__, hw->hw_ndx, ndx_bit,mdss_res->irq_mask, mdss_res->irq_ena, mdss_res->irq, 0xE);
+#endif
 	spin_unlock(&mdss_lock);
 }
 EXPORT_SYMBOL(mdss_disable_irq_nosync);
@@ -466,6 +495,23 @@ void mdss_mdp_irq_clear(struct mdss_data_type *mdata,
 	spin_unlock_irqrestore(&mdp_lock, irq_flags);
 }
 
+#if defined (CONFIG_FB_MSM_MDSS_DSI_DBG)
+int mdss_mdp_debug_bus(void)
+{
+	u32 status;
+	struct mdss_data_type *mdata = mdss_mdp_get_mdata();
+
+	mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_ON, false);
+	writel_relaxed(0x7001, mdata->mdp_base + 0x398);
+	writel_relaxed(0x3f1, mdata->mdp_base + 0x448);
+	status = readl_relaxed(mdata->mdp_base + 0x44c);
+	mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_OFF, false);
+	xlog(__func__,  status, 0, 0, 0, 0, 0xDDDDDD);
+
+	return 0;
+}
+EXPORT_SYMBOL(mdss_mdp_debug_bus);
+#endif
 int mdss_mdp_irq_enable(u32 intr_type, u32 intf_num)
 {
 	u32 irq;
@@ -476,6 +522,9 @@ int mdss_mdp_irq_enable(u32 intr_type, u32 intf_num)
 	irq = mdss_mdp_irq_mask(intr_type, intf_num);
 
 	spin_lock_irqsave(&mdp_lock, irq_flags);
+#if defined (CONFIG_FB_MSM_MDSS_DSI_DBG)
+	xlog(__func__,mdss_res->mdp_irq_mask, irq, intr_type, intf_num, 0, 0);
+#endif
 	if (mdata->mdp_irq_mask & irq) {
 		pr_warn("MDSS MDP IRQ-0x%x is already set, mask=%x\n",
 				irq, mdata->mdp_irq_mask);
@@ -529,6 +578,9 @@ void mdss_mdp_irq_disable(u32 intr_type, u32 intf_num)
 	irq = mdss_mdp_irq_mask(intr_type, intf_num);
 
 	spin_lock_irqsave(&mdp_lock, irq_flags);
+#if defined (CONFIG_FB_MSM_MDSS_DSI_DBG)
+	xlog(__func__,mdss_res->mdp_irq_mask, irq, intr_type, intf_num, 0, 0);
+#endif
 	if (!(mdata->mdp_irq_mask & irq)) {
 		pr_warn("MDSS MDP IRQ-%x is NOT set, mask=%x\n",
 				irq, mdata->mdp_irq_mask);
@@ -610,7 +662,7 @@ static int mdss_mdp_clk_update(u32 clk_idx, u32 enable)
 		pr_debug("clk=%d en=%d\n", clk_idx, enable);
 		if (enable) {
 			if (clk_idx == MDSS_CLK_MDP_VSYNC)
-				clk_set_rate(clk, 19200000);
+				clk_set_rate(clk, clk_round_rate(clk, 1));
 			ret = clk_prepare_enable(clk);
 		} else {
 			clk_disable_unprepare(clk);
@@ -759,6 +811,10 @@ void mdss_mdp_clk_ctrl(int enable, int isr)
 	}
 
 	MDSS_XLOG(mdp_clk_cnt, changed, enable, current->pid);
+#if defined (CONFIG_FB_MSM_MDSS_DSI_DBG)
+	if (changed)
+		xlog(__func__, mdp_clk_cnt, changed, enable, 0, 0, 0);
+#endif
 	pr_debug("%s: clk_cnt=%d changed=%d enable=%d\n",
 			__func__, mdp_clk_cnt, changed, enable);
 
@@ -2423,6 +2479,7 @@ static int mdss_mdp_parse_dt_ad_cfg(struct platform_device *pdev)
 	mdata->nad_cfgs = mdss_mdp_parse_dt_prop_len(pdev, "qcom,mdss-ad-off");
 
 	if (mdata->nad_cfgs == 0) {
+		pr_info("SS is not using assertive display\n");
 		mdata->ad_cfgs = NULL;
 		return 0;
 	}

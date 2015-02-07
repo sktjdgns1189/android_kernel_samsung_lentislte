@@ -63,8 +63,7 @@ MODULE_ALIAS("mmc:block");
 #define INAND_CMD38_ARG_SECTRIM2 0x88
 #define MMC_BLK_TIMEOUT_MS  (30 * 1000)        /* 30 sec timeout */
 
-#define mmc_req_rel_wr(req)	(((req->cmd_flags & REQ_FUA) || \
-				  (req->cmd_flags & REQ_META)) && \
+#define mmc_req_rel_wr(req)	((req->cmd_flags & REQ_FUA) && \
 				  (rq_data_dir(req) == WRITE))
 #define PACKED_CMD_VER	0x01
 #define PACKED_CMD_WR	0x02
@@ -556,6 +555,44 @@ out:
 	return ERR_PTR(err);
 }
 
+struct scatterlist *mmc_blk_get_sg(struct mmc_card *card,
+     unsigned char *buf, int *sg_len, int size)
+{
+	struct scatterlist *sg;
+	struct scatterlist *sl;
+	int total_sec_cnt, sec_cnt;
+	int max_seg_size, len;
+
+	total_sec_cnt = size;
+	max_seg_size = card->host->max_seg_size;
+	len = (size - 1 + max_seg_size) / max_seg_size;
+	sl = kmalloc(sizeof(struct scatterlist) * len, GFP_KERNEL);
+
+	if (!sl) {
+		return NULL;
+	}
+	sg = (struct scatterlist *)sl;
+	sg_init_table(sg, len);
+
+	while (total_sec_cnt) {
+		if (total_sec_cnt < max_seg_size)
+			sec_cnt = total_sec_cnt;
+		else
+			sec_cnt = max_seg_size;
+			sg_set_page(sg, virt_to_page(buf), sec_cnt, offset_in_page(buf));
+			buf = buf + sec_cnt;
+			total_sec_cnt = total_sec_cnt - sec_cnt;
+			if (total_sec_cnt == 0)
+				break;
+			sg = sg_next(sg);
+	}
+
+	if (sg)
+		sg_mark_end(sg);
+	*sg_len = len;
+	return sl;
+}
+
 static int ioctl_rpmb_card_status_poll(struct mmc_card *card, u32 *status,
 				       u32 retries_max)
 {
@@ -626,8 +663,8 @@ static int mmc_blk_ioctl_cmd(struct block_device *bdev,
 	struct mmc_command cmd = {0};
 	struct mmc_data data = {0};
 	struct mmc_request mrq = {NULL};
-	struct scatterlist sg;
-	int err;
+	struct scatterlist *sg = 0;
+	int err = 0;
 
 	/*
 	 * The caller must have CAP_SYS_RAWIO, and must be calling this on the
@@ -657,12 +694,13 @@ static int mmc_blk_ioctl_cmd(struct block_device *bdev,
 	cmd.flags = idata->ic.flags;
 
 	if (idata->buf_bytes) {
-		data.sg = &sg;
-		data.sg_len = 1;
+		int len;
 		data.blksz = idata->ic.blksz;
 		data.blocks = idata->ic.blocks;
 
-		sg_init_one(data.sg, idata->buf, idata->buf_bytes);
+		sg = mmc_blk_get_sg(card, idata->buf, &len, idata->buf_bytes);
+		data.sg = sg;
+		data.sg_len = len;
 
 		if (idata->ic.write_flag)
 			data.flags = MMC_DATA_WRITE;
@@ -759,6 +797,8 @@ cmd_rel_host:
 cmd_done:
 	mmc_blk_put(md);
 cmd_err:
+	if (sg)
+		kfree(sg);
 	kfree(idata->buf);
 	kfree(idata);
 	return err;
@@ -1767,8 +1807,7 @@ static void mmc_blk_rw_rq_prep(struct mmc_queue_req *mqrq,
 	 * XXX: this really needs a good explanation of why REQ_META
 	 * is treated special.
 	 */
-	bool do_rel_wr = ((req->cmd_flags & REQ_FUA) ||
-			  (req->cmd_flags & REQ_META)) &&
+	bool do_rel_wr = (req->cmd_flags & REQ_FUA) &&
 		(rq_data_dir(req) == WRITE) &&
 		(md->flags & MMC_BLK_REL_WR);
 
@@ -2868,7 +2907,8 @@ static struct mmc_blk_data *mmc_blk_alloc_req(struct mmc_card *card,
 	if (mmc_host_cmd23(card->host)) {
 		if (mmc_card_mmc(card) ||
 		    (mmc_card_sd(card) &&
-		     card->scr.cmds & SD_SCR_CMD23_SUPPORT))
+		     card->scr.cmds & SD_SCR_CMD23_SUPPORT &&
+		     mmc_sd_card_uhs(card)))
 			md->flags |= MMC_BLK_CMD23;
 	}
 
@@ -3174,6 +3214,103 @@ static const struct mmc_fixup blk_fixups[] =
 	END_FIXUP
 };
 
+#ifdef CONFIG_MMC_SUPPORT_BKOPS_MODE
+static ssize_t bkops_mode_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	struct gendisk *disk;
+	struct mmc_blk_data *md;
+	struct mmc_card *card;
+
+	disk = dev_to_disk(dev);
+
+	if (disk)
+		md = disk->private_data;
+	else
+		goto show_out;
+
+	if (md)
+		card = md->queue.card;
+	else
+		goto show_out;
+
+	return snprintf(buf, PAGE_SIZE, "%u\n", card->bkops_enable);
+
+show_out:
+	return snprintf(buf, PAGE_SIZE, "\n");
+}
+
+static ssize_t bkops_mode_store(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t count)
+{
+	struct gendisk *disk;
+	struct mmc_blk_data *md;
+	struct mmc_card *card;
+	u8 value;
+	int err = 0;
+
+	disk = dev_to_disk(dev);
+
+	if (disk)
+		md = disk->private_data;
+	else
+		goto store_out;
+
+	if (md)
+		card = md->queue.card;
+	else
+		goto store_out;
+
+	if (kstrtou8(buf, 0, &value))
+		goto store_out;
+
+	err = mmc_bkops_enable(card->host, value);
+	if (err)
+		return err;
+
+	return count;
+store_out:
+	return -EINVAL;
+}
+
+static inline void mmc_blk_bkops_sysfs_init(struct mmc_card *card)
+{
+	struct mmc_blk_data *md = mmc_get_drvdata(card);
+
+	card->bkops_attr.show = bkops_mode_show;
+	card->bkops_attr.store = bkops_mode_store;
+	sysfs_attr_init(&card->bkops_attr.attr);
+	card->bkops_attr.attr.name = "bkops_en";
+#if defined(CONFIG_MMC_BKOPS_NODE_UID) || defined(CONFIG_MMC_BKOPS_NODE_GID)
+	card->bkops_attr.attr.mode = S_IRUGO | S_IWUSR | S_IWGRP;
+#else
+	card->bkops_attr.attr.mode = S_IRUGO | S_IWUSR;
+#endif
+
+	if (device_create_file((disk_to_dev(md->disk)), &card->bkops_attr)) {
+		pr_err("%s: Failed to create bkops_en sysfs entry\n",
+				mmc_hostname(card->host));
+#if defined(CONFIG_MMC_BKOPS_NODE_UID) || defined(CONFIG_MMC_BKOPS_NODE_GID)
+	} else {
+		int rc;
+		struct device * dev;
+
+		dev = disk_to_dev(md->disk);
+		rc = sysfs_chown_file(&dev->kobj, &card->bkops_attr.attr,
+				      CONFIG_MMC_BKOPS_NODE_UID, 
+				      CONFIG_MMC_BKOPS_NODE_GID); 
+		if (rc)
+			pr_err("%s: Failed to change mode of sysfs entry\n",
+					mmc_hostname(card->host));
+#endif
+	}
+}
+#else
+static inline void mmc_blk_bkops_sysfs_init(struct mmc_card *card)
+{
+}
+#endif
+
 static int mmc_blk_probe(struct mmc_card *card)
 {
 	struct mmc_blk_data *md, *part_md;
@@ -3191,9 +3328,9 @@ static int mmc_blk_probe(struct mmc_card *card)
 
 	string_get_size((u64)get_capacity(md->disk) << 9, STRING_UNITS_2,
 			cap_str, sizeof(cap_str));
-	pr_info("%s: %s %s %s %s\n",
+	pr_info("[%s]%s: %s %s %s %s, card->type:%d\n", __func__,
 		md->disk->disk_name, mmc_card_id(card), mmc_card_name(card),
-		cap_str, md->read_only ? "(ro)" : "");
+		cap_str, md->read_only ? "(ro)" : "", card->type);
 
 	if (mmc_blk_alloc_parts(card, md))
 		goto out;
@@ -3202,7 +3339,9 @@ static int mmc_blk_probe(struct mmc_card *card)
 	mmc_fixup_device(card, blk_fixups);
 
 #ifdef CONFIG_MMC_BLOCK_DEFERRED_RESUME
-	mmc_set_bus_resume_policy(card->host, 1);
+	/* applying only MMC TYPE */
+	if (card && mmc_card_mmc(card))
+		mmc_set_bus_resume_policy(card->host, 1);
 #endif
 	if (mmc_add_disk(md))
 		goto out;
@@ -3211,6 +3350,13 @@ static int mmc_blk_probe(struct mmc_card *card)
 		if (mmc_add_disk(part_md))
 			goto out;
 	}
+
+	/* init sysfs for bkops mode */
+	if (card && mmc_card_mmc(card)) {
+		mmc_blk_bkops_sysfs_init(card);
+		spin_lock_init(&card->bkops_lock);
+	}
+
 	return 0;
 
  out:

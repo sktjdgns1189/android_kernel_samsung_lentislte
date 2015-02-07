@@ -42,6 +42,9 @@
 #include <mach/msm_bus_board.h>
 #include <mach/qseecomi.h>
 #include <asm/cacheflush.h>
+#ifdef CONFIG_SEC_DEBUG
+#include <mach/sec_debug.h>
+#endif
 #include "qseecom_legacy.h"
 #include "qseecom_kernel.h"
 
@@ -3426,6 +3429,13 @@ static long qseecom_ioctl(struct file *file, unsigned cmd,
 		/* Only one client allowed here at a time */
 		mutex_lock(&app_access_lock);
 		if (qseecom.support_bus_scaling) {
+			/* register bus bw in case the client doesn't do it */
+			if (!data->mode) {
+				mutex_lock(&qsee_bw_mutex);
+				__qseecom_register_bus_bandwidth_needs(
+								data, HIGH);
+				mutex_unlock(&qsee_bw_mutex);
+			}
 			if (!data->mode) {
 				mutex_lock(&qsee_bw_mutex);
 				__qseecom_register_bus_bandwidth_needs(
@@ -3493,6 +3503,7 @@ static long qseecom_ioctl(struct file *file, unsigned cmd,
 			ret = -EINVAL;
 			break;
 		}
+		data->type = QSEECOM_CLIENT_APP;
 		pr_debug("SET_MEM_PARAM: qseecom addr = 0x%x\n", (u32)data);
 		ret = qseecom_set_client_mem_param(data, argp);
 		if (ret)
@@ -4210,6 +4221,9 @@ static int qseecom_probe(struct platform_device *pdev)
 				req.qsee_cmd_id = QSEOS_APP_REGION_NOTIFICATION;
 				req.addr = resource->start;
 				req.size = resource_size(resource);
+#ifdef CONFIG_SEC_DEBUG
+				sec_debug_secure_app_addr_size(req.addr, req.size);
+#endif
 				pr_warn("secure app region addr=0x%x size=0x%x",
 							req.addr, req.size);
 			} else {

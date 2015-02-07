@@ -1143,9 +1143,9 @@ void init_new_task_load(struct task_struct *p)
 	int i;
 	u64 wallclock = sched_clock();
 
-	p->ravg.sum			= 0;
+	p->ravg.sum				= 0;
 	p->ravg.demand			= 0;
-	p->ravg.window_start		= wallclock;
+	p->ravg.window_start	= wallclock;
 	p->ravg.mark_start		= wallclock;
 	for (i = 0; i < RAVG_HIST_SIZE; ++i)
 		p->ravg.sum_history[i] = 0;
@@ -5262,7 +5262,6 @@ more_balance:
 						   0, (void *)&mnd);
 			per_cpu(dbs_boost_needed, this_cpu) = false;
 			per_cpu(dbs_boost_load_moved, this_cpu) = 0;
-
 		}
 	}
 	if (likely(!active_balance)) {

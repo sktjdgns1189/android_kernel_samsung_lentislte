@@ -1170,11 +1170,18 @@ int xhci_hub_status_data(struct usb_hcd *hcd, char *buf)
 	u32 temp, status;
 	u32 mask;
 	int i, retval;
-	struct xhci_hcd	*xhci = hcd_to_xhci(hcd);
+	struct xhci_hcd	*xhci;
 	int max_ports;
 	__le32 __iomem **port_array;
 	struct xhci_bus_state *bus_state;
 	bool reset_change = false;
+
+	if (!hcd) {
+		pr_err("xhci_hub_status_data: hcd is null\n");
+		return -ENODEV;
+	}
+
+	xhci = hcd_to_xhci(hcd);
 
 	max_ports = xhci_get_ports(hcd, &port_array);
 	bus_state = &xhci->bus_state[hcd_index(hcd)];

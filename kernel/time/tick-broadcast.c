@@ -569,12 +569,11 @@ again:
 	cpumask_clear(tick_broadcast_force_mask);
 
 	/*
-	 * Sanity check. Catch the case where we try to broadcast to
-	 * offline cpus.
-	 */
+	* Sanity check. Catch the case where we try to broadcast to
+	* offline cpus.
+	*/
 	if (WARN_ON_ONCE(!cpumask_subset(tmpmask, cpu_online_mask)))
 		cpumask_and(tmpmask, tmpmask, cpu_online_mask);
-
 	/*
 	 * Wakeup the cpus which have an expired event.
 	 */
@@ -815,6 +814,8 @@ void tick_shutdown_broadcast_oneshot(unsigned int *cpup)
 	raw_spin_lock_irqsave(&tick_broadcast_lock, flags);
 
 	/*
+	 * Clear the broadcast mask flag for the dead cpu, but do not
+	 * stop the broadcast device!
 	 * Clear the broadcast masks for the dead cpu, but do not stop
 	 * the broadcast device!
 	 */

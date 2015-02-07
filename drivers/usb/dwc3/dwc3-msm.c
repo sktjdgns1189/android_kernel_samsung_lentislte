@@ -11,6 +11,7 @@
  *
  */
 
+#define DEBUG
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/slab.h>
@@ -1406,7 +1407,11 @@ static int dwc3_msm_suspend(struct dwc3_msm *mdwc)
 	if (mdwc->hs_phy_irq) {
 		enable_irq(mdwc->hs_phy_irq);
 		/* with DCP we dont require wakeup using HS_PHY_IRQ */
+#ifdef CONFIG_USB_ANDROID_SAMSUNG_COMPOSITE
+		if (dcp || !mdwc->vbus_active) // add SAMSUNG
+#else
 		if (dcp)
+#endif
 			disable_irq_wake(mdwc->hs_phy_irq);
 	}
 
@@ -1502,7 +1507,11 @@ static int dwc3_msm_resume(struct dwc3_msm *mdwc)
 		mdwc->lpm_irq_seen = false;
 	}
 	/* it must DCP disconnect, re-enable HS_PHY wakeup IRQ */
+#ifdef CONFIG_USB_ANDROID_SAMSUNG_COMPOSITE
+	if ((mdwc->hs_phy_irq && dcp) || !mdwc->vbus_active) // add SAMSUNG
+#else
 	if (mdwc->hs_phy_irq && dcp)
+#endif
 		enable_irq_wake(mdwc->hs_phy_irq);
 
 	dev_info(mdwc->dev, "DWC3 exited from low power mode\n");
@@ -1664,6 +1673,9 @@ static irqreturn_t msm_dwc3_irq(int irq, void *data)
 {
 	struct dwc3_msm *mdwc = data;
 
+	if (mdwc->ext_xceiv.id == DWC3_ID_FLOAT)
+		return IRQ_HANDLED;
+
 	if (atomic_read(&mdwc->in_lpm)) {
 		dev_dbg(mdwc->dev, "%s received in LPM\n", __func__);
 		mdwc->lpm_irq_seen = true;
@@ -1672,7 +1684,6 @@ static irqreturn_t msm_dwc3_irq(int irq, void *data)
 	} else {
 		pr_info_ratelimited("%s: IRQ outside LPM\n", __func__);
 	}
-
 	return IRQ_HANDLED;
 }
 
@@ -2213,6 +2224,7 @@ unreg_chrdev:
 	return ret;
 }
 
+#include "dwc3-sec.c"
 static int dwc3_msm_probe(struct platform_device *pdev)
 {
 	struct device_node *node = pdev->dev.of_node, *dwc3_node;
@@ -2468,8 +2480,13 @@ static int dwc3_msm_probe(struct platform_device *pdev)
 	/* usb_psy required only for vbus_notifications or charging support */
 	if (mdwc->ext_xceiv.otg_capability ||
 			!mdwc->charger.charging_disabled) {
+#if defined(CONFIG_BATTERY_SAMSUNG)
+		mdwc->usb_psy.name = "dwc-usb";
+		mdwc->usb_psy.type = POWER_SUPPLY_TYPE_UNKNOWN;
+#else
 		mdwc->usb_psy.name = "usb";
 		mdwc->usb_psy.type = POWER_SUPPLY_TYPE_USB;
+#endif
 		mdwc->usb_psy.supplied_to = dwc3_msm_pm_power_supplied_to;
 		mdwc->usb_psy.num_supplicants = ARRAY_SIZE(
 						dwc3_msm_pm_power_supplied_to);
@@ -2568,6 +2585,9 @@ static int dwc3_msm_probe(struct platform_device *pdev)
 		dwc->enable_suspend_event = mdwc->enable_suspend_event;
 	/* Register with OTG if present */
 	if (mdwc->otg_xceiv) {
+		pr_info("dwc3-msm: sec_otg_init is called.\n");
+		sec_otg_init(mdwc, mdwc->otg_xceiv);
+
 		/* Skip charger detection for simulator targets */
 		if (!mdwc->charger.skip_chg_detect) {
 			mdwc->charger.start_detection = dwc3_start_chg_det;

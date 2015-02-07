@@ -2342,19 +2342,19 @@ static int __init diagchar_init(void)
 			  sizeof(struct diag_bridge_dci_dev), GFP_KERNEL);
 	if (!diag_bridge_dci) {
 		pr_warn("diag: could not allocate memory for dci bridges\n");
-		goto fail;
+		goto fail_diag_bridge;
 	}
 	diag_hsic = kzalloc(MAX_HSIC_DATA_CH * sizeof(struct diag_hsic_dev),
 								GFP_KERNEL);
 	if (!diag_hsic) {
 		pr_warn("diag: could not allocate memory for hsic ch\n");
-		goto fail;
+		goto fail_diag_bridge_dci;
 	}
 	diag_hsic_dci = kzalloc(MAX_HSIC_DCI_CH *
 				sizeof(struct diag_hsic_dci_dev), GFP_KERNEL);
 	if (!diag_hsic_dci) {
 		pr_warn("diag: could not allocate memory for hsic dci ch\n");
-		goto fail;
+		goto fail_diag_hsic;
 	}
 #endif
 
@@ -2386,29 +2386,29 @@ static int __init diagchar_init(void)
 	INIT_WORK(&(driver->diag_drain_work), diag_drain_work_fn);
 	ret = diag_real_time_info_init();
 	if (ret)
-		goto fail;
+		goto fail_diag_hsic_dci;
 	ret = diag_debugfs_init();
 	if (ret)
-		goto fail;
+		goto fail_diag_hsic_dci;
 	ret = diag_masks_init();
 	if (ret)
-		goto fail;
+		goto fail_diag_hsic_dci;
 	ret = diagfwd_init();
 	if (ret)
-		goto fail;
+		goto fail_diag_hsic_dci;
 #ifdef CONFIG_DIAGFWD_BRIDGE_CODE
 	ret = diagfwd_bridge_init(HSIC_DATA_CH);
 	if (ret)
-		goto fail;
+		goto fail_diag_hsic_dci;
 	ret = diagfwd_bridge_init(HSIC_DATA_CH_2);
 	if (ret)
-		goto fail;
+		goto fail_diag_hsic_dci;
 	ret = diagfwd_bridge_dci_init(HSIC_DCI_CH);
 	if (ret)
-		goto fail;
+		goto fail_diag_hsic_dci;
 	ret = diagfwd_bridge_dci_init(HSIC_DCI_CH_2);
 	if (ret)
-		goto fail;
+		goto fail_diag_hsic_dci;
 	/* register HSIC device */
 	ret = platform_driver_register(&msm_hsic_ch_driver);
 	if (ret)
@@ -2416,7 +2416,7 @@ static int __init diagchar_init(void)
 			ret);
 	ret = diagfwd_bridge_init(SMUX);
 	if (ret)
-		goto fail;
+		goto fail_diag_hsic_dci;
 	INIT_WORK(&(driver->diag_connect_work),
 					 diag_connect_work_fn);
 	INIT_WORK(&(driver->diag_disconnect_work),
@@ -2424,7 +2424,7 @@ static int __init diagchar_init(void)
 #endif
 	ret = diagfwd_cntl_init();
 	if (ret)
-		goto fail;
+		goto fail_diag_hsic_dci;
 	driver->dci_state = diag_dci_init();
 	pr_debug("diagchar initializing ..\n");
 	driver->num = 1;
@@ -2438,16 +2438,24 @@ static int __init diagchar_init(void)
 		driver->minor_start = MINOR(dev);
 	} else {
 		pr_err("diag: Major number not allocated\n");
-		goto fail;
+		goto fail_diag_hsic_dci;
 	}
 	driver->cdev = cdev_alloc();
 	error = diagchar_setup_cdev(dev);
 	if (error)
-		goto fail;
+		goto fail_diag_hsic_dci;
 
 	pr_debug("diagchar initialized now");
 	return 0;
 
+fail_diag_hsic_dci:
+	kfree(diag_hsic_dci);
+fail_diag_hsic:
+	kfree(diag_hsic);
+fail_diag_bridge_dci:
+	kfree(diag_bridge_dci);
+fail_diag_bridge:
+	kfree(diag_bridge);
 fail:
 	pr_err("diagchar is not initialized, ret: %d\n", ret);
 	diag_debugfs_cleanup();

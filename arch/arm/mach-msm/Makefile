@@ -82,6 +82,7 @@ obj-$(CONFIG_MSM_PM) += msm-pm.o pm-data.o lpm_levels.o
 
 CFLAGS_msm_vibrator.o += -Idrivers/staging/android
 
+obj-$(CONFIG_MSM_RMT_STORAGE_CLIENT) += rmt_storage_client.o
 obj-$(CONFIG_MSM_LPM_TEST) += test-lpm.o
 obj-$(CONFIG_MSM_RPM_SMD) += rpm-smd.o
 ifdef CONFIG_DEBUG_FS
@@ -133,3 +134,14 @@ obj-$(CONFIG_MSM_DEVFREQ_CPUBW) += devfreq_cpubw.o
 
 obj-$(CONFIG_ARCH_RANDOM) += early_random.o
 obj-$(CONFIG_PERFMAP) += perfmap.o
+obj-$(CONFIG_EXTCON) += board-extcon-connector.o
+obj-$(CONFIG_REGULATOR_MAX77803) += sec-regulator-max77803.o
+obj-$(CONFIG_REGULATOR_MAX77828) += sec-regulator-max77828.o
+
+
+obj-$(CONFIG_SEC_DEBUG) += sec_debug.o sec_gaf.o sec_getlog.o
+obj-$(CONFIG_SEC_DEBUG_DOUBLE_FREE) += sec_debug-dfd.o
+
+obj-$(CONFIG_SEC_THERMISTOR) += sec_thermistor.o apq8084-thermistor.o
+
+obj-$(CONFIG_GSM_MODEM_SPRD6500) += board-sprd6500-spi.o board-sprd6500-modems.o

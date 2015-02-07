@@ -11,7 +11,6 @@
  */
 
 /memreserve/ 0x00000000 0x00001000;
-/memreserve/ 0xac1c0000 0x00001000;
 
 #include "skeleton64.dtsi"
 
@@ -41,10 +40,14 @@
 
 		secure_mem: secure_region@0 {
 			linux,reserve-contiguous-region;
-			reg = <0 0 0 0xfc00000>;
+			reg = <0 0 0 0xdc00000>;
 			label = "secure_mem";
 		};
-        };
+	};
+
+	usb-notifier {
+		compatible = "samsung,usb-notifier";
+	};
 };
 
 #include "msm-gdsc.dtsi"
@@ -322,6 +325,11 @@
 			reg = <0x65c 4>;
 		};
 
+		upload_cause@66c {
+			compatible = "qcom,msm-imem-upload_cause";
+			reg = <0x66c 4>;
+		};
+
 		imem_cache_erp: cache_erp@6a4 {
 			compatible = "qcom,msm-imem-cache_erp";
 			reg = <0x6a4 4>;
@@ -424,7 +432,7 @@
 		interrupt-names = "hc_irq", "pwr_irq";
 
 		qcom,bus-width = <8>;
-		qcom,cpu-dma-latency-us = <701>;
+		qcom,cpu-dma-latency-us = <200>;
 
 		qcom,msm-bus,name = "sdhc1";
 		qcom,msm-bus,num-cases = <9>;
@@ -482,7 +490,7 @@
 		interrupt-names = "hc_irq", "pwr_irq";
 
 		qcom,bus-width = <4>;
-		qcom,cpu-dma-latency-us = <701>;
+		qcom,cpu-dma-latency-us = <200>;
 
 		qcom,msm-bus,name = "sdhc2";
 		qcom,msm-bus,num-cases = <8>;
@@ -634,6 +642,8 @@
 		qcom,msm-bus,vectors-KBps =
 				<100 512 0 0>,
 				<100 512 500 800>;
+
+		qcom,mdm1ptr = <&mdm1>;
 	};
 	mhi: qcom,mhi {
 		compatible = "qcom,msm_pcie";
@@ -762,7 +772,7 @@
 				"tsif_en",
 				"tsif_data",
 				"tsif_sync";
-		qcom,gpios-func = <1>;
+		qcom,gpios-func = <3>;
 
 		qcom,msm-bus,name = "tsif";
 		qcom,msm-bus,num-cases = <2>;
@@ -770,6 +780,7 @@
 		qcom,msm-bus,vectors-KBps =
 				<82 512 0 0>, /* No vote */
 				<82 512 12288 24576>; /* Max. bandwidth, 2xTSIF, each max of 96Mbps */
+		status = "disabled";
 	};
 
 	slim_msm: slim@fe1af000 {
@@ -978,10 +989,59 @@
 		interrupts = <0 104 0>;
 		qcom,noise-rjct-scl = <0>;
 		qcom,noise-rjct-sda = <0>;
-		qcom,i2c-bus-freq = <100000>;
+		qcom,i2c-bus-freq = <400000>;
 		qcom,i2c-src-freq = <50000000>;
 		qcom,sda-gpio = <&msmgpio 61 0>;
 		qcom,scl-gpio = <&msmgpio 62 0>;
+		qcom,master-id = <84>;
+	};
+
+	i2c_3: i2c@f9968000 { /* BLSP2 QUP6 */
+		cell-index = <4>;
+		compatible = "qcom,i2c-qup";
+		#address-cells = <1>;
+		#size-cells = <0>;
+		reg-names = "qup_phys_addr";
+		reg = <0xf9968000 0x1000>;
+		interrupt-names = "qup_err_intr";
+		interrupts = <0 106 0>;
+		qcom,i2c-bus-freq = <400000>;
+		qcom,i2c-src-freq = <50000000>;
+		qcom,sda-gpio = <&msmgpio 49 0>;
+		qcom,scl-gpio = <&msmgpio 50 0>;
+		qcom,master-id = <84>;
+	};
+
+	i2c_5: i2c@f9924000 { /* BLSP1 QUP1 */
+		cell-index = <5>;
+		compatible = "qcom,i2c-qup";
+		reg = <0xf9924000 0x1000>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+		reg-names = "qup_phys_addr";
+		interrupts = <0 96 0>;
+		interrupt-names = "qup_err_intr";
+		qcom,i2c-bus-freq = <100000>;
+		qcom,i2c-src-freq = <50000000>;
+		qcom,scl-gpio = <&msmgpio 7 0>;
+		qcom,sda-gpio = <&msmgpio 6 0>;
+		qcom,master-id = <86>;
+		status = "disabled";
+       };
+
+	i2c_7: i2c@f9963000 {
+		cell-index = <11>;
+		compatible = "qcom,i2c-qup";
+		reg = <0xf9963000 0x1000>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+		reg-names = "qup_phys_addr";
+		interrupts = <0 101 0>;
+		interrupt-names = "qup_err_intr";
+		qcom,i2c-bus-freq = <100000>;
+		qcom,i2c-src-freq = <50000000>;
+		qcom,sda-gpio = <&msmgpio 132 0>;
+		qcom,scl-gpio = <&msmgpio 133 0>;
 		qcom,master-id = <84>;
 	};
 
@@ -4273,16 +4333,15 @@
 		#size-cells = <0>;
 		reg-names = "spi_physical", "spi_bam_physical";
 		reg = <0xf9923000 0x1000>,
-		      <0xf9904000 0xf000>;
+		      <0xf9904000 0x19000>;
 		interrupt-names = "spi_irq", "spi_bam_irq";
 		interrupts = <0 95 0>, <0 238 0>;
-		spi-max-frequency = <19200000>;
+		spi-max-frequency = <48000000>;
 		qcom,gpio-mosi = <&msmgpio 0 0>;
 		qcom,gpio-miso = <&msmgpio 1 0>;
 		qcom,gpio-clk  = <&msmgpio 3 0>;
 		qcom,gpio-cs0  = <&msmgpio 2 0>;
-		qcom,gpio-cs1  = <&msmgpio 116 0>;
-		qcom,gpio-cs3  = <&msmgpio 117 0>;
+		qcom,gpio-cs3  = <&msmgpio 118 0>;
 
 		qcom,infinite-mode = <0>;
 		qcom,use-bam;
@@ -4369,7 +4428,7 @@
 		compatible = "qcom,usb-hsphy";
 		reg = <0xf92f8800 0x3ff>,
 			<0xfd4ab204 0x4>;
-		qcom,hsphy-init = <0x00D191A4>;
+		qcom,hsphy-init = <0x00D192E4>;
 		vdd-supply = <&pma8084_s1>;
 		vdda18-supply = <&pma8084_l6>;
 		vdda33-supply = <&pma8084_l24>;
@@ -4395,7 +4454,7 @@
 	hsphy1: hsphy@f94f8800 {
 		compatible = "qcom,usb-hsphy";
 		reg = <0xf94f8800 0x3ff>;
-		qcom,hsphy-init = <0x00D191A4>;
+		qcom,hsphy-init = <0x00D192E4>;
 		vdd-supply = <&pma8084_s1>;
 		vdda18-supply = <&pma8084_l6>;
 		vdda33-supply = <&pma8084_l24>;
@@ -4495,7 +4554,7 @@
 
 	memory_hole: qcom,msm-mem-hole {
 		compatible = "qcom,msm-mem-hole";
-		qcom,memblock-remove = <0x0d400000 0x02a00000>; /* Address and Size of Hole */
+		qcom,memblock-remove = <0x0c100000 0x04100000>; /* Address and Size of Hole */
 	};
 
 	qcom,ipc-spinlock@fd484000 {
@@ -4708,9 +4767,9 @@
 		qcom,msm-rng-iface-clk;
 	};
 
-	qseecom: qcom,qseecom@d600000 {
+	qseecom: qcom,qseecom@c100000 {
 		compatible = "qcom,qseecom";
-		reg = <0xd600000 0x500000>;
+		reg = <0xc100000 0xf00000>;
 		reg-names = "secapp-region";
 		qcom,disk-encrypt-pipe-pair = <2>;
 		qcom,hlos-ce-hw-instance = <1>;
@@ -4772,12 +4831,12 @@
 		compatible = "qcom,msm-thermal";
 		qcom,sensor-id = <5>;
 		qcom,poll-ms = <250>;
-		qcom,limit-temp = <60>;
+		qcom,limit-temp = <80>;
 		qcom,temp-hysteresis = <10>;
 		qcom,therm-reset-temp = <115>;
 		qcom,freq-step = <2>;
 		qcom,freq-control-mask = <0xf>;
-		qcom,core-limit-temp = <80>;
+		qcom,core-limit-temp = <85>;
 		qcom,core-temp-hysteresis = <10>;
 		qcom,core-control-mask = <0xe>;
 		qcom,hotplug-temp = <110>;
@@ -4982,88 +5041,6 @@
 
 	qcom,msm-ssc-sensors {
 		compatible = "qcom,msm-ssc-sensors";
-	};
-
-	sound {
-		compatible = "qcom,apq8084-audio-taiko";
-		qcom,model = "apq8084-taiko-snd-card";
-
-		qcom,audio-routing =
-			"RX_BIAS", "MCLK",
-			"LDO_H", "MCLK",
-			"AIF4 MAD", "MCLK",
-			"AMIC1", "MIC BIAS1 Internal1",
-			"MIC BIAS1 Internal1", "Handset Mic",
-			"AMIC2", "MIC BIAS2 External",
-			"MIC BIAS2 External", "Headset Mic",
-			"AMIC3", "MIC BIAS2 External",
-			"MIC BIAS2 External", "ANCRight Headset Mic",
-			"AMIC4", "MIC BIAS2 External",
-			"MIC BIAS2 External", "ANCLeft Headset Mic",
-			"DMIC1", "MIC BIAS3 External",
-			"MIC BIAS3 External", "Digital Mic1",
-			"DMIC2", "MIC BIAS4 External",
-			"MIC BIAS4 External", "Digital Mic2",
-			"DMIC3", "MIC BIAS1 External",
-			"MIC BIAS1 External", "Digital Mic3",
-			"DMIC4", "MIC BIAS1 External",
-			"MIC BIAS1 External", "Digital Mic4",
-			"DMIC5", "MIC BIAS3 External",
-			"MIC BIAS3 External", "Digital Mic5",
-			"DMIC6", "MIC BIAS3 External",
-			"MIC BIAS3 External", "Digital Mic6";
-
-		qcom,codec-mclk-clk-freq = <9600000>;
-		qcom,prim-auxpcm-gpio-clk  = <&msmgpio 87 0>;
-		qcom,prim-auxpcm-gpio-sync = <&msmgpio 88 0>;
-		qcom,prim-auxpcm-gpio-din  = <&msmgpio 89 0>;
-		qcom,prim-auxpcm-gpio-dout = <&msmgpio 90 0>;
-		qcom,prim-auxpcm-gpio-set = "prim-gpio-tert";
-		qcom,sec-auxpcm-gpio-clk  = <&msmgpio 82 0>;
-		qcom,sec-auxpcm-gpio-sync = <&msmgpio 83 0>;
-		qcom,sec-auxpcm-gpio-din  = <&msmgpio 84 0>;
-		qcom,sec-auxpcm-gpio-dout = <&msmgpio 85 0>;
-	};
-
-	sound-9330 {
-		compatible = "qcom,apq8084-audio-tomtom";
-		qcom,model = "apq8084-tomtom-snd-card";
-
-		qcom,audio-routing =
-			"RX_BIAS", "MCLK",
-			"LDO_H", "MCLK",
-			"AIF4 MAD", "MCLK",
-			"AMIC1", "MIC BIAS1 Internal1",
-			"MIC BIAS1 Internal1", "Handset Mic",
-			"AMIC2", "MIC BIAS2 External",
-			"MIC BIAS2 External", "Headset Mic",
-			"AMIC3", "MIC BIAS2 External",
-			"MIC BIAS2 External", "ANCRight Headset Mic",
-			"AMIC4", "MIC BIAS2 External",
-			"MIC BIAS2 External", "ANCLeft Headset Mic",
-			"DMIC1", "MIC BIAS3 External",
-			"MIC BIAS3 External", "Digital Mic1",
-			"DMIC2", "MIC BIAS4 External",
-			"MIC BIAS4 External", "Digital Mic2",
-			"DMIC3", "MIC BIAS1 External",
-			"MIC BIAS1 External", "Digital Mic3",
-			"DMIC4", "MIC BIAS1 External",
-			"MIC BIAS1 External", "Digital Mic4",
-			"DMIC5", "MIC BIAS3 External",
-			"MIC BIAS3 External", "Digital Mic5",
-			"DMIC6", "MIC BIAS3 External",
-			"MIC BIAS3 External", "Digital Mic6";
-
-		qcom,codec-mclk-clk-freq = <9600000>;
-		qcom,prim-auxpcm-gpio-clk  = <&msmgpio 87 0>;
-		qcom,prim-auxpcm-gpio-sync = <&msmgpio 88 0>;
-		qcom,prim-auxpcm-gpio-din  = <&msmgpio 89 0>;
-		qcom,prim-auxpcm-gpio-dout = <&msmgpio 90 0>;
-		qcom,prim-auxpcm-gpio-set = "prim-gpio-tert";
-		qcom,sec-auxpcm-gpio-clk  = <&msmgpio 82 0>;
-		qcom,sec-auxpcm-gpio-sync = <&msmgpio 83 0>;
-		qcom,sec-auxpcm-gpio-din  = <&msmgpio 84 0>;
-		qcom,sec-auxpcm-gpio-dout = <&msmgpio 85 0>;
 	};
 
 	qcom,msm-adsp-loader {
@@ -5361,13 +5338,14 @@
 		interrupts = <0 1 0>;
 	};
 
-	cnss: qcom,cnss@0d400000 {
+	cnss: qcom,cnss@0d000000 {
 		compatible = "qcom,cnss";
-		reg = <0x0d400000 0x200000>;
+		reg = <0x0d000000 0x200000>;
 		reg-names = "ramdump";
 		wlan-en-gpio = <&msmgpio 82 0>;
 		vdd-wlan-supply = <&wlan_vreg>;
 		qcom,notify-modem-status;
+		wlan-soc-swreg-supply = <&pma8084_l27>;
 
 		qcom,msm-bus,name = "msm-cnss";
 		qcom,msm-bus,num-cases = <4>;
@@ -5448,6 +5426,17 @@
 #include "apq8084-regulator.dtsi"
 
 &pma8084_vadc {
+	chan@23 {
+		label = "mpp4_div3";
+		reg = <0x23>;
+		qcom,decimation = <0>;
+		qcom,pre-div-channel-scaling = <1>; /* 1:3 scaling */
+		qcom,calibration-type = "absolute";
+		qcom,scale-function = <0>;
+		qcom,hw-settle-time = <0>;
+		qcom,fast-avg-setup = <0>;
+	};
+
 	chan@73 {
 		label = "apq_therm";
 		reg = <0x73>;

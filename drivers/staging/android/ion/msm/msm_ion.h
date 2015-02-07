@@ -265,3 +265,28 @@ static inline int msm_ion_unsecure_buffer(struct ion_client *client,
 #endif /* CONFIG_ION */
 
 #endif
+#if defined(CONFIG_MACH_KLTE_JPN) || defined(CONFIG_MACH_HLTEDCM) || defined(CONFIG_MACH_HLTEKDI) || defined(CONFIG_MACH_JS01LTEDCM) || defined(CONFIG_SEC_TRLTE_DCM)
+/* struct ion_buffer_data
+ *
+ * @handle:	handle for the buffer being queried
+ * @paddr:	The physical address of the buffer referenced by the handle
+ * @length:	The length of the buffer referenced by the handle
+ *
+ * Gets the physicial address of the given handle
+ */
+struct ion_buffer_data {
+	struct ion_handle *handle;
+	unsigned long paddr;
+	unsigned int length;
+};
+#endif
+#if defined(CONFIG_MACH_KLTE_JPN) || defined(CONFIG_MACH_HLTEDCM) || defined(CONFIG_MACH_HLTEKDI) || defined(CONFIG_MACH_JS01LTEDCM) || defined(CONFIG_SEC_TRLTE_DCM)
+/**
+ * DOC: ION_IOC_GET_PHYS - get the physical address of the handle
+ *
+ * Gets the physicial address of the given handle
+ */
+#define ION_IOC_GET_PHYS	_IOWR(ION_IOC_MSM_MAGIC, 5, \
+									struct ion_buffer_data)
+
+#endif

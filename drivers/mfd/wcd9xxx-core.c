@@ -1855,7 +1855,6 @@ static int wcd9xxx_device_up(struct wcd9xxx *wcd9xxx)
 		wcd9xxx->slim_device_bootup = false;
 		return 0;
 	}
-
 	dev_info(wcd9xxx->dev, "%s: codec bring up\n", __func__);
 	wcd9xxx_bring_up(wcd9xxx);
 	ret = wcd9xxx_irq_init(wcd9xxx_res);

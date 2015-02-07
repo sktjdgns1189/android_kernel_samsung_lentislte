@@ -96,35 +96,39 @@ dtb-$(CONFIG_ARCH_MPQ8092) += mpq8092-sim.dtb \
 	mpq8092-cdp.dtb \
 	mpq8092-dtv.dtb \
 	mpq8092-dma.dtb
-dtb-$(CONFIG_ARCH_APQ8084) += apq8084-v1.0-old-pwr-grid-liquid.dtb \
-	apq8084-v1.1-old-pwr-grid-liquid.dtb \
-	apq8084-v1.1-liquid.dtb \
-	apq8084-v1.0-old-pwr-grid-smb1357-cdp.dtb \
-	apq8084-v1.1-old-pwr-grid-smb1357-cdp.dtb \
-	apq8084-v1.1-smb1357-cdp.dtb \
-	apq8084-v1.0-old-pwr-grid-smb1357-mtp.dtb \
-	apq8084-v1.1-old-pwr-grid-smb1357-mtp.dtb \
-	apq8084-v1.1-smb1357-mtp.dtb \
-	apq8084-v1.0-old-pwr-grid-smb1359-mdm9x35-alt-mtp.dtb \
-	apq8084-v1.1-old-pwr-grid-smb1359-mdm9x35-alt-mtp.dtb \
-	apq8084-v1.1-smb1359-mdm9x35-alt-mtp.dtb \
-	apq8084-old-pwr-grid-smb349-cdp.dtb \
-	apq8084-old-pwr-grid-smb349-mtp.dtb \
-	apq8084-v1.0-old-pwr-grid-smb1357-mdm9x35-alt-rcm.dtb \
-	apq8084-v1.1-old-pwr-grid-smb1357-mdm9x35-alt-rcm.dtb \
-	apq8084-v1.1-smb1357-mdm9x35-alt-rcm.dtb \
-	apq8084-v1.0-old-pwr-grid-smb1357-mdm9x35-mtp.dtb \
-	apq8084-v1.1-old-pwr-grid-smb1357-mdm9x35-mtp.dtb \
-	apq8084-v1.1-smb1357-mdm9x35-mtp.dtb \
-	apq8084-v1.0-old-pwr-grid-smb1357-mdm9x35-cdp.dtb \
-	apq8084-v1.1-old-pwr-grid-smb1357-mdm9x35-cdp.dtb \
-	apq8084-v1.1-smb1357-mdm9x35-cdp.dtb \
-	apq8084-v1.0-old-pwr-grid-mdm9x35-alt-cdp.dtb \
-	apq8084-v1.1-old-pwr-grid-mdm9x35-alt-cdp.dtb \
-	apq8084-v1.1-mdm9x35-alt-cdp.dtb \
-	apq8084-v1.1-sbc.dtb
-dtb-$(CONFIG_ARCH_MSM) += msmplutonium-sim.dtb
+dtb-$(CONFIG_ARCH_MSMPLUTONIUM) += msmplutonium-sim.dtb
 
+dtb-$(CONFIG_SEC_LENTIS_PROJECT) = apq8084-sec-lentis-r00.dtb \
+	apq8084-sec-lentis-r02.dtb \
+	apq8084-sec-lentis-r03.dtb \
+	apq8084-sec-lentis-r04.dtb \
+	apq8084-sec-lentis-r06.dtb \
+	apq8084-sec-lentis-r07.dtb \
+	apq8084-sec-lentis-r08.dtb \
+	apq8084-sec-lentis-r10.dtb
+
+dtb-$(CONFIG_SEC_TRLTE_PROJECT) = apq8084-sec-trlte-r00.dtb \
+	apq8084-sec-trlte-r01.dtb \
+	apq8084-sec-trlte-r02.dtb \
+	apq8084-sec-trlte-r03.dtb \
+	apq8084-sec-trlte-r04.dtb
+
+dtb-$(CONFIG_SEC_TBLTE_PROJECT) = apq8084-sec-tblte-r03.dtb
+# TRLTE DTB Targets will be overridden by below for various project.
+# for TRLTE SKT/KT/LGT
+dtb-$(CONFIG_MACH_TRLTE_KOR) = apq8084-sec-trlte-kor-r00.dtb \
+	apq8084-sec-trlte-kor-r01.dtb \
+	apq8084-sec-trlte-kor-r02.dtb \
+	apq8084-sec-trlte-kor-r03.dtb \
+	apq8084-sec-trlte-kor-r04.dtb
+# For TRLTE DCM/KDDI
+dtb-$(CONFIG_SEC_TRLTE_JPN) = apq8084-sec-trlte-jpn-r01.dtb \
+	apq8084-sec-trlte-jpn-r02.dtb \
+	apq8084-sec-trlte-jpn-r03.dtb \
+	apq8084-sec-trlte-jpn-r04.dtb
+# For TRLTE CHINA DUOS
+dtb-$(CONFIG_SEC_TRLTE_CHNDUOS) = apq8084-sec-trlte-chnduos-r00.dtb \
+	apq8084-sec-trlte-chnduos-r02.dtb
 DTB_NAMES := $(subst $\",,$(CONFIG_BUILD_ARM_APPENDED_DTB_IMAGE_NAMES))
 ifneq ($(DTB_NAMES),)
 DTB_LIST := $(addsuffix .dtb,$(DTB_NAMES))
@@ -140,4 +144,4 @@ $(obj)/../%.dtb: $(src)/%.dts
 
 dtbs: $(addprefix $(obj)/../,$(DTB_LIST))
 
-clean-files := *.dtb
+clean-files := *.dtb *.reverse.dts

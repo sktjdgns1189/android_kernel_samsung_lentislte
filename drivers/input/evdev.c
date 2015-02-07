@@ -27,6 +27,9 @@
 #include <linux/wakelock.h>
 #include "input-compat.h"
 
+#include <linux/mm.h>
+#include <linux/vmalloc.h>
+
 struct evdev {
 	int open;
 	struct input_handle handle;
@@ -299,7 +302,7 @@ static int evdev_release(struct inode *inode, struct file *file)
 	evdev_detach_client(evdev, client);
 	if (client->use_wake_lock)
 		wake_lock_destroy(&client->wake_lock);
-	kfree(client);
+	is_vmalloc_addr(client) ? vfree(client) : kfree(client);
 
 	evdev_close_device(evdev);
 
@@ -321,10 +324,14 @@ static int evdev_open(struct inode *inode, struct file *file)
 	unsigned int bufsize = evdev_compute_buffer_size(evdev->handle.dev);
 	struct evdev_client *client;
 	int error;
+	int alloc_size = sizeof(struct evdev_client) +
+					bufsize * sizeof(struct input_event);
 
-	client = kzalloc(sizeof(struct evdev_client) +
-				bufsize * sizeof(struct input_event),
-			 GFP_KERNEL);
+	if (alloc_size < PAGE_SIZE*2)
+		client = kzalloc(alloc_size, GFP_KERNEL);
+	else 
+		client = vzalloc(alloc_size);
+
 	if (!client)
 		return -ENOMEM;
 
@@ -347,7 +354,7 @@ static int evdev_open(struct inode *inode, struct file *file)
 
  err_free_client:
 	evdev_detach_client(evdev, client);
-	kfree(client);
+	is_vmalloc_addr(client) ? vfree(client) : kfree(client);
 	return error;
 }
 

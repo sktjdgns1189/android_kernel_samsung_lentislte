@@ -1,4 +1,4 @@
-/* Copyright (c) 2011, 2013-2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011, 2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -214,11 +214,6 @@ int32_t msm_camera_qup_i2c_write_seq(struct msm_camera_i2c_client *client,
 		S_I2C_DBG("%s byte %d: 0x%x\n", __func__,
 			len+1, buf[len+1]);
 		len = 2;
-	}
-	if (num_byte > I2C_SEQ_REG_DATA_MAX) {
-		pr_err("%s: num_byte=%d clamped to max supported %d\n",
-			__func__, num_byte, I2C_SEQ_REG_DATA_MAX);
-		num_byte = I2C_SEQ_REG_DATA_MAX;
 	}
 	for (i = 0; i < num_byte; i++) {
 		buf[i+len] = data[i];

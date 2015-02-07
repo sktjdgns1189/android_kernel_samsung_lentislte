@@ -85,6 +85,10 @@
 #include <asm/smp.h>
 #endif
 
+#ifdef CONFIG_SEC_GPIO_DVS
+#include <linux/secgpio_dvs.h>
+#endif
+
 static int kernel_init(void *);
 
 extern void init_IRQ(void);
@@ -144,6 +148,9 @@ static char *ramdisk_execute_command;
  */
 unsigned int reset_devices;
 EXPORT_SYMBOL(reset_devices);
+
+int boot_mode_recovery;
+EXPORT_SYMBOL(boot_mode_recovery);
 
 static int __init set_reset_devices(char *str)
 {
@@ -229,6 +236,24 @@ static int __init loglevel(char *str)
 }
 
 early_param("loglevel", loglevel);
+
+/* check uart boot */
+int jig_boot_clk_limit;
+
+static int __init jig_status_phone(char *str)
+{
+	int jig_val;
+
+	if(get_option(&str, &jig_val)) {
+		jig_boot_clk_limit |= jig_val;
+		printk(KERN_INFO "%s = %d\n", __func__, jig_boot_clk_limit);
+		return 0;
+	}
+
+	return -EINVAL;
+}
+
+early_param("uart_dbg", jig_status_phone);
 
 /* Change NUL term back to "=", to make "param" the whole string. */
 static int __init repair_env_string(char *param, char *val, const char *unused)
@@ -406,6 +431,15 @@ static int __init do_early_param(char *param, char *val, const char *unused)
 		}
 	}
 	/* We accept everything at this stage. */
+
+	/* Check Recovery Mode , 1: recovery mode, 2: factory reset mode(recovery)
+	                         otherwise normal mode*/
+	if ((strncmp(param, "androidboot.boot_recovery", 26) == 0)) {
+	        if ((strncmp(val, "1", 1) == 0)||(strncmp(val, "2", 1) == 0)) {
+				pr_info("Recovery Boot Mode \n");
+				boot_mode_recovery = 1;
+			}
+	}
 	return 0;
 }
 
@@ -807,15 +841,38 @@ static int run_init_process(const char *init_filename)
 		(const char __user *const __user *)envp_init);
 }
 
+#ifdef CONFIG_TIMA_RKP_30
+#define PGT_BIT_ARRAY_LENGTH 0x40000
+unsigned long pgt_bit_array[PGT_BIT_ARRAY_LENGTH];
+EXPORT_SYMBOL(pgt_bit_array);
+#endif
+
 static noinline void __init kernel_init_freeable(void);
 
 static int __ref kernel_init(void *unused)
 {
 	kernel_init_freeable();
+
+#ifdef CONFIG_SEC_GPIO_DVS
+	/************************ Caution !!! ****************************/
+	/* This function must be located in appropriate INIT position
+	 * in accordance with the specification of each BB vendor.
+	 */
+	/************************ Caution !!! ****************************/
+	gpio_dvs_check_initgpio();
+#endif
+
 	/* need to finish all async __init code before freeing the memory */
 	async_synchronize_full();
 	free_initmem();
 	mark_rodata_ro();
+#ifdef CONFIG_TIMA_RKP
+#ifdef CONFIG_TIMA_RKP_30
+	tima_send_cmd5((unsigned long)_stext, (unsigned long)init_mm.pgd, (unsigned long)__init_begin, (unsigned long)__init_end,(unsigned long)__pa(pgt_bit_array),0x3f80c221);
+#else 
+	tima_send_cmd4((unsigned long)_stext, (unsigned long)init_mm.pgd, (unsigned long)__init_begin, (unsigned long)__init_end, 0x3f80c221);
+#endif
+#endif
 	system_state = SYSTEM_RUNNING;
 	numa_default_policy();
 

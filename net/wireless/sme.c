@@ -66,7 +66,6 @@ static bool cfg80211_is_all_idle(void)
 	return is_all_idle;
 }
 
-
 static bool cfg80211_is_all_countryie_ignore(void)
 {
 	struct cfg80211_registered_device *rdev;
@@ -95,7 +94,6 @@ out:
 
 	return is_all_countryie_ignore;
 }
-
 
 static void disconnect_work(struct work_struct *work)
 {

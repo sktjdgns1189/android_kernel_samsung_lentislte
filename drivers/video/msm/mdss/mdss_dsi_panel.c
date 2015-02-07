@@ -378,13 +378,8 @@ static int mdss_dsi_set_col_page_addr(struct mdss_panel_data *pdata)
 	p_roi = &pinfo->roi;
 	c_roi = &ctrl->roi;
 
-	/*
-	 * if broadcase mode enable or roi had changed
-	 * then do col_page update
-	 */
-	if (mdss_dsi_sync_wait_enable(ctrl) ||
-				!mdss_rect_cmp(c_roi, p_roi)) {
-		pr_debug("%s: ndx=%d x=%d y=%d w=%d h=%d\n",
+	if (!mdss_rect_cmp(c_roi, p_roi)) {
+			pr_debug("%s: ndx=%d x=%d y=%d w=%d h=%d\n",
 				__func__, ctrl->ndx, p_roi->x,
 				p_roi->y, p_roi->w, p_roi->h);
 
@@ -393,8 +388,7 @@ static int mdss_dsi_set_col_page_addr(struct mdss_panel_data *pdata)
 			/* no new frame update */
 			pr_debug("%s: ctrl=%d, no partial roi set\n",
 						__func__, ctrl->ndx);
-			if (!mdss_dsi_sync_wait_enable(ctrl))
-				return 0;
+			return 0;
 		}
 
 		roi = *c_roi;
@@ -424,7 +418,7 @@ static int mdss_dsi_set_col_page_addr(struct mdss_panel_data *pdata)
 		memset(&cmdreq, 0, sizeof(cmdreq));
 		cmdreq.cmds = set_col_page_addr_cmd;
 		cmdreq.cmds_cnt = 2;
-		cmdreq.flags = CMD_REQ_COMMIT | CMD_CLK_CTRL | CMD_REQ_UNICAST;
+		cmdreq.flags = CMD_REQ_COMMIT | CMD_CLK_CTRL;
 		cmdreq.rlen = 0;
 		cmdreq.cb = NULL;
 
@@ -441,7 +435,6 @@ static void mdss_dsi_panel_bl_ctrl(struct mdss_panel_data *pdata,
 							u32 bl_level)
 {
 	struct mdss_dsi_ctrl_pdata *ctrl_pdata = NULL;
-	struct mdss_dsi_ctrl_pdata *sctrl = NULL;
 
 	if (pdata == NULL) {
 		pr_err("%s: Invalid input data\n", __func__);
@@ -468,27 +461,16 @@ static void mdss_dsi_panel_bl_ctrl(struct mdss_panel_data *pdata,
 		mdss_dsi_panel_bklt_pwm(ctrl_pdata, bl_level);
 		break;
 	case BL_DCS_CMD:
-		if (!mdss_dsi_sync_wait_enable(ctrl_pdata)) {
-			mdss_dsi_panel_bklt_dcs(ctrl_pdata, bl_level);
-			break;
-		}
-		/*
-		 * DCS commands to update backlight are usually sent at
-		 * the same time to both the controllers. However, if
-		 * sync_wait is enabled, we need to ensure that the
-		 * dcs commands are first sent to the non-trigger
-		 * controller so that when the commands are triggered,
-		 * both controllers receive it at the same time.
-		 */
-		sctrl = mdss_dsi_get_other_ctrl(ctrl_pdata);
-		if (mdss_dsi_sync_wait_trigger(ctrl_pdata)) {
-			if (sctrl)
-				mdss_dsi_panel_bklt_dcs(sctrl, bl_level);
-			mdss_dsi_panel_bklt_dcs(ctrl_pdata, bl_level);
-		} else {
-			mdss_dsi_panel_bklt_dcs(ctrl_pdata, bl_level);
-			if (sctrl)
-				mdss_dsi_panel_bklt_dcs(sctrl, bl_level);
+		mdss_dsi_panel_bklt_dcs(ctrl_pdata, bl_level);
+		if (mdss_dsi_is_master_ctrl(ctrl_pdata)) {
+			struct mdss_dsi_ctrl_pdata *sctrl =
+				mdss_dsi_get_slave_ctrl();
+			if (!sctrl) {
+				pr_err("%s: Invalid slave ctrl data\n",
+					__func__);
+				return;
+			}
+			mdss_dsi_panel_bklt_dcs(sctrl, bl_level);
 		}
 		break;
 	default:
@@ -973,7 +955,7 @@ static void mdss_dsi_parse_panel_horizintal_line_idle(struct device_node *np,
 
 	cnt = len / sizeof(u32);
 
-	kp = kzalloc(sizeof(*kp) * (cnt / 3), GFP_KERNEL);
+	kp = kzalloc(sizeof(*kp) * cnt, GFP_KERNEL);
 	if (kp == NULL) {
 		pr_err("%s: No memory\n", __func__);
 		return;

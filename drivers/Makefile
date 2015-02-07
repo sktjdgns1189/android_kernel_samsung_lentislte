@@ -168,3 +168,11 @@ obj-$(CONFIG_ESOC)		+= esoc/
 obj-$(CONFIG_BIF)		+= bif/
 obj-$(CONFIG_SENSORS)		+= sensors/
 obj-$(CONFIG_SENSORS_SSC)	+= sensors/
+obj-$(CONFIG_SENSORS_SSP)	+= sensorhub/
+#motor
+obj-$(CONFIG_VIBETONZ)		+= motor/
+obj-$(CONFIG_MOTOR_DRV_MAX77828)	+= motor/
+
+obj-$(CONFIG_BATTERY_SAMSUNG)	+= battery/
+
+obj-$(CONFIG_SENSORS_FINGERPRINT)	+= fingerprint/
