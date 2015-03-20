@@ -10,9 +10,6 @@ choice
 	config ISDBT_FC8300
 		bool "ISDBT_FC8300"
 		
-	config ISDBT_FC8300_SPI
-		bool "ISDBT_FC8300_SPI"	
-		
 endchoice
 
 config ISDBT_SPMI
