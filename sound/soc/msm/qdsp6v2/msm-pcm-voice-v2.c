@@ -30,7 +30,7 @@
 #include "q6voice.h"
 
 #if defined(CONFIG_MACH_TRLTE_EUR) && defined(CONFIG_SND_DSPG_DBMD2)
-extern int system_rev;
+extern int unsigned system_rev;
 #endif
 
 static struct msm_voice voice_info[VOICE_SESSION_INDEX_MAX];
@@ -588,6 +588,8 @@ static struct snd_kcontrol_new msm_voice_controls[] = {
 	SOC_SINGLE_EXT("Loopback Enable", SND_SOC_NOPM, 0, 1, 0,
 				msm_loopback_get, msm_loopback_put),
 #endif
+	// Dummy control to expose stereo recording support in kernel to user-space
+	SOC_SINGLE_EXT("Stereo Recording", SND_SOC_NOPM, 1, VSID_MAX, 0, NULL, NULL),
 };
 
 static struct snd_pcm_ops msm_pcm_ops = {

@@ -1427,8 +1427,8 @@ int mdss_samsung_brightness_dcs(struct mdss_dsi_ctrl_pdata *ctrl, int level)
 		return false;
 	}
 
-	if(alpm_status_func(CHECK_PREVIOUS_STATUS)){
-		pr_info("[ALPM_DEBUG] ALPM is on. do not set brightness..\n");
+	if (alpm_status_func(CHECK_PREVIOUS_STATUS)) {
+		pr_info("[ALPM_DEBUG] ALPM is on. do not set brightness.. (%d)\n", level);
 		return false;
 	}
 
@@ -2575,7 +2575,6 @@ static void sending_tune_cmd(struct device *dev, char *src, int len)
 	if (IS_ERR_OR_NULL(vdd))
 		pr_err("%s vdd is error", __func__);
 	else {
-		mdss_samsung_send_cmd(vdd->ctrl_dsi[0], PANEL_LEVE2_KEY_ENABLE);
 #if defined(CONFIG_DUAL_PANEL)
 		vdd->mdnie_tune_data[0].mdnie_tune_packet_tx_cmds_dsi.cmds = mdnie_tune_cmd;
 		vdd->mdnie_tune_data[0].mdnie_tune_packet_tx_cmds_dsi.cmd_cnt = 2;
@@ -2585,12 +2584,21 @@ static void sending_tune_cmd(struct device *dev, char *src, int len)
 
 		/* TODO: Tx command */
 #else
-		vdd->mdnie_tune_data[0].mdnie_tune_packet_tx_cmds_dsi.cmds = mdnie_tune_cmd;
-		vdd->mdnie_tune_data[0].mdnie_tune_packet_tx_cmds_dsi.cmd_cnt = 2;
-
-		mdss_samsung_send_cmd(vdd->ctrl_dsi[DISPLAY_1], PANEL_MDNIE_TUNE);
+		if((vdd->ctrl_dsi[DSI_CTRL_0]->cmd_sync_wait_broadcast)
+		&& (vdd->ctrl_dsi[DSI_CTRL_1]->cmd_sync_wait_trigger)){ /* Dual DSI & dsi 1 trigger */
+			mdss_samsung_send_cmd(vdd->ctrl_dsi[DSI_CTRL_1], PANEL_LEVE2_KEY_ENABLE);
+			vdd->mdnie_tune_data[DSI_CTRL_1].mdnie_tune_packet_tx_cmds_dsi.cmds = mdnie_tune_cmd;
+			vdd->mdnie_tune_data[DSI_CTRL_1].mdnie_tune_packet_tx_cmds_dsi.cmd_cnt = 2;
+			mdss_samsung_send_cmd(vdd->ctrl_dsi[DSI_CTRL_1], PANEL_MDNIE_TUNE);
+			mdss_samsung_send_cmd(vdd->ctrl_dsi[DSI_CTRL_1], PANEL_LEVE2_KEY_DISABLE);
+		} else { /* Single DSI, dsi 0 trigger */
+			mdss_samsung_send_cmd(vdd->ctrl_dsi[DSI_CTRL_0], PANEL_LEVE2_KEY_ENABLE);
+			vdd->mdnie_tune_data[DSI_CTRL_0].mdnie_tune_packet_tx_cmds_dsi.cmds = mdnie_tune_cmd;
+			vdd->mdnie_tune_data[DSI_CTRL_0].mdnie_tune_packet_tx_cmds_dsi.cmd_cnt = 2;
+			mdss_samsung_send_cmd(vdd->ctrl_dsi[DSI_CTRL_0], PANEL_MDNIE_TUNE);
+			mdss_samsung_send_cmd(vdd->ctrl_dsi[DSI_CTRL_0], PANEL_LEVE2_KEY_DISABLE);
+		}
 #endif
-		mdss_samsung_send_cmd(vdd->ctrl_dsi[0], PANEL_LEVE2_KEY_DISABLE);
 	}
 }
 
@@ -2993,14 +3001,15 @@ static ssize_t mdss_samsung_auto_brightness_store(struct device *dev,
 		pr_info("%s: Invalid argument!!", __func__);
 
 	pr_info("%s (%d) \n", __func__, vdd->auto_brightness);
-	if(!alpm_status_func(CHECK_PREVIOUS_STATUS)){
-	mutex_lock(&vdd->mfd_dsi[DISPLAY_1]->bl_lock);
-	pdata->set_backlight(pdata, vdd->bl_level);
-	mutex_unlock(&vdd->mfd_dsi[DISPLAY_1]->bl_lock);
 
-	if (vdd->support_mdnie_lite)
-		update_dsi_tcon_mdnie_register(vdd);
-	}else
+	if (!alpm_status_func(CHECK_PREVIOUS_STATUS)) {
+		mutex_lock(&vdd->mfd_dsi[DISPLAY_1]->bl_lock);
+		pdata->set_backlight(pdata, vdd->bl_level);
+		mutex_unlock(&vdd->mfd_dsi[DISPLAY_1]->bl_lock);
+
+		if (vdd->support_mdnie_lite)
+			update_dsi_tcon_mdnie_register(vdd);
+	} else
 		pr_err("[ALPM_DEBUG]  %s : ALPM is on. do not set brightness and mdnie..  \n", __func__);
 
 	return size;
@@ -3170,6 +3179,7 @@ static ssize_t mdss_samsung_alpm_store(struct device *dev,
 	struct mdss_dsi_ctrl_pdata *ctrl;
 	struct mdss_panel_data *pdata;
 	struct mdss_panel_info *pinfo;
+	static int backup_bl_level;
 
 	pdata = &vdd->ctrl_dsi[DISPLAY_1]->panel_data;
 	pinfo = &pdata->panel_info;
@@ -3212,6 +3222,15 @@ static ssize_t mdss_samsung_alpm_store(struct device *dev,
 		if (pinfo->panel_state) {
 			if (!alpm_status_func(CHECK_PREVIOUS_STATUS)\
 					&& alpm_status_func(CHECK_CURRENT_STATUS)) {
+				/* Set min brightness to prevent panel malfunction with ALPM */
+				pr_info("[ALPM_DEBUG] Set Min Birghtness \n");
+				mutex_lock(&vdd->mfd_dsi[DISPLAY_1]->bl_lock);
+
+				if (vdd->bl_level)
+					backup_bl_level = vdd->bl_level;
+
+				pdata->set_backlight(pdata, ALPM_BRIGHTNESS);
+				mutex_unlock(&vdd->mfd_dsi[DISPLAY_1]->bl_lock);
 				/* Turn On ALPM Mode */
 				mdss_samsung_send_cmd(ctrl, PANEL_ALPM_ON);
 				msleep(20); /* wait 1 frame(more than 16ms) */
@@ -3229,7 +3248,11 @@ static ssize_t mdss_samsung_alpm_store(struct device *dev,
 					alpm_status_func(CLEAR_MODE_STATUS);
 
 					mutex_lock(&vdd->mfd_dsi[DISPLAY_1]->bl_lock);
-					pdata->set_backlight(pdata, vdd->bl_level);
+
+					if (vdd->bl_level)
+						backup_bl_level = vdd->bl_level;
+
+					pdata->set_backlight(pdata, backup_bl_level);
 					mutex_unlock(&vdd->mfd_dsi[DISPLAY_1]->bl_lock);
 
 					pr_info("[ALPM_DEBUG] %s: Send ALPM off cmds\n", __func__);
@@ -3279,8 +3302,6 @@ int hmt_bright_update(struct mdss_dsi_ctrl_pdata *ctrl)
 
 int hmt_enable(struct mdss_dsi_ctrl_pdata *ctrl, int enable)
 {
-	msleep(20);
-
 	if (enable) {
 		pr_info("Single Scan Enable ++ \n");
 		mdss_samsung_send_cmd(ctrl, PANEL_HMT_ENABLE);
@@ -3295,8 +3316,6 @@ int hmt_enable(struct mdss_dsi_ctrl_pdata *ctrl, int enable)
 
 int hmt_reverse_update(struct mdss_dsi_ctrl_pdata *ctrl, int enable)
 {
-	msleep(20);
-
 	if (enable) {
 		pr_info("REVERSE ENABLE ++\n");
 		mdss_samsung_send_cmd(ctrl, PANEL_HMT_REVERSE_ENABLE);
@@ -3861,8 +3880,10 @@ void mdss_samsung_dsi_dump_regs(int dsi_num)
 void mdss_samsung_dsi_te_check(void)
 {
 	struct mdss_dsi_ctrl_pdata **dsi_ctrl = mdss_dsi_get_ctrl();
+	struct samsung_display_driver_data *vdd = samsung_get_vdd();
 	int rc, te_count = 0;
-	int te_max = 20000; /*samspling 200ms */
+	int te_max = 20000; /*sampling 200ms */
+	char rddpm_reg = 0;
 
 	if (dsi_ctrl[DISPLAY_1]->panel_mode == DSI_VIDEO_MODE)
 		return;
@@ -3889,13 +3910,47 @@ void mdss_samsung_dsi_te_check(void)
 		}
 
 		if(te_count == te_max)
+		{
 			pr_err("LDI doesn't generate TE");
+			if (!IS_ERR_OR_NULL(vdd->dtsi_data[DISPLAY_2].ldi_debug0_rx_cmds[vdd->panel_revision].cmds))
+				mdss_samsung_read_nv_mem(dsi_ctrl[DISPLAY_2], &vdd->dtsi_data[DISPLAY_2].ldi_debug0_rx_cmds[vdd->panel_revision], &rddpm_reg, 0);
+			if (!IS_ERR_OR_NULL(vdd->dtsi_data[DISPLAY_1].ldi_debug0_rx_cmds[vdd->panel_revision].cmds))
+				mdss_samsung_read_nv_mem(dsi_ctrl[DISPLAY_1], &vdd->dtsi_data[DISPLAY_1].ldi_debug0_rx_cmds[vdd->panel_revision], &rddpm_reg, 0);
+		}
 		else
 			pr_err("LDI generate TE");
 
 		pr_err(" ============ finish waiting for TE ============\n");
 	} else
 		pr_err("disp_te_gpio is not valid\n");
+}
+void mdss_mdp_underrun_dump_info(void)
+{
+	struct mdss_mdp_pipe *pipe;
+	struct mdss_data_type *mdss_res = mdss_mdp_get_mdata();
+	struct mdss_overlay_private *mdp5_data = mfd_to_mdp5_data(vdd_data.mfd_dsi[0]);
+	int pcount = mdp5_data->mdata->nrgb_pipes+ mdp5_data->mdata->nvig_pipes+mdp5_data->mdata->ndma_pipes;
+
+	pr_err(" ============ %s start ===========\n",__func__);
+	mutex_lock(&mdp5_data->list_lock);
+	list_for_each_entry(pipe, &mdp5_data->pipes_used, list) {
+		if (pipe)
+			pr_err(" [%4d, %4d, %4d, %4d] -> [%4d, %4d, %4d, %4d]"
+				"|flags = %8d|src_format = %2d|bpp = %2d|ndx = %3d|\n",
+				pipe->src.x, pipe->src.y, pipe->src.w, pipe->src.h,
+				pipe->dst.x, pipe->dst.y, pipe->dst.w, pipe->dst.h,
+				pipe->flags, pipe->src_fmt->format, pipe->src_fmt->bpp,
+				pipe->ndx);
+		pr_err("pipe addr : %p\n", pipe);
+		pcount--;
+		if (!pcount) break;
+	}
+	mutex_unlock(&mdp5_data->list_lock);
+
+	pr_err("mdp_clk = %ld, bus_ab = %llu, bus_ib = %llu\n", mdss_mdp_get_clk_rate(MDSS_CLK_MDP_SRC),
+			mdss_res->bus_scale_table->usecase[mdss_res->curr_bw_uc_idx].vectors[0].ab,
+			mdss_res->bus_scale_table->usecase[mdss_res->curr_bw_uc_idx].vectors[0].ib);
+	pr_err(" ============ %s end =========== \n", __func__);
 }
 
 struct samsung_display_driver_data *samsung_get_vdd(void)

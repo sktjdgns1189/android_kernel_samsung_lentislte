@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2015, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -568,10 +568,12 @@ int mdss_mdp_csc_setup(u32 block, u32 blk_idx, u32 tbl_idx, u32 csc_type)
 #if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
 	if (csc_type == MDSS_MDP_CSC_YUV2RGB && !csc_update) {
 		data = &mdp_csc_convert_wideband;
-		pr_info("will do mdp_csc_convert (wide band)\n");
+		if(csc_change)
+			pr_info("will do mdp_csc_convert (wide band)\n");
 	} else {
 	data = &mdp_csc_convert[csc_type];
-		pr_info("will do mdp_csc_convert (narrow band)\n");
+		if(csc_change)
+			pr_info("will do mdp_csc_convert (narrow band)\n");
 	}
 #else
 	data = &mdp_csc_convert[csc_type];
@@ -903,7 +905,6 @@ static int pp_vig_pipe_setup(struct mdss_mdp_pipe *pipe, u32 *op)
 			mdss_mdp_csc_setup(MDSS_MDP_BLOCK_SSPP, pipe->num, 1,
 					   MDSS_MDP_CSC_YUV2RGB);
 #else
-
 			mdss_mdp_csc_setup(MDSS_MDP_BLOCK_SSPP, pipe->num, 1,
 						   MDSS_MDP_CSC_YUV2RGB);
 #endif
@@ -1134,7 +1135,8 @@ static int mdss_mdp_scale_setup(struct mdss_mdp_pipe *pipe)
 	}
 
 	if ((src_h != pipe->dst.h) ||
-	    (pipe->pp_res.pp_sts.sharp_sts & PP_STS_ENABLE) ||
+	    (pipe->src_fmt->is_yuv &&
+			(pipe->pp_res.pp_sts.sharp_sts & PP_STS_ENABLE)) ||
 	    (chroma_sample == MDSS_MDP_CHROMA_420) ||
 	    (chroma_sample == MDSS_MDP_CHROMA_H1V2) ||
 	    (pipe->scale.enable_pxl_ext && (src_h != pipe->dst.h))) {
@@ -1190,7 +1192,8 @@ static int mdss_mdp_scale_setup(struct mdss_mdp_pipe *pipe)
 	}
 
 	if ((src_w != pipe->dst.w) ||
-	    (pipe->pp_res.pp_sts.sharp_sts & PP_STS_ENABLE) ||
+	    (pipe->src_fmt->is_yuv &&
+			(pipe->pp_res.pp_sts.sharp_sts & PP_STS_ENABLE)) ||
 	    (chroma_sample == MDSS_MDP_CHROMA_420) ||
 	    (chroma_sample == MDSS_MDP_CHROMA_H2V1) ||
 	    (pipe->scale.enable_pxl_ext && (src_w != pipe->dst.w))) {
